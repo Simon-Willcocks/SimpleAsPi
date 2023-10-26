@@ -19,6 +19,7 @@
 // the Pi firmware does, if allowed.
 
 #include "CK_types.h"
+#include "Processor/processor.h"
 
 #ifndef CORE_WORKSPACE
 #error "Define CORE_WORKSPACE to be the space needed for each core; stack at top"
@@ -54,35 +55,12 @@ void __attribute__(( naked, noreturn )) _start()
   uint32_t stack_top = boot_mem - CORE_WORKSPACE * core;
   uint32_t workspace = stack_top - CORE_WORKSPACE;
 
+  asm ( "mov sp, %[top]" : : [top] "r" (stack_top) );
+
   uint32_t *tt = (void*) workspace;
-  uint32_t section_flags = 0x00075c06;
 
-// Note: ROM segments: 75c06 =>
-// Least to most significant bits:
-//      Type 2 (segment)
-//      B = 1   Since TEX[2] == 1:
-//      C = 0     Write back, Read allocate, Write Allocate (inner)
-//      XN = 0 (executable)
-//      Domain = 0 (basically obsolete)
-//      P = 0
-//      AF = 0 (Don't tell me when first accessed)
-//      Unprivileged access = 1 (but only until boot)
-//      TEX = 5 => Write back, Read allocate, Write Allocate (outer)
-//      Read-write
-//      Shared
-//      ASID-associated (not Global)
-//      Supersection
-//      Secure
-
-// I had misunderstood the meaning of the top bits; all entries that
-// are for a supersection must have the same bits 20-31, bits 20-23
-// are used for the physical address bits above the normal 32-bit
-// address space. G4.4
-
-  // FIXME: only works for multiples of 16MiB
-  for (int i = 0; i < boot_mem >> 20; i++) {
-    tt[i] = ((i << 20) & 0xff000000) | section_flags;
-  }
+  clear_memory_region( tt, 0, 4096 * 1024, 0 ); // Should be handler
+  map_app_memory( tt, 0, boot_mem >> 12, 0, CK_MemoryRWX );
 
   asm (
         "mov sp, %[top]"
