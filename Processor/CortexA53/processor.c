@@ -27,7 +27,7 @@
 
 void __attribute__(( noreturn )) boot_with_stack( uint32_t core, void *workspace, uint32_t size );
 
-uint32_t const boot_mem = 16 << 20;
+uint32_t const initial_boot_memory_at_0 = 16 << 20;
 
 inline uint32_t __attribute__(( always_inline )) get_core_number()
 {
@@ -50,9 +50,10 @@ void __attribute__(( naked, noreturn )) _start()
   // Core 0 is always present, its workspace is always at the top of the
   // initial memory, a core can find the top of the initial memory by
   // adding (core+1) * CORE_WORKSPACE to its core workspace.
+  // Or by reading initial_boot_memory_at_0!
   uint32_t core = get_core_number();
 
-  uint32_t stack_top = boot_mem - CORE_WORKSPACE * core;
+  uint32_t stack_top = initial_boot_memory_at_0 - CORE_WORKSPACE * core;
   uint32_t workspace = stack_top - CORE_WORKSPACE;
 
   asm ( "mov sp, %[top]" : : [top] "r" (stack_top) );
@@ -60,7 +61,7 @@ void __attribute__(( naked, noreturn )) _start()
   uint32_t *tt = (void*) workspace;
 
   clear_memory_region( tt, 0, 4096 * 1024, 0 ); // Should be handler
-  map_app_memory( tt, 0, boot_mem >> 12, 0, CK_MemoryRWX );
+  map_app_memory( tt, 0, initial_boot_memory_at_0 >> 12, 0, CK_MemoryRWX );
 
   asm (
         "mov sp, %[top]"
@@ -93,4 +94,31 @@ void *memset(void *s, int c, uint32_t n)
   for (int i = 0; i < n; i++) { p[i] = c; }
   return s;
 }
+
+// As yet unused...
+void set_way_no_CCSIDR2()
+{
+  asm ( "dsb sy" );
+  // Select cache level
+  for (int level = 1; level <= 2; level++) {
+    uint32_t size;
+    asm ( "mcr p15, 2, %[level], c0, c0, 0" : : [level] "r" ((level-1) << 1) ); // CSSELR Selection Register.
+    asm ( "mrc p15, 1, %[size], c0, c0, 0" : [size] "=r" (size) ); // CSSIDR
+    uint32_t line_size = ((size & 7)+4);
+    uint32_t ways = 1 + ((size & 0xff8) >> 3);
+    uint32_t sets = 1 + ((size & 0x7fff000) >> 13);
+    int wayshift; // Number of bits to shift the way index by
+    asm ( "clz %[ws], %[assoc]" : [ws] "=r" (wayshift) : [assoc] "r" (ways - 1) );
+
+    for (int way = 0; way < ways; way++) {
+      uint32_t setway = (way << wayshift) | ((level - 1) << 1);
+      for (int set = 0; set < sets; set++) {
+        asm ( "mcr p15, 0, %[sw], c7, c14, 2" : : [sw] "r" (setway | (set << line_size)) ); // DCCISW
+      }
+    }
+  }
+
+  asm ( "dsb sy" );
+}
+
 

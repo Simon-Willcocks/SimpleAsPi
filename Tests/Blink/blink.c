@@ -17,66 +17,54 @@
 #include "Processor/processor.h"
 
 extern uint32_t boot_l1tt[];
-extern uint32_t const boot_mem;
+extern uint32_t const initial_boot_memory_at_0;
 
 // If you connect a LED and roughly 1kOhm resistor in series to
 // GPIO pins 22 and 27 (physical pins 15 and 13, respectively)
 // down to ground (e.g. physical pin 1), this will alternately
 // blink them.
 
-void set_way_no_CCSIDR2()
-{
-  asm ( "dsb sy" );
-  // Select cache level
-  for (int level = 1; level <= 2; level++) {
-    uint32_t size;
-    asm ( "mcr p15, 2, %[level], c0, c0, 0" : : [level] "r" ((level-1) << 1) ); // CSSELR Selection Register.
-    asm ( "mrc p15, 1, %[size], c0, c0, 0" : [size] "=r" (size) ); // CSSIDR
-    uint32_t line_size = ((size & 7)+4);
-    uint32_t ways = 1 + ((size & 0xff8) >> 3);
-    uint32_t sets = 1 + ((size & 0x7fff000) >> 13);
-    int wayshift; // Number of bits to shift the way index by
-    asm ( "clz %[ws], %[assoc]" : [ws] "=r" (wayshift) : [assoc] "r" (ways - 1) );
-
-    for (int way = 0; way < ways; way++) {
-      uint32_t setway = (way << wayshift) | ((level - 1) << 1);
-      for (int set = 0; set < sets; set++) {
-        asm ( "mcr p15, 0, %[sw], c7, c14, 2" : : [sw] "r" (setway | (set << line_size)) ); // DCCISW
-      }
-    }
-  }
-
-  asm ( "dsb sy" );
-}
-
-
-void __attribute__(( noreturn )) boot_with_stack( uint32_t core, void *workspace, uint32_t size )
+void __attribute__(( noreturn )) boot_with_stack( uint32_t core,
+                                                  void *workspace,
+                                                  uint32_t size )
 {
   // Running with MMU enabled (allowing for locks to work)
   // but in low memory.
+  static uint32_t lock = 0; // Note: only writable because ROM memory writable
 
   uint32_t *core_l1tt = workspace;
+  uint32_t unmapped = initial_boot_memory_at_0;
+  uint32_t const MiB_of_pages = 256;
 
-  core_l1tt[boot_mem >> 20] = 0x3f230c12; // GPIO, Device-nGnRnE
-  asm ( "dsb sy" ); // Essential! Otherwise the MMU doesn't see the value.
+  bool reclaimed = core_claim_lock( &lock, core + 1 );
 
-  uint32_t volatile *gpio = (void*) boot_mem;
+  // Just temporary memory
+  // At this stage, only MiB aligned allocations are possible,
+  // the MMU code doesn't have a pool of level 2 translation 
+  // tables yet.
+  map_app_memory( core_l1tt, 0x3f200, MiB_of_pages, unmapped, CK_Device );
+
+  uint32_t volatile *gpio = (void*) initial_boot_memory_at_0;
   uint32_t mask = (7 << (3 * 7)) | (7 << (3 * 2));
-  enum { GPIO_Input, GPIO_Output, GPIO_Alt5, GPIO_Alt4, GPIO_Alt0, GPIO_Alt1, GPIO_Alt2, GPIO_Alt3 };
+  enum { GPIO_Input, GPIO_Output, GPIO_Alt5, GPIO_Alt4, 
+         GPIO_Alt0, GPIO_Alt1, GPIO_Alt2, GPIO_Alt3 };
 
   uint32_t types = (GPIO_Output << (3 * 7)) | (GPIO_Output << (3 * 2));
   gpio[2] = (gpio[2] & ~mask) | types;
-  asm ( "dsb sy" );
+  push_writes_to_device();
 
   uint32_t bits = (1 << 27) | (1 << 22);
   uint32_t one_bit = (1 << 27);
+  uint32_t delay = 50000000;
+
+  delay = delay / (core + 1);
 
   for (;;) {
     gpio[0x1c/4] = one_bit;
     one_bit = one_bit ^ bits;
     gpio[0x28/4] = one_bit;
-    asm ( "dsb sy" );
-    for (int i = 0; i < 50000000; i++) asm( "nop" );
+    push_writes_to_device();
+    for (int i = 0; i < delay; i++) asm( "nop" );
   }
 
   __builtin_unreachable();
