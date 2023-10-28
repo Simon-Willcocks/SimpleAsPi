@@ -36,6 +36,8 @@ inline uint32_t __attribute__(( always_inline )) get_core_number()
   return ((result & 0xc0000000) != 0x80000000) ? 0 : (result & 15);
 }
 
+static void set_smp_mode();
+
 // Assumes the image is loaded at location zero.
 //  old_kernel=1 in config.txt for all current Pies.
 
@@ -62,9 +64,9 @@ void __attribute__(( naked, noreturn )) _start()
 
   clear_memory_region( tt, 0, 4096 * 1024, 0 ); // Should be handler
   map_app_memory( tt, 0, initial_boot_memory_at_0 >> 12, 0, CK_MemoryRWX );
+  set_smp_mode();
 
   asm (
-        "mov sp, %[top]"
     // TTBR0 also includes bits to indicate shareability (bit 1), inner
     // or outer (bit 5), memory cache type (bits 4:3 outer, 6:0 inner).
     "\n  mcr p15, 0, %[one], c13, c0, 1"        // ASID - initial TTBR has all
@@ -79,7 +81,6 @@ void __attribute__(( naked, noreturn )) _start()
     "\n0:"
     :
     : [ttbr] "r" (workspace | 0b1001010) // Matches translation table
-    , [top] "r" (stack_top)
     , [sctlr] "r" (0x20c5387d)
     , [one] "r" (1)     // Domain and ASID
     , [zero] "r" (0)    // TTBCR
@@ -121,4 +122,47 @@ void set_way_no_CCSIDR2()
   asm ( "dsb sy" );
 }
 
+static void Cortex_A7_set_smp_mode()
+{
+  uint32_t reg;
+  asm volatile ( "mrc p15, 0, %[v], c1, c0, 1"
+             "\n  orr %[v], %[v], %[b]"
+             "\n  mcr p15, 0, %[v], c1, c0, 1"
+             : [v] "=&r" (reg) : [b] "ir" (1<<6) );
+
+  asm ( "dsb sy" );
+}
+
+static void Cortex_A53_set_smp_mode()
+{
+  // Write CPU Extended Control Register (64-bits)
+  // ARM Cortex-A53 (probably -A72)
+  asm ( "mrrc p15, 1, r3, r4, c15"
+    "\n  orr r3, r3, #(1 << 6)"
+    "\n  mcrr p15, 1, r3, r4, c15" : : : "r3", "r4" );
+
+  asm ( "dsb sy" );
+}
+
+static void set_smp_mode()
+{
+  uint32_t main_id;
+
+  asm ( "MRC p15, 0, %[id], c0, c0, 0" : [id] "=r" (main_id) );
+
+  switch (main_id) {
+  case 0x410fc070 ... 0x410fc07f: Cortex_A7_set_smp_mode(); return;
+  case 0x410fd030 ... 0x410fd03f: Cortex_A53_set_smp_mode(); return; // A53
+  case 0x410fd080 ... 0x410fd08f: Cortex_A53_set_smp_mode(); return; // A72
+  default: for (;;) { asm( "wfi" ); }
+  }
+}
+
+uint32_t Cortex_A7_number_of_cores()
+{
+  uint32_t result;
+  // L2CTLR, ARM DDI 0500G Cortex-A53, generally usable?
+  asm ( "MRC p15, 1, %[result], c9, c0, 2" : [result] "=r" (result) );
+  return ((result >> 24) & 3) + 1;
+}
 

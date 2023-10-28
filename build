@@ -1,0 +1,12 @@
+#! /bin/bash -
+
+arm-none-eabi-gcc-9.2.1 \
+        Processor/CortexA53/processor.c \
+        Processor/VMSAv6/mmu.c \
+        Tests/Blink/blink.c \
+        -I . -DCORE_WORKSPACE=0x8000 \
+        -Wall -nostartfiles -nostdlib -fno-zero-initialized-in-bss \
+        -static -march=armv8-a+nofp -o kernel7.elf \
+        -Wl,--section-start=.text=0 &&
+arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&
+arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump

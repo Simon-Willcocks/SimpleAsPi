@@ -53,16 +53,17 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core,
   gpio[2] = (gpio[2] & ~mask) | types;
   push_writes_to_device();
 
-  uint32_t bits = (1 << 27) | (1 << 22);
-  uint32_t one_bit = (1 << 27);
+  core = 3 - core;
+  uint32_t bits = ((core & 1) << 27) | ((core & 2) << 21); // Note: 21 because starting with 2
   uint32_t delay = 50000000;
 
   delay = delay / (core + 1);
 
   for (;;) {
-    gpio[0x1c/4] = one_bit;
-    one_bit = one_bit ^ bits;
-    gpio[0x28/4] = one_bit;
+    gpio[0x1c/4] = bits;
+    push_writes_to_device();
+    for (int i = 0; i < delay; i++) asm( "nop" );
+    gpio[0x28/4] = bits;
     push_writes_to_device();
     for (int i = 0; i < delay; i++) asm( "nop" );
   }
