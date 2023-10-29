@@ -29,22 +29,13 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core,
 {
   // Running in high memory with MMU enabled
 
-  static uint32_t lock = 0;
-  // The lock is only writable in low memory.
-  // The shared workspace is not yet initialised, so we
-  // can't assume any word in it is zero.
-  uint32_t *plock = (void*) (0xffffff & (uint32_t) &lock);
-  core_claim_lock( plock, core + 1 );
+  // The shared and core workspaces have been cleared before 
+  // this routine is called
 
-  memset( &shared, 0, sizeof( shared ) );
-  memset( &workspace, 0, sizeof( workspace ) );
-
-  // Only one core shall pass and blink the LEDs
-
-  // Beware! The lock is no longer accessible after this call.
   forget_boot_low_memory_mapping();
 
-  // Use a word in the FIQ area for a initial lock
+  // So only one core blinks the LEDs
+  core_claim_lock( &shared.boot_lock, core + 1 );
 
   // Just temporary memory
   // The MMU code doesn't have a pool of level 2 translation 

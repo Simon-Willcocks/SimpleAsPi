@@ -101,6 +101,23 @@ void __attribute__(( naked, noreturn )) _start()
 static __attribute__(( noinline, noreturn ))
 void call_boot_with_stack_in_high_memory( uint32_t core, void *ws, uint32_t size )
 {
+  static uint32_t lock = 1; // Pre-claimed by core 0
+  // The lock is only writable in low memory.
+  // The shared workspace is not yet initialised, so we
+  // can't assume any word in it is zero.
+  uint32_t *plock = (void*) (0xffffff & (uint32_t) &lock);
+  if (core_claim_lock( plock, core + 1 )) {
+    // "Reclaimed", if arrived here, this must be core 0
+    // and other cores are either blocked waiting for the
+    // lock or haven't got to it yet.
+    memset( &shared, 0, sizeof( shared ) );
+  }
+  core_release_lock( plock );
+  // The shared workspace is cleared for all cores
+
+  // Clear the core workspace before starting to use it for the stack
+  memset( &workspace, 0, sizeof( workspace ) );
+
   // This ensures that the jump to the routine is not relative.
   register void *hi asm( "lr" ) = boot_with_stack;
   register uint32_t c asm( "r0" ) = core;
