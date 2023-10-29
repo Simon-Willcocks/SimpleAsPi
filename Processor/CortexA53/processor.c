@@ -36,7 +36,7 @@ static __attribute__(( noinline ))
 void set_smp_mode();
 
 static __attribute__(( noinline, noreturn ))
-void call_boot_with_stack_in_high_memory( uint32_t core, void *workspace, uint32_t size );
+void call_boot_with_stack_in_high_memory( uint32_t core );
 
 // Assumes the image is loaded at location zero.
 //  old_kernel=1 in config.txt for all current Pies.
@@ -95,16 +95,18 @@ void __attribute__(( naked, noreturn )) _start()
     , [zero] "r" (0)    // TTBCR
   );
 
-  call_boot_with_stack_in_high_memory( core, (void*) workspace, CORE_WORKSPACE );
+  call_boot_with_stack_in_high_memory( core );
 }
 
 static __attribute__(( noinline, noreturn ))
-void call_boot_with_stack_in_high_memory( uint32_t core, void *ws, uint32_t size )
+void call_boot_with_stack_in_high_memory( uint32_t core )
 {
   static uint32_t lock = 1; // Pre-claimed by core 0
+
   // The lock is only writable in low memory.
   // The shared workspace is not yet initialised, so we
   // can't assume any word in it is zero.
+
   uint32_t *plock = (void*) (0xffffff & (uint32_t) &lock);
   if (core_claim_lock( plock, core + 1 )) {
     // "Reclaimed", if arrived here, this must be core 0
@@ -113,7 +115,9 @@ void call_boot_with_stack_in_high_memory( uint32_t core, void *ws, uint32_t size
     memset( &shared, 0, sizeof( shared ) );
   }
   core_release_lock( plock );
-  // The shared workspace is cleared for all cores
+
+  // The shared workspace is cleared for all cores, any locks in it
+  // are unclaimed.
 
   // Clear the core workspace before starting to use it for the stack
   memset( &workspace, 0, sizeof( workspace ) );
@@ -121,16 +125,12 @@ void call_boot_with_stack_in_high_memory( uint32_t core, void *ws, uint32_t size
   // This ensures that the jump to the routine is not relative.
   register void *hi asm( "lr" ) = boot_with_stack;
   register uint32_t c asm( "r0" ) = core;
-  register void *w asm( "r1" ) = ws;
-  register uint32_t s asm( "r2" ) = size;
 
   asm ( "mov sp, %[sp]"
     "\n  bx lr"
     :
     : "r" (hi)
     , "r" (c)
-    , "r" (w)
-    , "r" (s)
     , [sp] "r" ((&workspace.svc_stack)+1) );
 
   __builtin_unreachable();

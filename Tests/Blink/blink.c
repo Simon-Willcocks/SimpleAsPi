@@ -23,9 +23,7 @@ extern uint32_t boot_l1tt[];
 // down to ground (e.g. physical pin 1), this will alternately
 // blink them.
 
-void __attribute__(( noreturn )) boot_with_stack( uint32_t core,
-                                                  uint32_t ws,
-                                                  uint32_t size )
+void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 {
   // Running in high memory with MMU enabled
 

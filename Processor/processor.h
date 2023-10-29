@@ -21,8 +21,7 @@
 // There are no processor vectors set up at this time, and the stack
 // is in the low memory RAM.
 
-void __attribute__(( noreturn )) boot_with_stack( uint32_t core, 
-                                   uint32_t workspace, uint32_t size );
+void __attribute__(( noreturn )) boot_with_stack( uint32_t core );
 
 #include "mmu.h"
 
