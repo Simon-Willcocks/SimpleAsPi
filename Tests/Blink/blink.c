@@ -24,22 +24,32 @@ extern uint32_t boot_l1tt[];
 // blink them.
 
 void __attribute__(( noreturn )) boot_with_stack( uint32_t core,
-                                                  void *workspace,
+                                                  uint32_t ws,
                                                   uint32_t size )
 {
-  // Running with MMU enabled (allowing for locks to work)
-  // in high memory.
-  static uint32_t lock = 0; // Note: only writable because ROM memory writable
-  // Still mapped in low memory; this should be the last point where this kind
-  // of trick is needed.
-  uint32_t *lockp = (void*) (0x000fffff & (uint32_t) &lock);
+  // Running in high memory with MMU enabled
 
-  bool reclaimed = core_claim_lock( lockp, core + 1 );
+  static uint32_t lock = 0;
+  // The lock is only writable in low memory.
+  // The shared workspace is not yet initialised, so we
+  // can't assume any word in it is zero.
+  uint32_t *plock = (void*) (0xffffff & (uint32_t) &lock);
+  core_claim_lock( plock, core + 1 );
+
+  memset( &shared, 0, sizeof( shared ) );
+  memset( &workspace, 0, sizeof( workspace ) );
+
+  // Only one core shall pass and blink the LEDs
+
+  // Beware! The lock is no longer accessible after this call.
+  forget_boot_low_memory_mapping();
+
+  // Use a word in the FIQ area for a initial lock
 
   // Just temporary memory
   // The MMU code doesn't have a pool of level 2 translation 
   // tables yet, but the top MiB is page-mappable.
-  uint32_t *gpio_page = (void*) 0xffff0000;
+  uint32_t *gpio_page = (void*) 0xfffff000;
   uint32_t volatile *gpio = gpio_page;
 
   memory_mapping gpio_device = { .base_page = 0x3f200000 >> 12,

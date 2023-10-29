@@ -13,13 +13,16 @@
  * limitations under the License.
  */
 
-// This routine, provided by another subsystem, will be entered with the
-// lowest 16MiB of memory mapped at VA 0, and workspace allocated for each
-// core. The lowest 16KiB contains a Level 1 Translation Table, the top
-// of the workspace is the initial boot stack.
+// This routine, to be provided by another subsystem, will be entered with
+// the lowest 16MiB of memory mapped at VA 0, and workspace allocated for
+// each core. The first workspace_needed_for_empty_translation_tables bytes
+// contain translation tables, the top of the workspace is the initial boot
+// stack.
+// There are no processor vectors set up at this time, and the stack
+// is in the low memory RAM.
 
 void __attribute__(( noreturn )) boot_with_stack( uint32_t core, 
-                                   void *workspace, uint32_t size );
+                                   uint32_t workspace, uint32_t size );
 
 #include "mmu.h"
 
@@ -126,3 +129,5 @@ void core_release_lock( uint32_t volatile *lock )
   signal_event();
 }
 
+// To satisfy the optimiser in gcc:
+void *memset(void *s, int c, size_t n);

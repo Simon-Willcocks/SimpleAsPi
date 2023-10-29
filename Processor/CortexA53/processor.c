@@ -99,15 +99,22 @@ void __attribute__(( naked, noreturn )) _start()
 }
 
 static __attribute__(( noinline, noreturn ))
-void call_boot_with_stack_in_high_memory( uint32_t core, void *workspace, uint32_t size )
+void call_boot_with_stack_in_high_memory( uint32_t core, void *ws, uint32_t size )
 {
   // This ensures that the jump to the routine is not relative.
   register void *hi asm( "lr" ) = boot_with_stack;
   register uint32_t c asm( "r0" ) = core;
-  register void *w asm( "r1" ) = workspace;
+  register void *w asm( "r1" ) = ws;
   register uint32_t s asm( "r2" ) = size;
 
-  asm ( "bx lr" : : "r" (hi), "r" (c), "r" (w), "r" (s) );
+  asm ( "mov sp, %[sp]"
+    "\n  bx lr"
+    :
+    : "r" (hi)
+    , "r" (c)
+    , "r" (w)
+    , "r" (s)
+    , [sp] "r" ((&workspace.svc_stack)+1) );
 
   __builtin_unreachable();
 }
@@ -115,7 +122,28 @@ void call_boot_with_stack_in_high_memory( uint32_t core, void *workspace, uint32
 void *memset(void *s, int c, uint32_t n)
 {
   uint8_t *p = s;
-  for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
+    for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
+    return s;
+  if (n < 16) {
+    for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
+  }
+  else {
+    // No need to check n > 0 in this loop; it starts >= 16
+    while (0 != (7 & (uint32_t) p)) { *p++ = c; n--; }
+
+    uint16_t h = c; h = (h << 8) | h;
+    uint32_t w = h; w = (w << 16) | w;
+    uint64_t d = w; d = (d << 32) | d;
+    uint64_t *dp = (void*) p;
+    while (n >= sizeof( d )) { *dp++ = d; n -= sizeof( d ); }
+    uint32_t *wp = (void*) dp;
+    while (n >= sizeof( w )) { *wp++ = w; n -= sizeof( w ); }
+    uint32_t *hp = (void*) wp;
+    while (n >= sizeof( h )) { *hp++ = h; n -= sizeof( h ); }
+    p = (void*) hp;
+    if (n > 0) { *p++ = c; }
+  }
+
   return s;
 }
 

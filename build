@@ -1,8 +1,11 @@
 #! /bin/bash -
 
 MMU=Processor/VMSAv6
+SYSTEM=Tests/Blink
 
-CFLAGS="-I . -DCORE_WORKSPACE=0x8000 -Wall -nostartfiles -nostdlib -fno-zero-initialized-in-bss -static -march=armv8-a+nofp -O4 -I $MMU"
+CFLAGS="-I . -Wall -nostartfiles -nostdlib -fno-zero-initialized-in-bss -static -march=armv8-a+nofp -O4 -I $MMU -I $SYSTEM"
+CFLAGS="$CFLAGS $*"
+echo $CFLAGS
 
 arm-none-eabi-gcc-9.2.1 \
         -c \
@@ -15,14 +18,16 @@ arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init.
 
 arm-none-eabi-gcc-9.2.1 \
         processor.boot mmu.boot \
-        Tests/Blink/blink.c \
+        $SYSTEM/*.c \
         -o kernel7.elf \
         $CFLAGS \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
         -Wl,--defsym=translation_table=0xfff80000 \
         -Wl,--defsym=global_translation_table=0xfff84000 \
-        -Wl,--defsym=local_kernel_page_table=0xfff85000 \
-        -Wl,--defsym=global_kernel_page_tables=0xfff86000 \
+        -Wl,--defsym=local_kernel_page_table=0xfff88000 \
+        -Wl,--defsym=global_kernel_page_tables=0xfff89000 \
+        -Wl,--defsym=shared=0xfffe0000 \
+        -Wl,--defsym=workspace=0xfffd0000 \
         -Wl,--section-start=.init=0xfc000000 \
         -Wl,--section-start=.text=0xfc001000 &&
 arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&

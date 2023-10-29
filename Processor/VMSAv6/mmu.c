@@ -215,9 +215,9 @@ void map_memory( memory_mapping const *mapping )
   push_writes_to_cache();
 }
 
-void create_default_translation_tables( uint32_t workspace )
+void create_default_translation_tables( uint32_t memory )
 {
-  l1tt_entry *tt = (void*) workspace;
+  l1tt_entry *tt = (void*) memory;
   l2tt_entry *pages = (void *) (&tt[4096]);
 
   for (int i = 0; i < 4096; i++) {
@@ -301,9 +301,13 @@ void create_default_translation_tables( uint32_t workspace )
 
   // ... and give access to these tables
   // 0x157 = cached global small page with AF set, RW-
+
+  uint32_t core0_workspace = (uint32_t) &top_of_boot_RAM;
+  core0_workspace -= CORE_WORKSPACE;
+
   {
     arm32_ptr p = { .rawp = &translation_table[0] };
-    l2tt_entry entry = { .raw = 0x157 | (uint32_t) workspace };
+    l2tt_entry entry = { .raw = 0x157 | memory };
     pages[p.page+0] = entry; entry.page_base++;
     pages[p.page+1] = entry; entry.page_base++;
     pages[p.page+2] = entry; entry.page_base++;
@@ -311,9 +315,8 @@ void create_default_translation_tables( uint32_t workspace )
   }
   {
     arm32_ptr p = { .rawp = &global_translation_table[0] };
-    uint32_t table = (uint32_t) &top_of_boot_RAM;
-    table -= CORE_WORKSPACE;
-    l2tt_entry entry = { .raw = 0x157 | table };
+    // Shared, RW
+    l2tt_entry entry = { .raw = 0x557 | core0_workspace };
     pages[p.page+0] = entry; entry.page_base++;
     pages[p.page+1] = entry; entry.page_base++;
     pages[p.page+2] = entry; entry.page_base++;
@@ -327,9 +330,52 @@ void create_default_translation_tables( uint32_t workspace )
   }
   {
     arm32_ptr p = { .rawp = &global_kernel_page_tables };
-    uint32_t table = (uint32_t) &top_of_boot_RAM;
-    table = table - CORE_WORKSPACE + 0x4000;
-    l2tt_entry entry = { .raw = 0x157 | table };
+    l2tt_entry entry = { .raw = 0x557 | (core0_workspace + 0x4000) };
     pages[p.page+0] = entry;
   }
+
+  {
+    extern uint8_t _start;
+    extern uint8_t __end__;
+    uint32_t free = &__end__ - &_start;
+    free = free + mmu_section_size;
+    free = free & ~(mmu_section_size-1);
+    arm32_ptr p = { .rawp = &shared };
+    l2tt_entry entry = { .raw = 0x557 | free };
+    uint32_t count = P( sizeof( shared_workspace ) );
+    for (int i = 0; i < count; i++) {
+      pages[p.page+i] = entry;
+      entry.page_base ++;
+    }
+  }
+
+  {
+    arm32_ptr p = { .rawp = &workspace };
+    l2tt_entry entry = { .raw = 0x157 | (0x5000 + memory) };
+    uint32_t count = P( sizeof( core_workspace ) );
+    for (int i = 0; i < count; i++) {
+      pages[p.page+i] = entry;
+      entry.page_base ++;
+    }
+  }
+
+  push_writes_to_cache();
 }
+
+void forget_boot_low_memory_mapping()
+{
+  uint8_t *ram_top = &top_of_boot_RAM;
+  uint32_t sections = ((uint32_t) ram_top) >> 20;
+
+  for (int i = 0; i < sections; i++) {
+    translation_table[i].handler = 0;
+  }
+
+  push_writes_to_cache();
+
+  // Clear any TLB using ASID 1
+  asm ( "mcr p15, 0, %[one], c8, c7, 2" : : [one] "r" (1) );
+
+  push_writes_to_cache();
+}
+
