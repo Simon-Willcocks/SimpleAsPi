@@ -25,10 +25,6 @@
 #error "Define CORE_WORKSPACE to be the space needed for each core; stack at top"
 #endif
 
-void __attribute__(( noreturn )) boot_with_stack( uint32_t core, void *workspace, uint32_t size );
-
-uint32_t const initial_boot_memory_at_0 = 16 << 20;
-
 inline uint32_t __attribute__(( always_inline )) get_core_number()
 {
   uint32_t result;
@@ -36,7 +32,11 @@ inline uint32_t __attribute__(( always_inline )) get_core_number()
   return ((result & 0xc0000000) != 0x80000000) ? 0 : (result & 15);
 }
 
-static void set_smp_mode();
+static __attribute__(( noinline ))
+void set_smp_mode();
+
+static __attribute__(( noinline, noreturn ))
+void call_boot_with_stack_in_high_memory( uint32_t core, void *workspace, uint32_t size );
 
 // Assumes the image is loaded at location zero.
 //  old_kernel=1 in config.txt for all current Pies.
@@ -52,18 +52,27 @@ void __attribute__(( naked, noreturn )) _start()
   // Core 0 is always present, its workspace is always at the top of the
   // initial memory, a core can find the top of the initial memory by
   // adding (core+1) * CORE_WORKSPACE to its core workspace.
-  // Or by reading initial_boot_memory_at_0!
+  // Or by reading the address of top_of_boot_RAM!
   uint32_t core = get_core_number();
 
-  uint32_t stack_top = initial_boot_memory_at_0 - CORE_WORKSPACE * core;
+#ifdef DEBUG__SINGLE_CORE
+  if (core != 0) for (;;) asm ( "wfi" );
+#endif
+
+  extern uint8_t top_of_boot_RAM;
+  uint32_t top = (uint32_t) &top_of_boot_RAM;
+  uint32_t stack_top = top - CORE_WORKSPACE * core;
   uint32_t workspace = stack_top - CORE_WORKSPACE;
 
   asm ( "mov sp, %[top]" : : [top] "r" (stack_top) );
 
-  uint32_t *tt = (void*) workspace;
+  create_default_translation_tables( workspace );
 
-  clear_memory_region( tt, 0, 4096 * 1024, 0 ); // Should be handler
-  map_app_memory( tt, 0, initial_boot_memory_at_0 >> 12, 0, CK_MemoryRWX );
+  // This is the place to find out what kind of processor this is, and
+  // possibly modify the image to provide specific functions for, say,
+  // cache maintenance.
+
+  // This has to be done before enabling the caches
   set_smp_mode();
 
   asm (
@@ -86,13 +95,27 @@ void __attribute__(( naked, noreturn )) _start()
     , [zero] "r" (0)    // TTBCR
   );
 
-  boot_with_stack( core, (void*) workspace, CORE_WORKSPACE );
+  call_boot_with_stack_in_high_memory( core, (void*) workspace, CORE_WORKSPACE );
+}
+
+static __attribute__(( noinline, noreturn ))
+void call_boot_with_stack_in_high_memory( uint32_t core, void *workspace, uint32_t size )
+{
+  // This ensures that the jump to the routine is not relative.
+  register void *hi asm( "lr" ) = boot_with_stack;
+  register uint32_t c asm( "r0" ) = core;
+  register void *w asm( "r1" ) = workspace;
+  register uint32_t s asm( "r2" ) = size;
+
+  asm ( "bx lr" : : "r" (hi), "r" (c), "r" (w), "r" (s) );
+
+  __builtin_unreachable();
 }
 
 void *memset(void *s, int c, uint32_t n)
 {
   uint8_t *p = s;
-  for (int i = 0; i < n; i++) { p[i] = c; }
+  for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
   return s;
 }
 
@@ -144,7 +167,8 @@ static void Cortex_A53_set_smp_mode()
   asm ( "dsb sy" );
 }
 
-static void set_smp_mode()
+static __attribute__(( noinline ))
+void set_smp_mode()
 {
   uint32_t main_id;
 

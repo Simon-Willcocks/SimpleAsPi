@@ -1,12 +1,29 @@
 #! /bin/bash -
 
+MMU=Processor/VMSAv6
+
+CFLAGS="-I . -DCORE_WORKSPACE=0x8000 -Wall -nostartfiles -nostdlib -fno-zero-initialized-in-bss -static -march=armv8-a+nofp -O4 -I $MMU"
+
 arm-none-eabi-gcc-9.2.1 \
+        -c \
         Processor/CortexA53/processor.c \
-        Processor/VMSAv6/mmu.c \
+        $MMU/mmu.c \
+        --no-toplevel-reorder \
+        $CFLAGS &&
+arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init.data processor.o processor.boot &&
+arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init.data mmu.o mmu.boot &&
+
+arm-none-eabi-gcc-9.2.1 \
+        processor.boot mmu.boot \
         Tests/Blink/blink.c \
-        -I . -DCORE_WORKSPACE=0x8000 \
-        -Wall -nostartfiles -nostdlib -fno-zero-initialized-in-bss \
-        -static -march=armv8-a+nofp -o kernel7.elf \
-        -Wl,--section-start=.text=0 &&
+        -o kernel7.elf \
+        $CFLAGS \
+        -Wl,--defsym=top_of_boot_RAM=0x1000000 \
+        -Wl,--defsym=translation_table=0xfff80000 \
+        -Wl,--defsym=global_translation_table=0xfff84000 \
+        -Wl,--defsym=local_kernel_page_table=0xfff85000 \
+        -Wl,--defsym=global_kernel_page_tables=0xfff86000 \
+        -Wl,--section-start=.init=0xfc000000 \
+        -Wl,--section-start=.text=0xfc001000 &&
 arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&
 arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump

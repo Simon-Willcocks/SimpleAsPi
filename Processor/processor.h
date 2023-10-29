@@ -18,41 +18,10 @@
 // core. The lowest 16KiB contains a Level 1 Translation Table, the top
 // of the workspace is the initial boot stack.
 
-extern uint32_t const boot_mem;
-
 void __attribute__(( noreturn )) boot_with_stack( uint32_t core, 
                                    void *workspace, uint32_t size );
 
-// Memory management:
-// 32-bit page numbers can deal with up to 16,384 GiB of RAM
-
-typedef enum {  CK_MemoryRWX,
-                CK_MemoryRW,
-                CK_MemoryRX,
-                CK_MemoryR,
-                CK_Device } CK_Memory;
-
-// Handlers either use one of the map_... functions to remove
-// the fault or return false if there's nothing it can do.
-// (One possible action to remove the fault is to replace the
-// running task with one that will not fault. This code doesn't
-// have to know about that.)
-typedef bool (*memory_fault_handler)( uint32_t va, uint32_t fault );
-
-void clear_memory_region(
-                uint32_t *translation_table,
-                uint32_t va_base, uint32_t va_pages,
-                memory_fault_handler handler );
-
-void map_app_memory(
-                uint32_t *translation_table,
-                uint32_t base_page, uint32_t pages, uint32_t va,
-                CK_Memory memory_type );
-
-void map_global_memory(
-                uint32_t *translation_table,
-                uint32_t base_page, uint32_t pages, uint32_t va,
-                CK_Memory memory_type );
+#include "mmu.h"
 
 // Memory write utilities
 
