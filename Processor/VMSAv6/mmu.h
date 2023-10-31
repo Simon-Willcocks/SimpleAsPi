@@ -80,3 +80,27 @@ void clear_memory_region(
                 memory_fault_handler handler );
 
 void map_memory( memory_mapping const *mapping );
+
+// Not quite sure if these should be in processor.h, or even
+// processor.c
+static inline uint32_t fault_address()
+{
+  uint32_t result;
+  asm ( "mrc p15, 0, %[dfar], c6, c0, 0" : [dfar] "=r" (result ) );
+  return result;
+}
+
+static inline uint32_t data_fault_type()
+{
+  uint32_t result;
+  asm ( "mrc p15, 0, %[dfsr], c5, c0, 0" : [dfsr] "=r" (result ) );
+  return result;
+}
+
+static inline uint32_t instruction_fault_type()
+{
+  uint32_t result;
+  asm ( "mrc p15, 0, %[ifsr], c5, c0, 1" : [ifsr] "=r" (result ) );
+  return result;
+}
+

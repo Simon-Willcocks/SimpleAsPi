@@ -108,7 +108,7 @@ void clear_memory_region(
 
   if (0 != top.section_offset
    || 0 != (va_pages & 0xff) // Only sections (L1TT)
-   || 0 != virt.section_offset) for (;;) asm ( "wfi" );
+   || 0 != virt.section_offset) PANIC;
 
   for (int i = virt.section; i < top.section; i++) {
     translation_table[i].handler = handler;
@@ -168,12 +168,15 @@ void map_memory( memory_mapping const *mapping )
     case CK_MemoryR: l1 = r_section; break;
     case CK_Device: l1 = dev_section; break;
     default:
-      for (;;) asm( "wfi" );
+      PANIC;
     }
 
     uint32_t sections = mapping->pages >> 8;
 
     l1tt_entry entry = { .raw = l1.raw | cached_section.raw };
+
+    entry.section.AF = 1;
+
     entry.section.base = phys.section;
     for (int i = 0; i < sections; i++) {
       translation_table[virt.section + i] = entry;
@@ -185,7 +188,7 @@ void map_memory( memory_mapping const *mapping )
     // Does the mapping include something bigger?
     // Are all the pages in the same section?
     // Not yet implemented!
-    if (virt.section != 0xfff) asm ( "udf #1\nwfi" );
+    if (virt.section != 0xfff) PANIC;
 
     l2tt_entry l2;
 
@@ -196,7 +199,7 @@ void map_memory( memory_mapping const *mapping )
     case CK_MemoryR: l2 = r_page; break;
     case CK_Device: l2 = dev_page; break;
     default:
-      for (;;) asm( "wfi" );
+      PANIC;
     }
 
     l2.AF = 1;
@@ -274,7 +277,7 @@ void create_default_translation_tables( uint32_t memory )
 
     uint32_t sections = (img_size + (mmu_section_size - 1)) >> 20;
 
-    if (0 != high_memory.section_offset) asm ( "wfi" );
+    if (0 != high_memory.section_offset) PANIC;
 
     // static l1tt_entry const rx_cached_section = { .section = { .type2 = 2, .XN = 0, .read_only = 1, .TEX = 5, .C = 0, .B = 1, .AF = 1 } };
     // l1tt_entry entry = { .raw = rx_cached_section.raw | high_memory };

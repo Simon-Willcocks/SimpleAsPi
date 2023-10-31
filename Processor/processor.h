@@ -130,3 +130,7 @@ void core_release_lock( uint32_t volatile *lock )
 
 // To satisfy the optimiser in gcc:
 void *memset(void *s, int c, size_t n);
+
+#define PANIC do { asm ( "udf %[line]\n wfi" : : [line] "i" (__LINE__) ); } while (true)
+
+#define C_CLOBBERED "r0-r3,r12"
