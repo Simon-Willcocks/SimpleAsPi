@@ -1,0 +1,1 @@
+gcc test001.c -I . ../raw_memory_manager.c -I .. -I ../.. -g
