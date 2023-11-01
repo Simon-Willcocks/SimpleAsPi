@@ -134,3 +134,11 @@ void *memset(void *s, int c, size_t n);
 #define PANIC do { asm ( "udf %[line]\n wfi" : : [line] "i" (__LINE__) ); } while (true)
 
 #define C_CLOBBERED "r0-r3,r12"
+
+static inline uint32_t get_svc_number( uint32_t lr )
+{
+  // lr is the address of the instruction following the svc
+  uint32_t result;
+  asm ( "ldr %[r], [%[next], #-4]" : [r] "=r" (result) : [next] "r" (lr) );
+  return result & 0x00ffffff;
+}

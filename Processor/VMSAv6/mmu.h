@@ -27,6 +27,9 @@ typedef enum {  CK_MemoryRWX,
 // (One possible action to remove the fault is to replace the
 // running task with one that will not fault. This code doesn't
 // have to know about that.)
+
+// The fault parameter indicates translation, level 1 or 2, or
+// permission, read write, or execute.
 typedef bool (*memory_fault_handler)( uint32_t va, uint32_t fault );
 
 typedef struct __attribute__(( packed )) {
@@ -37,9 +40,9 @@ typedef struct __attribute__(( packed )) {
     void    *vap;
   };
   uint32_t type:8;
-  bool     global:1;
-  bool     shared:1;
-  bool     application_memory:1;
+  bool     map_specific:1;      // Gets swapped in and out
+  bool     all_cores:1;         // Same physical memory on all cores
+  bool     usr32_access:1;      // Unprivileged access allowed
   uint32_t res:20;
 } memory_mapping;
 
@@ -71,8 +74,16 @@ typedef struct __attribute__(( packed )) {
 // RAM from 0 to top_of_boot_RAM will also be mapped rwx at VA 0.
 void create_default_translation_tables( uint32_t workspace );
 
-// Call this (once) when the core is running in high memory.
+// Call this (once per core) when the core is running in high memory.
 void forget_boot_low_memory_mapping();
+
+// Call this (once only) when there are multiple MiBs available from
+// claim_contiguous_memory. Until this routine returns, the only
+// pages that can be mapped are in the top MiB.
+void enable_page_level_mapping();
+
+// Default status for the whole memory map in default TTs.
+bool check_global_table( uint32_t va, uint32_t fault );
 
 // Not to be called before create_default_translation_tables:
 void clear_memory_region(
@@ -81,26 +92,13 @@ void clear_memory_region(
 
 void map_memory( memory_mapping const *mapping );
 
-// Not quite sure if these should be in processor.h, or even
-// processor.c
-static inline uint32_t fault_address()
-{
-  uint32_t result;
-  asm ( "mrc p15, 0, %[dfar], c6, c0, 0" : [dfar] "=r" (result ) );
-  return result;
-}
+// Stop translating non-Global addresses for the current map and
+// start for the new map, instead.
+void mmu_switch_map( uint32_t new_map );
 
-static inline uint32_t data_fault_type()
-{
-  uint32_t result;
-  asm ( "mrc p15, 0, %[dfsr], c5, c0, 0" : [dfsr] "=r" (result ) );
-  return result;
-}
+// Allow the current map to be used for another purpose in future.
+void forget_current_map();
 
-static inline uint32_t instruction_fault_type()
-{
-  uint32_t result;
-  asm ( "mrc p15, 0, %[ifsr], c5, c0, 1" : [ifsr] "=r" (result ) );
-  return result;
-}
-
+// Suitable for jumping to on exceptions (provided by mmu):
+void __attribute__(( naked )) data_abort_handler();
+void __attribute__(( naked )) prefetch_handler();
