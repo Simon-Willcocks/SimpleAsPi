@@ -139,8 +139,9 @@ void call_boot_with_stack_in_high_memory( uint32_t core )
 void *memset(void *s, int c, uint32_t n)
 {
   uint8_t *p = s;
-    for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
-    return s;
+    // Trivial implementation
+    // for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
+    // return s;
   if (n < 16) {
     for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
   }

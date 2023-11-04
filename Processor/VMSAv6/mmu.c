@@ -173,7 +173,7 @@ static l2tt_entry const dev_page = { .small_page = 1, .XN = 1, .read_only = 0, .
 
 void map_memory( memory_mapping const *mapping )
 {
-  if (mapping->pages == 0) return;
+  if (mapping->pages == 0) PANIC;
 
   bool reclaimed = core_claim_lock( &shared.mmu.lock, workspace.core + 1 );
 
@@ -278,7 +278,7 @@ void map_memory( memory_mapping const *mapping )
   // have to be flushed to RAM.
   push_writes_to_cache();
 
-  if (reclaimed) core_release_lock( &shared.mmu.lock );
+  if (!reclaimed) core_release_lock( &shared.mmu.lock );
 }
 
 // These routines can update the tables directly, others have to call
@@ -375,11 +375,11 @@ void create_default_translation_tables( uint32_t memory )
 
     if (0 != high_memory.section_offset) PANIC;
 
-    // static l1tt_entry const rx_cached_section = { .section = { .type2 = 2, .XN = 0, .read_only = 1, .TEX = 5, .C = 0, .B = 1, .AF = 1 } };
-    // l1tt_entry entry = { .raw = rx_cached_section.raw | high_memory };
-    // The above doesn't work here because the code generated accesses high memory
+    l1tt_entry entry = {
+      .section = { .type2 = 2, .XN = 0, .read_only = 1,
+                    .unprivileged_access = 1, .TEX = 5,
+                    .C = 0, .B = 1, .AF = 1 } };
 
-    l1tt_entry entry = { .raw = 0x0000d406 };
     for (int i = 0; i < sections; i++) {
       tt[high_memory.section + i] = entry;
       entry.section.base++;
@@ -467,7 +467,7 @@ void forget_boot_low_memory_mapping()
   uint32_t sections = ((uint32_t) ram_top) >> 20;
 
   for (int i = 0; i < sections; i++) {
-    translation_table.entry[i].handler = 0;
+    translation_table.entry[i].handler = check_global_table;
   }
 
   push_writes_to_cache();

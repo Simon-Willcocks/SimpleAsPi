@@ -13,14 +13,19 @@
  * limitations under the License.
  */
 
+#include "workspace_mmu.h"
+
 typedef struct {
   uint32_t boot_lock;
+  shared_mmu mmu;
 } shared_workspace;
 
 typedef struct {
+  uint32_t core;
   struct {
     uint32_t s[100];
   } svc_stack;
+  workspace_mmu mmu;
 } core_workspace;
 
 extern shared_workspace shared;

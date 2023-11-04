@@ -17,7 +17,7 @@
 // generate multiple strb instructions to write a single word.
 // Or I could be professional and make every device access an inline
 // routine call. Nah!
-struct __attribute__(( packed, aligned( 256 ) )) gpio {
+typedef struct __attribute__(( packed, aligned( 256 ) )) {
   uint32_t gpfsel[6];  // 0x00 - 0x14
   uint32_t res18;
   uint32_t gpset[2];   // 0x1c, 0x20
@@ -47,5 +47,20 @@ struct __attribute__(( packed, aligned( 256 ) )) gpio {
   uint32_t resa8;
   uint32_t resac;
   uint32_t test;
-};
+} GPIO;
 
+// For gpfsel:
+enum { GPIO_Input, GPIO_Output, GPIO_Alt5, GPIO_Alt4,
+       GPIO_Alt0, GPIO_Alt1, GPIO_Alt2, GPIO_Alt3 };
+
+static inline void set_state( GPIO *g, int bit, int state )
+{
+  uint32_t index = 0;
+  while (bit >= 10) {
+    bit -= 10;
+    index++;
+  }
+  uint32_t shift = bit * 3;
+  uint32_t mask = 7 << shift;
+  g->gpfsel[index] = (g->gpfsel[index] & ~mask) | (state << shift);
+}

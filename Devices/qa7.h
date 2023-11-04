@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-typedef __attribute__(( packed, aligned( 256 ) )) struct {
+typedef struct __attribute__(( packed, aligned( 256 ) )) {
   uint32_t       control;
   uint32_t       res1;
   uint32_t       timer_prescaler;

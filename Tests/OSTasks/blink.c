@@ -15,6 +15,8 @@
 
 #include "CK_types.h"
 #include "ostask.h"
+#include "qa7.h"
+#include "bcm_gpio.h"
 
 // If you connect a LED and roughly 1kOhm resistor in series to
 // GPIO pins 22 and 27 (physical pins 15 and 13, respectively)
@@ -31,9 +33,51 @@ void __attribute__(( noreturn )) startup()
 {
   // Running with multi-tasking enabled. This routine gets called
   // just once.
+  QA7 *qa7 = (void*) 0xfff00000;
+
+  memory_mapping map_qa7 = {
+    .base_page = 0x40000000 >> 12,
+    .pages = 1,
+    .vap = qa7,
+    .type = CK_Device,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+  map_memory( &map_qa7 );
+
+  GPIO *gpio = (void*) 0xfff01000;
+
+  memory_mapping map_gpio = {
+    .base_page = 0x3f200000 >> 12,
+    .pages = 1,
+    .vap = gpio,
+    .type = CK_Device,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+  map_memory( &map_gpio );
+
+  uint32_t yellow = 27;
+  uint32_t green = 22;
+
+  set_state( gpio, yellow, GPIO_Output );
+  set_state( gpio, green, GPIO_Output );
+  push_writes_to_device();
+
+  gpio->gpclr[yellow/32] = 1 << (yellow % 32);
+  gpio->gpclr[green/32] = 1 << (green % 32);
+  push_writes_to_device();
 
   for (;;) {
     Sleep( 1000 );
+    for (int i = 0; i < 1 << 24; i++) asm ( "nop" );
+    // gpio->gpset[yellow/32] = 1 << (yellow % 32);
+    gpio->gpclr[green/32] = 1 << (green % 32);
+    push_writes_to_device();
+    for (int i = 0; i < 1 << 25; i++) asm ( "nop" );
+    // gpio->gpclr[yellow/32] = 1 << (yellow % 32);
+    gpio->gpset[green/32] = 1 << (green % 32);
+    push_writes_to_device();
   }
 
   __builtin_unreachable();

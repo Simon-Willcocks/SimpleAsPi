@@ -14,9 +14,9 @@
  */
 
 #include "CK_types.h"
-#include "Processor/processor.h"
+#include "processor.h"
 
-extern uint32_t boot_l1tt[];
+#include "Devices/bcm_gpio.h"
 
 // If you connect a LED and roughly 1kOhm resistor in series to
 // GPIO pins 22 and 27 (physical pins 15 and 13, respectively)
@@ -38,28 +38,23 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   // Just temporary memory
   // The MMU code doesn't have a pool of level 2 translation 
   // tables yet, but the top MiB is page-mappable.
-  uint32_t *gpio_page = (void*) 0xfffff000;
-  uint32_t volatile *gpio = gpio_page;
 
-  memory_mapping gpio_device = { .base_page = 0x3f200000 >> 12,
-                                 .pages = 1,
-                                 .vap = gpio_page,
-                                 .type = CK_Device,
-                                 .global = 0,
-                                 .shared = 1,
-                                 .application_memory = 1 };
-  map_memory( &gpio_device );
+  GPIO *gpio = (void*) 0xfff00000;
 
-  uint32_t mask = (7 << (3 * 7)) | (7 << (3 * 2));
-  enum { GPIO_Input, GPIO_Output, GPIO_Alt5, GPIO_Alt4, 
-         GPIO_Alt0, GPIO_Alt1, GPIO_Alt2, GPIO_Alt3 };
+  memory_mapping map_gpio = {
+    .base_page = 0x3f200000 >> 12,
+    .pages = 1,
+    .vap = gpio,
+    .type = CK_Device,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+  map_memory( &map_gpio );
 
-  uint32_t types = (GPIO_Output << (3 * 7)) | (GPIO_Output << (3 * 2));
-  gpio[2] = (gpio[2] & ~mask) | types;
-  push_writes_to_device();
+  map_memory( &map_gpio );
 
-  gpio[2] = (gpio[2] & ~mask) | types;
-  push_writes_to_device();
+  set_state( gpio, 27, GPIO_Output );
+  set_state( gpio, 22, GPIO_Output );
 
   uint32_t bits = (1 << 27) | (1 << 22);
   uint32_t delay = 50000000;
@@ -67,10 +62,10 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   delay = delay / (core + 1);
 
   for (;;) {
-    gpio[0x1c/4] = bits;
+    gpio->gpset[0] = bits;
     push_writes_to_device();
     for (int i = 0; i < delay; i++) asm( "nop" );
-    gpio[0x28/4] = bits;
+    gpio->gpclr[0] = bits;
     push_writes_to_device();
     for (int i = 0; i < delay; i++) asm( "nop" );
   }
@@ -78,3 +73,7 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   __builtin_unreachable();
 }
 
+void claim_contiguous_memory()
+{
+  PANIC;
+}
