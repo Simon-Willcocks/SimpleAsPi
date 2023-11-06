@@ -322,8 +322,6 @@ void NORET ostask_svc( svc_registers *regs, int number )
             //wait_for_event();
           }
         }
-
-        break;
       }
       else {
         save_task_state( regs );
