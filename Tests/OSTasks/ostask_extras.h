@@ -21,3 +21,23 @@ struct OSTask_extras {
 
 struct OSTaskSlot_extras {
 };
+
+// Functions required by the OSTask code
+
+#include "heap.h"
+
+// Return a 4-byte aligned pointer to an area of at least
+// size bytes of privileged writable memory. Or NULL.
+// Will not be called until the OSTask subsystem has called startup.
+static inline void *system_heap_allocate( uint32_t size )
+{
+  extern uint8_t system_heap_base;
+  return heap_allocate( &system_heap_base, size );
+}
+
+// Ditto, except usr accessible and executable memory
+static inline void *shared_heap_allocate( uint32_t size )
+{
+  extern uint8_t shared_heap_base;
+  return heap_allocate( &shared_heap_base, size );
+}

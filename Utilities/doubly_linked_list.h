@@ -114,18 +114,18 @@ static inline void dll_detach_##T##s_until( T **l, T *last ) { \
     first->prev = last; \
   } \
 } \
-static inline void dll_insert_##T##_list_at_head( T *head, T **l ) { \
+static inline void dll_insert_##T##_list_at_head( T *insert, T **l ) { \
   T *old_head = *l; \
   if (old_head != 0) { \
     T *old_last = old_head->prev; \
-    T *last = head->prev; \
+    T *last = insert->prev; \
     last->next = old_head; \
     old_head->prev = last; \
-    head->prev = old_last; \
-    old_last->next = head; \
+    insert->prev = old_last; \
+    old_last->next = insert; \
   } \
  \
-  *l = head; \
+  *l = insert; \
 } \
 static inline T* T##_pool( T *(*alloc)( int size ), int number ) \
 { \

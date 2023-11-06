@@ -35,9 +35,8 @@ static inline void mpsafe_insert_##T##_at_tail( T **head, T *item ) \
     } \
     else if (uold == change_word_if_equal( (uint32_t*) head, uold, 1 )) { \
       /* Replaced head pointer with 1, can work on list safely... */ \
-      T **tail = &old->prev; \
-      dll_attach_##T( item, tail ); \
-      uint32_t one = change_word_if_equal( (uint32_t*) head, 1, (uint32_t) old ); \
+      dll_attach_##T( item, &old ); \
+      uint32_t one = change_word_if_equal( (uint32_t*) head, 1, (uint32_t) old->next ); \
       dll_assert( 1 != one ); one = one; \
       return; \
     } \
@@ -74,7 +73,7 @@ static inline void mpsafe_insert_##T##_after_head( T **head, T *item ) \
       } \
     } \
     else if (uold == change_word_if_equal( (uint32_t*) head, uold, 1 )) { \
-      T *tail = old; \
+      T *tail = old->next; \
       dll_attach_##T( item, &tail ); \
       uint32_t one = change_word_if_equal( (uint32_t*) head, 1, (uint32_t) old ); \
       dll_assert( 1 != one ); one = one; \
@@ -160,18 +159,18 @@ static inline T *mpsafe_manipulate_##T##_list_returning_item( T **head, T *(*upd
 static inline void *mpsafe_manipulate_##T##_list( T **head, void *(*update)( T** a, void *p ), void *p ) \
 { \
   for (;;) { \
-    asm ( "dsb sy" ); /* Ensure we can see updates made by other cores */ \
+    push_writes_to_cache(); /* Ensure we can see updates made by other cores */ \
     T *head_item = *head; \
     uint32_t uhead_item = (uint32_t) head_item; \
     if (uhead_item == 1) { \
-      asm ( "wfe" ); \
+      wait_for_event(); \
     } \
     else if (uhead_item == change_word_if_equal( (uint32_t*) head, uhead_item, 1 )) { \
       /* Replaced head pointer with 1, can work on list safely. (May be empty!) */ \
       void *result = update( &head_item, p ); \
-      asm ( "dmb" ); /* Ensure updates can be seen by other cores */ \
+      ensure_changes_observable(); \
       *head = head_item; /* Release list */ \
-      asm ( "sev" ); \
+      signal_event(); \
       return result; \
     } \
   } \
@@ -193,7 +192,7 @@ static inline void *DO_NOT_USE_detach_##T##_head( T **head, void *p ) \
 } \
 static inline void *DO_NOT_USE_detach_##T( T **head, void *p ) \
 { \
-  T *i = i; \
+  T *i = p; \
   if (*head == i) { \
     *head = i->next; \
   } \
@@ -201,7 +200,7 @@ static inline void *DO_NOT_USE_detach_##T( T **head, void *p ) \
     *head = 0; \
   } \
   else { \
-    /* Not a single item list */ \
+    /* Not a single item list, not at head */ \
     dll_detach_##T( i ); \
   } \
   return i; \

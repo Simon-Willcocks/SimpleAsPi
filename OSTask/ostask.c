@@ -15,9 +15,20 @@
 
 #include "ostask.h"
 #include "mpsafe_dll.h"
+#include "heap.h"
 
 typedef struct OSTaskSlot OSTaskSlot;
 typedef struct OSTask OSTask;
+
+static inline uint32_t ostask_handle( OSTask *task )
+{
+  return 0x4b534154 ^ (uint32_t) task;
+}
+
+static inline OSTask *ostask_from_handle( uint32_t h )
+{
+  return (OSTask *) (0x4b534154 ^ h);
+}
 
 struct OSTaskSlot {
   uint32_t mmu_map;
@@ -195,53 +206,251 @@ void NORET execute_swi( svc_registers *regs, int number )
   PANIC;
 }
 
+void unexpected_task_return()
+{
+  PANIC;
+}
+
+static inline OSTask **irq_task_ptr( uint32_t number )
+{
+  uint32_t sources = shared.ostask.number_of_interrupt_sources;
+  OSTask **core_interrupts = &shared.ostask.irq_tasks[sources * workspace.core];
+  return &core_interrupts[number];
+}
+
+static inline void *put_to_sleep( OSTask **head, void *p )
+{
+  OSTask *tired = p;
+  uint32_t time = tired->regs.r[0];
+
+  OSTask *t = *head;
+  if (t == 0) {
+    *head = tired;
+  }
+  else {
+    if (t->regs.r[0] > time) {
+      t->regs.r[0] -= time;
+      dll_attach_OSTask( tired, head );
+    }
+    else {
+      while (t->next != *head && t->regs.r[0] < time) {
+        time -= t->regs.r[0];
+        t = t->next;
+      }
+      tired->regs.r[0] = time;
+      OSTask *tail = t->next;
+      dll_attach_OSTask( tired, &tail );
+    }
+  }
+
+  return 0;
+}
+
+static inline void *wakey_wakey( OSTask **headptr, void *p )
+{
+  p = p;
+
+  OSTask *head = *headptr;
+  OSTask *t = head;
+
+  if (t == 0) return 0;
+  if (0 < --t->regs.r[0]) return 0;
+
+  OSTask *end = t;
+
+  while (t->regs.r[0] == 0 && t != head) {
+    end = t;
+    t = t->next;
+  }
+
+  dll_detach_OSTasks_until( headptr, end );
+
+  return head;
+}
+
+static inline void *add_woken( OSTask **headptr, void *p )
+{
+  dll_insert_OSTask_list_at_head( p, headptr );
+
+  return 0;
+}
+
+static void sleeping_tasks_add( OSTask *tired )
+{
+  mpsafe_manipulate_OSTask_list( &shared.ostask.sleeping, put_to_sleep, tired );
+}
+
+static void sleeping_tasks_tick()
+{
+  OSTask *list = mpsafe_manipulate_OSTask_list( &shared.ostask.sleeping, wakey_wakey, 0 );
+  if (list != 0)
+    mpsafe_manipulate_OSTask_list( &shared.ostask.runnable, add_woken, list );
+}
+
 void NORET ostask_svc( svc_registers *regs, int number )
 {
+  OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;
+
+  // Read this now, another core might run the task to completion
+  // before we get to the end of this routine.
+  OSTaskSlot *currently_mapped_slot = running->slot;
+
+  if (0 == (regs->spsr & 15)) {
+    asm ( "mrs %[sp], sp_usr"
+      "\n  mrs %[lr], lr_usr"
+        : [sp] "=r" (running->banked_sp_usr)
+        , [lr] "=r" (running->banked_lr_usr) );
+  }
 
   switch (number) {
   case OSTask_Yield:
   case OSTask_Sleep:
     {
-      OSTask *running = workspace.ostask.running;
-      OSTask *resume = running->next;
+      resume = running->next;
 
-      save_task_state( regs );
+      if (running == workspace.ostask.idle) {
+        if (resume == running) {
+          resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
 
-      if (running == resume) {
-        // Only idle on this core, anything else runnable?
-        resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
-        if (resume == 0) {
-          // Symptom: LED occasionally blinks, more often solid green
-          // Thoughts: There are no interrupts to exit wfi
-          //           There are also no regular events (afaik)
-          // Solution: Restore this instruction when interrupts are
-          //           enabled. Perhaps wfe instead? (And sev when
-          //           inserting OSTasks into an empty running queue?)
-          //asm ( "wfi" );
-          break; // Drop back to idle task, enabling interrupts
+          if (resume != 0) {
+            dll_attach_OSTask( resume, &workspace.ostask.running );
+          }
+          else {
+            // Pause, then drop back to idle task with interrupts enabled,
+            // after which the runnable list will be checked again.
+            //wait_for_event();
+          }
+        }
+
+        break;
+      }
+      else {
+        save_task_state( regs );
+
+        workspace.ostask.running = resume;
+
+        // It can't be the only task in the list, there's always idle
+        if (running->next == running || running->prev == running) PANIC;
+
+        dll_detach_OSTask( running );
+
+        // Removed properly from list
+        if (running->next != running || running->prev != running) PANIC;
+        if (workspace.ostask.running == running) PANIC;
+
+        // Removing the head leaves the old next at the head
+        if (workspace.ostask.running != resume) PANIC;
+
+        if (number == OSTask_Yield) {
+          mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, running );
+
+          signal_event(); // Other cores should check runnable list, if waiting
         }
         else {
-          dll_attach_OSTask( resume, &workspace.ostask.running );
-          if (resume != running->next) PANIC;
+          sleeping_tasks_add( running );
         }
-      }
-
-      // resume = running->next, resume != running
-
-      workspace.ostask.running = resume;
-
-      if (resume->slot != running->slot) {
-        PANIC; // Untested
-        mmu_switch_map( resume->slot->mmu_map );
-      }
-
-      if (running != workspace.ostask.idle) {
-        dll_detach_OSTask( running );
-        mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, running );
       }
     }
     break;
+  case OSTask_Create:
+    {
+      OSTask *task = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
+
+      if (task->next != task || task->prev != task) PANIC;
+
+      task->slot = running->slot;
+      task->regs.lr = regs->r[0];
+      task->regs.spsr = 0x10;
+      task->banked_sp_usr = regs->r[1];
+      task->banked_lr_usr = (uint32_t) unexpected_task_return;
+      task->regs.spsr = 0x10;
+      task->regs.r[0] = ostask_handle( task );
+      task->regs.r[1] = regs->r[2];
+      task->regs.r[2] = regs->r[3];
+      task->regs.r[3] = regs->r[4];
+      task->regs.r[3] = regs->r[5];
+
+      mpsafe_insert_OSTask_at_head( &shared.ostask.runnable, task );
+
+      signal_event();
+    }
+    break;
+  case OSTask_RegisterInterruptSources:
+    {
+      if (shared.ostask.number_of_interrupt_sources != 0) PANIC;
+      shared.ostask.number_of_interrupt_sources = regs->r[0];
+      uint32_t array_size = shared.ostask.number_of_interrupt_sources
+                          * shared.ostask.number_of_cores 
+                          * sizeof( OSTask * );
+      void *memory = system_heap_allocate( array_size );
+
+      if ((uint32_t) memory == 0xffffffff) PANIC;
+
+      shared.ostask.irq_tasks = memory;
+
+      memset( shared.ostask.irq_tasks, 0, array_size );
+    }
+    break;
+  case OSTask_EnablingInterrupt:
+    {
+      regs->spsr |= 0x80;
+    }
+    break;
+  case OSTask_WaitForInterrupt:
+    {
+      if (0 == (regs->spsr & 0x80)) PANIC; // Must always have interrupts disabled
+
+      *irq_task_ptr( regs->r[0] ) = running;
+
+      save_task_state( regs );
+
+      resume = running->next;
+
+      workspace.ostask.running = resume;
+
+      // It can't be the only task in the list, there's always idle
+      if (running->next == running || running->prev == running) PANIC;
+
+      dll_detach_OSTask( running );
+
+      // Removed properly from list
+      if (running->next != running || running->prev != running) PANIC;
+      if (workspace.ostask.running == running) PANIC;
+
+      // Removing the head leaves the old next at the head
+      if (workspace.ostask.running != resume) PANIC;
+    }
+    break;
+  case OSTask_InterruptIsOff:
+    {
+      regs->spsr &= ~0x80;
+      // move to tail of workspace.running
+      PANIC;
+    }
+    break;
+  case OSTask_Tick:
+    {
+      sleeping_tasks_tick();
+    }
+    break;
+  default:
+    PANIC;
+  }
+
+  if (resume != 0) {
+    if (0 == (resume->regs.spsr & 15)) {
+      asm ( "msr sp_usr, %[sp]"
+        "\n  msr lr_usr, %[lr]"
+          :
+          : [sp] "r" (resume->banked_sp_usr)
+          , [lr] "r" (resume->banked_lr_usr) );
+    }
+
+    if (resume->slot != currently_mapped_slot) {
+      PANIC; // Untested
+      mmu_switch_map( resume->slot->mmu_map );
+    }
   }
 
   // Restore the stack pointer to where it was before the SVC
@@ -254,7 +463,9 @@ void NORET ostask_svc( svc_registers *regs, int number )
       : [regs] "r" (regs)
       , [size] "i" (sizeof( svc_registers )) );
 
-  if (resume != 0) regs = &resume->regs;
+  if (resume != 0) {
+    regs = &resume->regs;
+  }
 
   // Resume after the SWI
   register svc_registers *lr asm ( "lr" ) = regs;
@@ -303,10 +514,91 @@ void __attribute__(( naked )) svc_handler()
   __builtin_unreachable();
 }
 
-void __attribute__(( naked )) irq_handler()
+#define PROVE_OFFSET( o, t, n ) \
+  while (((uint32_t) &((t *) 0)->o) != (n)) \
+    asm ( "  .error \"Code assumes offset of " #o " in " #t " is " #n "\"" );
+
+void __attribute__(( naked, noreturn )) irq_handler()
 {
-  PANIC;
-  
+  // One interrupt only...
+
+  asm volatile (
+        "sub lr, lr, #4"
+    "\n  srsdb sp!, #0x12 // Store return address and SPSR (IRQ mode)" );
+
+  OSTask *interrupted_task;
+
+  {
+    // Need to be careful with this, that the compiler doesn't insert any code to
+    // set up lr using another register, corrupting it.
+    PROVE_OFFSET( regs, OSTask, 0 );
+    PROVE_OFFSET( lr, svc_registers, 13 * 4 );
+    PROVE_OFFSET( spsr, svc_registers, 14 * 4 );
+    PROVE_OFFSET( banked_sp_usr, OSTask, 15 * 4 );
+    PROVE_OFFSET( banked_lr_usr, OSTask, 16 * 4 );
+
+    register OSTask **running asm ( "lr" ) = &workspace.ostask.running; 
+    asm volatile (
+        "\n  ldr lr, [lr]       // lr -> running"
+        "\n  stm lr!, {r0-r12}  // lr -> lr/spsr"
+        "\n  pop { r0, r1 }     // Resume address, SPSR"
+        "\n  stm lr!, { r0, r1 }// lr -> banked_sp_usr"
+        "\n  tst r1, #0xf"
+        "\n  stmeq lr, { sp, lr }^ // Does not update lr, so..."
+        "\n  sub %[task], lr, #15*4 // restores its value, in either case"
+        : [task] "=r" (interrupted_task)
+        , "=r" (running)
+        : "r" (running)
+        ); // Calling task state saved, except for SVC sp & lr
+    asm volatile ( "" : : "r" (running) );
+    // lr really, really used (Oh! Great Optimiser, please don't assume
+    // it's still pointing to workspace.ostask.running, I beg you!)
+  }
+
+  svc_registers *regs = &interrupted_task->regs;
+  uint32_t interrupted_mode = regs->spsr & 0x1f;
+
+  if (interrupted_mode != 0x10) PANIC;
+  // Legacy RISC OS code allows for SWIs to be interrupted, this is
+  // a Bad Thing, and I'll not think about it just yet.
+
+  uint32_t interrupt_number = 0;
+
+  OSTask *irq_task = *irq_task_ptr( interrupt_number );
+
+  // The interrupted task stays on this core, this shouldn't take long!
+
+  if (irq_task == 0) PANIC;
+
+  // New head of core's running list
+  dll_attach_OSTask( irq_task, &workspace.ostask.running );
+
+  // The interrupt task is always in OSTask_WaitForInterrupt
+
+  if (irq_task->slot != interrupted_task->slot) {
+    // IRQ stack is core-specific, so switching slots does not affect
+    // its mapping.
+    // (We can call this routine without the stack disappearing.)
+    PANIC;
+    mmu_switch_map( irq_task->slot->mmu_map );
+  }
+
+  asm (
+    "\n  msr sp_usr, %[usrsp]"
+    "\n  msr lr_usr, %[usrlr]"
+    :
+    : [usrsp] "r" (irq_task->banked_sp_usr)
+    , [usrlr] "r" (irq_task->banked_lr_usr)
+  );
+
+  register svc_registers *lr asm ( "lr" ) = &irq_task->regs;
+  asm (
+      "\n  ldm lr!, {r0-r12}"
+      "\n  rfeia lr // Restore execution and SPSR"
+      :
+      : "r" (lr) );
+
+  __builtin_unreachable();
 }
 
 static void setup_processor_vectors()
