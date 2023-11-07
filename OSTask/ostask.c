@@ -230,17 +230,30 @@ static inline void *put_to_sleep( OSTask **head, void *p )
   }
   else {
     if (t->regs.r[0] > time) {
+      // Before the first queued task
       t->regs.r[0] -= time;
       dll_attach_OSTask( tired, head );
     }
     else {
-      while (t->next != *head && t->regs.r[0] < time) {
-        time -= t->regs.r[0];
-        t = t->next;
+      for (;;) {
+        if (t->regs.r[0] <= time) {
+          time -= t->regs.r[0];
+          t = t->next;
+          // Any need to look further?
+          if (time == 0) break;
+          // Is t the last entry in the list?
+          if (t->next == *head) break;
+        }
+        else {
+          // t's going to be waiting longer
+          t->regs.r[0] -= time;
+          break;
+        }
       }
       tired->regs.r[0] = time;
-      OSTask *tail = t->next;
-      dll_attach_OSTask( tired, &tail );
+      // Insert before t (which may be *head, in which case
+      // this will be the last item in the list)
+      dll_attach_OSTask( tired, &t );
     }
   }
 
@@ -259,10 +272,10 @@ static inline void *wakey_wakey( OSTask **headptr, void *p )
 
   OSTask *end = t;
 
-  while (t->regs.r[0] == 0 && t != head) {
+  do {
     end = t;
     t = t->next;
-  }
+  } while (t->regs.r[0] == 0 && t != head);
 
   dll_detach_OSTasks_until( headptr, end );
 
