@@ -71,6 +71,9 @@ void setup_shared_heap()
 
 void Sleep( uint32_t ms )
 {
+#ifdef QEMU
+  ms = ms / 10;
+#endif
   register uint32_t t asm( "r0" ) = ms;
   asm ( "svc %[swi]" : : [swi] "i" (OSTask_Sleep), "r" (t) );
 }
@@ -141,6 +144,7 @@ void start_ticker( QA7 *qa7, GPIO *gpio )
 
   // No event stream, EL0 accesses not trapped to undefined: CNTHCTL
   asm volatile ( "mcr p15, 0, %[config], c14, c1, 0" : : [config] "r" (0x303) );
+
   // End
 
 
@@ -179,16 +183,16 @@ void blink_some_leds( uint32_t handle, GPIO volatile *gpio )
   push_writes_to_device();
 
   for (;;) {
+    Sleep( 100 );
     // for (int i = 0; i < 1 << 24; i++) asm ( "nop" );
     gpio->gpset[yellow/32] = 1 << (yellow % 32);
     gpio->gpclr[green/32] = 1 << (green % 32);
     push_writes_to_device();
-    Sleep( 50 );
+    Sleep( 500 );
     // for (int i = 0; i < 1 << 25; i++) asm ( "nop" );
     gpio->gpclr[yellow/32] = 1 << (yellow % 32);
     gpio->gpset[green/32] = 1 << (green % 32);
     push_writes_to_device();
-    Sleep( 100 );
   }
 
   __builtin_unreachable();

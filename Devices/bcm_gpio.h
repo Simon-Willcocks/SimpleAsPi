@@ -53,7 +53,7 @@ typedef struct __attribute__(( packed, aligned( 256 ) )) {
 enum { GPIO_Input, GPIO_Output, GPIO_Alt5, GPIO_Alt4,
        GPIO_Alt0, GPIO_Alt1, GPIO_Alt2, GPIO_Alt3 };
 
-static inline void set_state( GPIO *g, int bit, int state )
+static inline void set_state( GPIO volatile *g, int bit, int state )
 {
   uint32_t index = 0;
   while (bit >= 10) {

@@ -199,6 +199,7 @@ void __attribute__(( naked )) undefined_instruction_handler()
 void save_task_state( svc_registers *regs )
 {
   workspace.ostask.running->regs = *regs;
+  if (workspace.ostask.running->regs.lr == 0) PANIC;
 }
 
 void NORET execute_swi( svc_registers *regs, int number )
@@ -314,6 +315,8 @@ void NORET ostask_svc( svc_registers *regs, int number )
           resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
 
           if (resume != 0) {
+            save_task_state( regs );
+
             dll_attach_OSTask( resume, &workspace.ostask.running );
           }
           else {
@@ -367,11 +370,15 @@ void NORET ostask_svc( svc_registers *regs, int number )
       task->regs.r[1] = regs->r[2];
       task->regs.r[2] = regs->r[3];
       task->regs.r[3] = regs->r[4];
-      task->regs.r[3] = regs->r[5];
+      task->regs.r[4] = regs->r[5];
 
-      mpsafe_insert_OSTask_at_head( &shared.ostask.runnable, task );
-
-      signal_event();
+      // Keep the new task on the current core, in case it's a device
+      // driver than needs it. Any Sleep or Yield indicates that the
+      // task doesn't care what core it runs on.
+      // TODO: decide whether blocking on a lock should maintain core
+      // or not.
+      OSTask *next = running->next;
+      dll_attach_OSTask( task, &next );
     }
     break;
   case OSTask_RegisterInterruptSources:

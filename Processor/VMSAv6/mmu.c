@@ -303,7 +303,7 @@ bool check_global_table( uint32_t va, uint32_t fault )
         local_kernel_page_table.entry[pointer.page] =
                 global_kernel_page_tables[0].entry[pointer.page];
 
-        return local_kernel_page_table.entry[pointer.section].type != 0;
+        return local_kernel_page_table.entry[pointer.page].type != 0;
       }
       else PANIC;
     }
