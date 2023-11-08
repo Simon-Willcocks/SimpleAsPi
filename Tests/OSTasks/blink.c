@@ -111,7 +111,7 @@ void ticker( uint32_t handle, uint32_t core, QA7 *qa7, GPIO *gpio )
   qa7->GPU_interrupts_routing = core;
   qa7->Core_IRQ_Source[core] = 0xffd;
 
-  qa7->Core_timers_Interrupt_control[core] = 15;
+  qa7->Core_timers_Interrupt_control[core] = 1;
 
   ensure_changes_observable(); // Wrote to QA7
 
