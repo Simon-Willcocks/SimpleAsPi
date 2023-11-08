@@ -32,6 +32,7 @@ static inline OSTask *ostask_from_handle( uint32_t h )
 
 struct OSTaskSlot {
   uint32_t mmu_map;
+  uint32_t number_of_tasks;
   OSTaskSlot_extras extras;
   struct {
     uint32_t base;      // Pages
@@ -79,6 +80,7 @@ void setup_pools()
   // memset( &OSTask_free_pool, 0, 0x100000 );
   for (int i = 0; i < 100; i++) { // FIXME How many in a MiB?
     OSTask *t = &OSTask_free_pool[i];
+    memset( t, 0, sizeof( OSTask ) );
     dll_new_OSTask( t );
     dll_attach_OSTask( t, &shared.ostask.task_pool );
     shared.ostask.task_pool = shared.ostask.task_pool->next;
@@ -97,6 +99,7 @@ void setup_pools()
   // memset( &OSTaskSlot_free_pool, 0, 0x100000 );
   for (int i = 0; i < 100; i++) { // FIXME How many in a MiB?
     OSTaskSlot *s = &OSTaskSlot_free_pool[i];
+    memset( s, 0, sizeof( OSTaskSlot ) );
     dll_new_OSTaskSlot( s );
     s->mmu_map = i; // FIXME: Will run out of values at 65536
     dll_attach_OSTaskSlot( s, &shared.ostask.slot_pool );
@@ -121,6 +124,8 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 
   if (first)
   {
+    shared.ostask.number_of_cores = number_of_cores();
+
     extern uint8_t top_of_boot_RAM;
     extern uint8_t top_of_minimum_RAM;
 
@@ -193,6 +198,7 @@ void __attribute__(( naked )) reset_handler()
 
 void __attribute__(( naked )) undefined_instruction_handler()
 {
+  asm ( "bx lr" );
   for (;;) asm ( "wfi" );
 }
 
@@ -215,6 +221,8 @@ void unexpected_task_return()
 static inline OSTask **irq_task_ptr( uint32_t number )
 {
   uint32_t sources = shared.ostask.number_of_interrupt_sources;
+  if (sources != 1) PANIC;
+  if (number != 0) PANIC;
   OSTask **core_interrupts = &shared.ostask.irq_tasks[sources * workspace.core];
   return &core_interrupts[number];
 }
@@ -367,13 +375,19 @@ void NORET ostask_svc( svc_registers *regs, int number )
       }
     }
     break;
+  case OSTask_Spawn:
   case OSTask_Create:
     {
       OSTask *task = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
 
       if (task->next != task || task->prev != task) PANIC;
 
-      task->slot = running->slot;
+      if (number == OSTask_Spawn) {
+        task->slot = mpsafe_detach_OSTaskSlot_at_head( &shared.ostask.slot_pool );
+      }
+      else {
+        task->slot = running->slot;
+      }
       task->regs.lr = regs->r[0];
       task->regs.spsr = 0x10;
       task->banked_sp_usr = regs->r[1];
@@ -394,13 +408,50 @@ void NORET ostask_svc( svc_registers *regs, int number )
       dll_attach_OSTask( task, &next );
     }
     break;
+  case OSTask_EndTask:
+    {
+      resume = running->next;
+
+      workspace.ostask.running = resume;
+
+      // It can't be the only task in the list, there's always idle
+      if (running->next == running || running->prev == running) PANIC;
+
+      dll_detach_OSTask( running );
+
+      // Removed properly from list
+      if (running->next != running || running->prev != running) PANIC;
+      if (workspace.ostask.running == running) PANIC;
+
+      // Removing the head leaves the old next at the head
+      if (workspace.ostask.running != resume) PANIC;
+
+      // FIXME: Should call some higher lever housekeeping functions.
+
+      // If this takes too long, the pointer could be sent to a
+      // task that cleans it out and returns it to the pool.
+      memset( running, 0, sizeof( OSTask ) );
+
+      dll_new_OSTask( running );
+
+      mpsafe_insert_OSTask_at_tail( &shared.ostask.task_pool, running );
+
+      if (--running->slot->number_of_tasks == 0) {
+        // FIXME
+      }
+    }
+    break;
   case OSTask_RegisterInterruptSources:
     {
       if (shared.ostask.number_of_interrupt_sources != 0) PANIC;
+      if (shared.ostask.number_of_cores == 0) PANIC;
+
       shared.ostask.number_of_interrupt_sources = regs->r[0];
+
       uint32_t array_size = shared.ostask.number_of_interrupt_sources
                           * shared.ostask.number_of_cores 
                           * sizeof( OSTask * );
+
       void *memory = system_heap_allocate( array_size );
 
       if ((uint32_t) memory == 0xffffffff) PANIC;
@@ -419,7 +470,10 @@ void NORET ostask_svc( svc_registers *regs, int number )
     {
       if (0 == (regs->spsr & 0x80)) PANIC; // Must always have interrupts disabled
 
-      *irq_task_ptr( regs->r[0] ) = running;
+      uint32_t interrupt_number = regs->r[0];
+      OSTask **irq_task_slot = irq_task_ptr( interrupt_number );
+      if (*irq_task_slot != 0) PANIC;
+      *irq_task_slot = running;
 
       save_task_state( regs );
 
@@ -466,7 +520,6 @@ void NORET ostask_svc( svc_registers *regs, int number )
     }
 
     if (resume->slot != currently_mapped_slot) {
-      PANIC; // Untested
       mmu_switch_map( resume->slot->mmu_map );
     }
   }
@@ -582,7 +635,9 @@ void __attribute__(( naked, noreturn )) irq_handler()
 
   uint32_t interrupt_number = 0;
 
-  OSTask *irq_task = *irq_task_ptr( interrupt_number );
+  OSTask **irq_task_slot = irq_task_ptr( interrupt_number );
+  OSTask *irq_task = *irq_task_slot;
+  *irq_task_slot = 0;
 
   // The interrupted task stays on this core, this shouldn't take long!
 
@@ -594,10 +649,6 @@ void __attribute__(( naked, noreturn )) irq_handler()
   // The interrupt task is always in OSTask_WaitForInterrupt
 
   if (irq_task->slot != interrupted_task->slot) {
-    // IRQ stack is core-specific, so switching slots does not affect
-    // its mapping.
-    // (We can call this routine without the stack disappearing.)
-    PANIC;
     mmu_switch_map( irq_task->slot->mmu_map );
   }
 

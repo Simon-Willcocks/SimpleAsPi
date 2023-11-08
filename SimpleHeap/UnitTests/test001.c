@@ -22,7 +22,7 @@
 
 int printf( char const *fmt, ... );
 
-static uint32_t __attribute__(( aligned( 16 ) )) test_heap[128] = { };
+static uint32_t __attribute__(( aligned( 4096 ) )) test_heap[128] = { };
 
 void show_heap()
 {
@@ -37,6 +37,8 @@ void show_heap()
 
 #define FAILED { printf( "Failed at line %d\n", __LINE__ ); return 1; }
 
+char *strcpy(char *dest, const char *src);
+
 int main()
 {
   printf( "Heap is at %p\n", test_heap );
@@ -48,11 +50,21 @@ int main()
 
   void *allocated = heap_allocate( test_heap, 222 );
 
-  printf( "Allocated %p\n", allocated );
+  printf( "Allocated %p (total: %d)\n", allocated, ((uint32_t*) allocated)[-1] );
 
   show_heap();
 
-  if (0 != (0xf & (uint32_t) allocated)) FAILED;
+  if (0 != (7 & (uint32_t) allocated)) FAILED;
+
+  strcpy( allocated, "Hello world" );
+
+  show_heap();
+
+  allocated = heap_allocate( test_heap, 12 );
+
+  printf( "Allocated %p (total: %d)\n", allocated, ((uint32_t*) allocated)[-1] );
+
+  show_heap();
 
   printf( "All passed\n" );
 

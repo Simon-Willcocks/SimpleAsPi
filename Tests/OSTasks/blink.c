@@ -17,6 +17,7 @@
 #include "ostask.h"
 #include "qa7.h"
 #include "bcm_gpio.h"
+#include "bcm_uart.h"
 #include "heap.h"
 
 void setup_system_heap()
@@ -75,7 +76,9 @@ void Sleep( uint32_t ms )
   ms = ms / 10;
 #endif
   register uint32_t t asm( "r0" ) = ms;
-  asm ( "svc %[swi]" : : [swi] "i" (OSTask_Sleep), "r" (t) );
+  // sets r0 to 0. volatile is needed, since the optimiser ignores
+  // asm statements with an output which is ignored.
+  asm volatile ( "svc %[swi]" : "=r" (t) : [swi] "i" (OSTask_Sleep), "r" (t) );
 }
 
 static inline
@@ -215,6 +218,42 @@ void start_blink_some_leds( GPIO *gpio )
     : "lr", "cc" );
 }
 
+void send_to_uart( uint32_t handle, UART volatile *uart )
+{
+  handle = handle;
+  uart->control = 0x31; // enable, tx & rx
+  push_writes_to_device();
+  uart->data = 'X';
+  push_writes_to_device();
+
+  uint32_t c = 'a';
+  for (;;) {
+    Sleep( 100 );
+    uart->data = c;
+    push_writes_to_device();
+    if (c == 'z') c = 'a'; else c = c + 1;
+  }
+
+  __builtin_unreachable();
+}
+
+void start_send_to_uart( UART *uart )
+{
+  static uint32_t const stack_size = 72;
+  uint8_t *stack = shared_heap_allocate( stack_size );
+
+  register void *start asm( "r0" ) = send_to_uart;
+  register void *sp asm( "r1" ) = stack + stack_size;
+  register void *r0 asm( "r2" ) = uart;
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_Create)
+    , "r" (start)
+    , "r" (sp)
+    , "r" (r0)
+    : "lr", "cc" );
+}
+
 void __attribute__(( noreturn )) startup()
 {
   // Running with multi-tasking enabled. This routine gets called
@@ -244,10 +283,23 @@ void __attribute__(( noreturn )) startup()
     .usr32_access = 1 };
   map_memory( &map_gpio );
 
+  UART *uart = (void*) 0xfff02000;
+
+  memory_mapping map_uart = {
+    .base_page = 0x3f201000 >> 12,
+    .pages = 1,
+    .vap = uart,
+    .type = CK_Device,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 1 };
+  map_memory( &map_uart );
+
   setup_system_heap();
   setup_shared_heap();
 
   start_blink_some_leds( gpio );
+  start_send_to_uart( uart );
 
   start_ticker( qa7, gpio );
 

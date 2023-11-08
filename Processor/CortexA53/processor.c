@@ -236,3 +236,7 @@ uint32_t Cortex_A7_number_of_cores()
   return ((result >> 24) & 3) + 1;
 }
 
+uint32_t number_of_cores()
+{
+  return Cortex_A7_number_of_cores();
+}

@@ -57,6 +57,8 @@ static inline void wait_for_event()
   asm ( "wfe" );
 }
 
+uint32_t number_of_cores();
+
 // TODO:
 // push writes to RAM (va range)
 // RAM may have changed (va range) - invalidate cache

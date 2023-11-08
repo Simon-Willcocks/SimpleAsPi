@@ -132,23 +132,130 @@ static inline uint32_t instruction_fault_type()
 // Defined at link time:
 extern l1tt translation_table;
 extern l1tt global_translation_table;
-extern l2tt local_kernel_page_table;
+extern l2tt local_kernel_page_table[4];
 extern l2tt global_kernel_page_tables[4];
 extern uint8_t top_of_boot_RAM;
+
+static inline l2tt *mapped_table( l1tt_table_entry entry )
+{
+  arm32_ptr base = { .page_base = shared.mmu.l2tables_phys_base };
+
+  arm32_ptr phys = { .raw = entry.page_table_base << 10 };
+
+  if (phys.section != base.section) {
+    uint32_t index = entry.page_table_base & 3;
+    return &local_kernel_page_table[index];
+  }
+  else {
+    extern l2tt VMSAv6_Level2_Tables[4096];
+    uint32_t index = entry.page_table_base & (4096-1);
+    return &VMSAv6_Level2_Tables[index];
+  }
+}
+
+static inline l1tt_table_entry table_entry( l2tt *table )
+{
+  arm32_ptr tab = { .rawp = table };
+  arm32_ptr base = { .page_base = shared.mmu.l2tables_phys_base };
+
+  if (0 != (tab.raw & 0x3ff)) PANIC;
+
+  uint32_t offset = 0x000ffc00 & tab.raw;
+
+  l1tt_table_entry entry = { .type1 = 1,
+                .page_table_base = base.raw | offset };
+
+  return entry;
+}
+
+static inline l2tt *make_section_page_mappable( arm32_ptr virt )
+{
+  // Fill a level 2 table with the same handler
+  // Reminder: MMU structures are protected by shared.mmu.lock
+  l2tt *table = shared.mmu.free->next;
+  if (table == shared.mmu.free) PANIC;
+
+  dll_detach_l2tt( table );
+
+  translation_table.entry[virt.section].table = table_entry( table );
+
+  return table;
+}
 
 void clear_memory_region(
                 uint32_t va_base, uint32_t va_pages,
                 memory_fault_handler handler )
 {
+  if (va_pages == 0) PANIC;
+
   arm32_ptr virt = { .raw = va_base };
-  arm32_ptr top = { .raw = va_base + (va_pages << 12) };
+  arm32_ptr last = { .raw = va_base + va_pages - 1 };
 
-  if (0 != top.section_offset
-   || 0 != (va_pages & 0xff) // Only sections (L1TT)
-   || 0 != virt.section_offset) PANIC;
+  l2tt *l2table = 0;
 
-  for (int i = virt.section; i < top.section; i++) {
-    translation_table.entry[i].handler = handler;
+  if (0 != virt.section_offset) {
+    // Memory block starts part way through a section.
+
+    if (translation_table.entry[virt.section].type == 1) {
+      l2table = mapped_table( translation_table.entry[virt.section].table );
+    }
+    else if (translation_table.entry[virt.section].type == 0) {
+      memory_fault_handler handler =
+                translation_table.entry[virt.section].handler;
+
+      l2table = make_section_page_mappable( virt );
+
+      // Copy the section handler to the remaining entries
+      for (int i = 0; i < virt.page; i++) {
+        l2table->entry[i].handler = handler;
+      }
+
+      if (virt.section == last.section) {
+        for (int i = last.page + 1; i < 256; i++) {
+          l2table->entry[i].handler = handler;
+        }
+      }
+    }
+
+    if (l2table == 0) PANIC;
+
+    for (; va_pages > 0 && 0 != virt.section_offset; va_pages--) {
+      l2table->entry[virt.page++].handler = handler;
+    }
+  }
+
+  if (0 != virt.section_offset) PANIC;
+
+  while (va_pages > 256) { // Sections
+    if (translation_table.entry[virt.section].type == 1) {
+      // Free up table
+    }
+    translation_table.entry[virt.section++].handler = handler;
+    va_pages -= 256;
+  }
+
+  if (va_pages > 0) {
+    // Memory block ends part way through a section.
+    if (translation_table.entry[virt.section].type == 1) {
+      l2table = mapped_table( translation_table.entry[virt.section].table );
+    }
+    else if (translation_table.entry[virt.section].type == 0) {
+      memory_fault_handler handler =
+                translation_table.entry[virt.section].handler;
+
+      l2table = make_section_page_mappable( virt );
+
+      // Copy the section handler to the remaining entries
+      for (int i = va_pages; i < 256; i++) {
+        l2table->entry[i].handler = handler;
+      }
+    }
+
+    if (l2table == 0) PANIC;
+
+    for (; va_pages > 0; va_pages--) {
+      l2table->entry[virt.page++].handler = handler;
+    }
   }
 }
 
@@ -238,7 +345,26 @@ void map_memory( memory_mapping const *mapping )
     // Does the mapping include something bigger?
     // Are all the pages in the same section?
     // Not yet implemented!
-    if (virt.section != 0xfff) PANIC;
+    extern l2tt VMSAv6_Level2_Tables[4096];
+
+    l2tt *table = 0;
+
+    if (translation_table.entry[virt.section].type == 1) {
+      table = mapped_table( translation_table.entry[virt.section].table );
+    }
+    else if (translation_table.entry[virt.section].type == 0) {
+      memory_fault_handler handler =
+                translation_table.entry[virt.section].handler;
+
+      table = make_section_page_mappable( virt );
+
+      for (int i = 0; i < 256; i++) {
+        table->entry[i].handler = handler;
+      }
+    }
+
+    if (translation_table.entry[virt.section].type != 1) PANIC;
+    if (table == 0) PANIC;
 
     l2tt_entry entry;
 
@@ -264,9 +390,13 @@ void map_memory( memory_mapping const *mapping )
     entry.AF = 1;
     entry.page_base = phys.page_base;
 
-    local_kernel_page_table.entry[virt.page] = entry;
-    if (mapping->all_cores)
-      global_kernel_page_tables[0].entry[virt.page] = entry;
+    for (int i = 0; i < mapping->pages; i++) {
+      local_kernel_page_table[0].entry[virt.page] = entry;
+      if (mapping->all_cores)
+        global_kernel_page_tables[0].entry[virt.page] = entry;
+
+      entry.page_base++;
+    }
   }
 
   // I misunderstood the meaning of the top bits in a supersection; all
@@ -285,27 +415,50 @@ void map_memory( memory_mapping const *mapping )
 // map_memory.
 bool check_global_table( uint32_t va, uint32_t fault )
 {
-  arm32_ptr pointer = { .raw = va };
+  arm32_ptr virt = { .raw = va };
 
   switch (fault & 0xf) {
   case 5: // Translation fault, level 1
     {
-      translation_table.entry[pointer.section] =
-                global_translation_table.entry[pointer.section];
+      l1tt_entry l1 = global_translation_table.entry[virt.section];
 
-      // If it's still the same, nobody's allocated memory there
-      return translation_table.entry[pointer.section].type != 0;
+      translation_table.entry[virt.section] = l1;
+
+      if (l1.type == 0) {
+        if (check_global_table == l1.handler)
+          return false;
+        else
+          return l1.handler( va, fault );
+      }
+      return true;
     }
     break;
   case 7: // Translation fault, level 2
     {
-      if (pointer.section == 0xfff) {
-        local_kernel_page_table.entry[pointer.page] =
-                global_kernel_page_tables[0].entry[pointer.page];
+      l1tt_table_entry l1 = translation_table.entry[virt.section].table;
+      l2tt *l2table = mapped_table( l1 );
 
-        return local_kernel_page_table.entry[pointer.page].type != 0;
+      l2tt_entry l2;
+
+      if (l2table == &local_kernel_page_table[0]) {
+        l2 = global_kernel_page_tables[0].entry[virt.page];
       }
-      else PANIC;
+      else {
+        PANIC; // Untested
+        l2 = l2table->entry[virt.page];
+      }
+
+      if (l2.type == 0) {
+        if (check_global_table == l2.handler)
+          return false;
+        else
+          return l2.handler( va, fault );
+      }
+
+      l2table->entry[virt.page] = l2;
+      push_writes_to_cache();
+
+      return true;
     }
     break;
   default: PANIC;
@@ -422,7 +575,7 @@ void create_default_translation_tables( uint32_t memory )
     pages[p.page+3] = entry;
   }
   {
-    arm32_ptr p = { .rawp = &local_kernel_page_table };
+    arm32_ptr p = { .rawp = &local_kernel_page_table[0] };
     uint32_t table = (uint32_t) pages;
     l2tt_entry entry = { .raw = 0x157 | table };
     pages[p.page+0] = entry;
@@ -475,6 +628,8 @@ void forget_boot_low_memory_mapping()
   // Clear any TLB using ASID 1
   asm ( "mcr p15, 0, %[one], c8, c7, 2" : : [one] "r" (1) );
 
+  mmu_switch_map( 0 );
+
   push_writes_to_cache();
 }
 
@@ -485,8 +640,9 @@ void enable_page_level_mapping()
   // If 1 MiB more or less becomes a problem!
   extern l2tt VMSAv6_Level2_Tables[4096];
 
+  shared.mmu.l2tables_phys_base = claim_contiguous_memory( 0x100 ); // 1 MiB
   memory_mapping l2tts = {
-    .base_page = claim_contiguous_memory( 0x100 ), // 1 MiB
+    .base_page = shared.mmu.l2tables_phys_base,
     .pages = 0x100,
     .vap = &VMSAv6_Level2_Tables,
     .type = CK_MemoryRW,
@@ -510,21 +666,10 @@ static memory_fault_handler find_handler( uint32_t fa )
     return translation_table.entry[va.section].handler;
   case 1:
     {
-      if (va.section == 0xfff) {
-        l2tt_entry l2 = local_kernel_page_table.entry[va.page];
-        if (l2.type != 0) PANIC;
-        return l2.handler;
-      }
-      uint32_t base = translation_table.entry[va.section].table.page_table_base;
-      arm32_ptr ta = { .raw = base << 12 };
-      // ta is a physical address
-      extern l2tt VMSAv6_Level2_Tables[4096];
-      arm32_ptr tables = { .rawp = &VMSAv6_Level2_Tables[0] };
-      tables.section_offset = ta.section_offset;
-      l2tt *table = tables.rawp;
-      l2tt_entry entry = table->entry[va.page];
-      if (entry.type != 0) PANIC;
-      return entry.handler;
+      l2tt *table = mapped_table( translation_table.entry[va.section].table );
+      l2tt_entry l2 = table->entry[va.page];
+      if (l2.type != 0) PANIC;
+      return l2.handler;
     }
   default: PANIC;
   }

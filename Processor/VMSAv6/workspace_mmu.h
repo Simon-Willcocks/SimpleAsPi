@@ -21,5 +21,6 @@ typedef union l2tt l2tt;
 typedef struct {
   uint32_t lock;
   l2tt *free;
+  uint32_t l2tables_phys_base; // page index
 } shared_mmu;
 

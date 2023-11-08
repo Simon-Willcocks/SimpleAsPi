@@ -21,11 +21,12 @@
 // This include file must define OSTaskSlot_extras and OSTask_extras
 #include "ostask_extras.h"
 
-// TODO Move this to a user-usable header file
 enum {
     OSTask_Yield = 0x300
   , OSTask_Sleep
-  , OSTask_Create
+  , OSTask_Create                       // New OSTask
+  , OSTask_Spawn                        // New OSTask in a new slot
+  , OSTask_EndTask                      // Last one out ends the slot
   , OSTask_RegisterInterruptSources     // Once only
   , OSTask_EnablingInterrupt            // Disable IRQs while I get
   , OSTask_WaitForInterrupt             // ready to wait.
@@ -38,6 +39,15 @@ enum {
 // These routines return the higher level data
 OSTaskSlot_extras *OSTaskSlot_extras_now();
 OSTask_extras *OSTask_extras_now();
+
+static inline
+void Task_EndTask()
+{
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_EndTask)
+    : "lr", "cc" );
+}
 
 static inline
 void Task_RegisterInterruptSources( uint32_t n )
