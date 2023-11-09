@@ -317,8 +317,7 @@ uint32_t get_free_device_pages( uint32_t number )
   extern uint32_t device_pages;
   uint32_t result = shared.ostask.device_pages;
   if (result == 0) {
-    change_word_if_equal( &shared.ostask.device_pages, 0,
-                          (uint32_t) &device_pages );
+    change_word_if_equal( &shared.ostask.device_pages, 0, (uint32_t) &device_pages );
   }
   for (;;) {
     result = shared.ostask.device_pages;

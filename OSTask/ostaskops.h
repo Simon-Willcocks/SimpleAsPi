@@ -80,16 +80,16 @@ void *Task_MapDevicePages( uint32_t base_page, uint32_t pages )
 {
   register uint32_t page asm ( "r0" ) = base_page;
   register uint32_t number asm ( "r1" ) = pages;
-  register void *mapped asm ( "r0" );
+  register void *virt asm ( "r0" );
 
   asm volatile ( "svc %[swi]"
-    : "=r" (mapped)
+    : "=r" (virt)
     : [swi] "i" (OSTask_MapDevicePages)
     , "r" (page)
     , "r" (number)
     : "lr", "cc" );
 
-  return mapped;
+  return virt;
 }
 
 static inline

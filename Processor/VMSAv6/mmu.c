@@ -172,8 +172,9 @@ static inline l2tt *make_section_page_mappable( arm32_ptr virt )
 {
   // Fill a level 2 table with the same handler
   // Reminder: MMU structures are protected by shared.mmu.lock
+  if (0 == shared.mmu.free) PANIC;
+
   l2tt *table = shared.mmu.free->next;
-  if (table == shared.mmu.free) PANIC;
 
   dll_detach_l2tt( table );
 
@@ -638,6 +639,7 @@ void enable_page_level_mapping()
   // This is probably an extreme number of tables, TODO see how 
   // many we actually need and adjust the algorithms accordingly.
   // If 1 MiB more or less becomes a problem!
+
   extern l2tt VMSAv6_Level2_Tables[4096];
 
   shared.mmu.l2tables_phys_base = claim_contiguous_memory( 0x100 ); // 1 MiB
@@ -651,7 +653,8 @@ void enable_page_level_mapping()
     .usr32_access = 0 };
   if (l2tts.base_page == 0xffffffff) PANIC;
   map_memory( &l2tts );
-  for (int i = 0; i < number_of( VMSAv6_Level2_Tables ); i++) {
+  // for (int i = 0; i < number_of( VMSAv6_Level2_Tables ); i++) {
+  for (int i = 0; i < 64; i++) {
     l2tt *t = &VMSAv6_Level2_Tables[i];
     dll_new_l2tt( t );
     dll_attach_l2tt( t, &shared.mmu.free );
