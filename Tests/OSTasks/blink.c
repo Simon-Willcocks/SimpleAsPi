@@ -70,17 +70,6 @@ void setup_shared_heap()
 // down to ground (e.g. physical pin 1), this will alternately
 // blink them.
 
-void Sleep( uint32_t ms )
-{
-#ifdef QEMU
-  ms = ms / 10;
-#endif
-  register uint32_t t asm( "r0" ) = ms;
-  // sets r0 to 0. volatile is needed, since the optimiser ignores
-  // asm statements with an output which is ignored.
-  asm volatile ( "svc %[swi]" : "=r" (t) : [swi] "i" (OSTask_Sleep), "r" (t) );
-}
-
 static inline
 void timer_set_countdown( int32_t timer )
 {
@@ -89,9 +78,11 @@ void timer_set_countdown( int32_t timer )
   asm volatile ( "mcr p15, 0, %[config], c14, c2, 1" : : [config] "r" (1) );
 }
 
-void ticker( uint32_t handle, uint32_t core, QA7 *qa7, GPIO *gpio )
+void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
 {
   handle = handle; // Task handle not used
+
+  QA7 volatile *qa7 = Task_MapDevicePages( qa7_page, 1 );
 
   uint32_t clock_frequency;
 
@@ -133,9 +124,11 @@ void ticker( uint32_t handle, uint32_t core, QA7 *qa7, GPIO *gpio )
   }
 }
 
-void start_ticker( QA7 *qa7, GPIO *gpio )
+void start_ticker( uint32_t qa7_page )
 {
-  // Writing the cp15 registers has to be done at svc32
+  QA7 volatile *qa7 = Task_MapDevicePages( qa7_page, 1 );
+
+  // Writing the cp15 registers has to be done at svc32 (module init)
   qa7->timer_prescaler = 0x06AAAAAB;
 #ifdef QEMU
   const uint32_t clock_frequency = 62500000;
@@ -156,23 +149,22 @@ void start_ticker( QA7 *qa7, GPIO *gpio )
 
   register void *start asm( "r0" ) = ticker;
   register void *sp asm( "r1" ) = stack + stack_size;
-  register uint32_t r0 asm( "r2" ) = workspace.core;
-  register void *r1 asm( "r3" ) = qa7;
-  register void *r2 asm( "r4" ) = gpio;
+  register uint32_t r1 asm( "r2" ) = workspace.core;
+  register uint32_t r2 asm( "r3" ) = qa7_page;
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_Create)
     , "r" (start)
     , "r" (sp)
-    , "r" (r0)
     , "r" (r1)
     , "r" (r2)
     : "lr", "cc" );
 }
 
-void blink_some_leds( uint32_t handle, GPIO volatile *gpio )
+void blink_some_leds( uint32_t handle, uint32_t gpio_page )
 {
   handle = handle;
+  GPIO volatile *gpio = Task_MapDevicePages( gpio_page, 1 );
 
   uint32_t yellow = 27;
   uint32_t green = 22;
@@ -186,12 +178,12 @@ void blink_some_leds( uint32_t handle, GPIO volatile *gpio )
   push_writes_to_device();
 
   for (;;) {
-    Sleep( 100 );
+    Task_Sleep( 100 );
     // for (int i = 0; i < 1 << 24; i++) asm ( "nop" );
     gpio->gpset[yellow/32] = 1 << (yellow % 32);
     gpio->gpclr[green/32] = 1 << (green % 32);
     push_writes_to_device();
-    Sleep( 500 );
+    Task_Sleep( 500 );
     // for (int i = 0; i < 1 << 25; i++) asm ( "nop" );
     gpio->gpclr[yellow/32] = 1 << (yellow % 32);
     gpio->gpset[green/32] = 1 << (green % 32);
@@ -201,26 +193,27 @@ void blink_some_leds( uint32_t handle, GPIO volatile *gpio )
   __builtin_unreachable();
 }
 
-void start_blink_some_leds( GPIO *gpio )
+void start_blink_some_leds( uint32_t gpio_page )
 {
   static uint32_t const stack_size = 72;
   uint8_t *stack = shared_heap_allocate( stack_size );
 
   register void *start asm( "r0" ) = blink_some_leds;
   register void *sp asm( "r1" ) = stack + stack_size;
-  register void *r0 asm( "r2" ) = gpio;
+  register uint32_t r1 asm( "r2" ) = gpio_page;
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_Create)
     , "r" (start)
     , "r" (sp)
-    , "r" (r0)
+    , "r" (r1)
     : "lr", "cc" );
 }
 
-void send_to_uart( uint32_t handle, UART volatile *uart )
+void send_to_uart( uint32_t handle, uint32_t uart_page )
 {
   handle = handle;
+  UART volatile *uart = Task_MapDevicePages( uart_page, 1 );
   uart->control = 0x31; // enable, tx & rx
   push_writes_to_device();
   uart->data = 'X';
@@ -228,7 +221,7 @@ void send_to_uart( uint32_t handle, UART volatile *uart )
 
   uint32_t c = 'a';
   for (;;) {
-    Sleep( 100 );
+    Task_Sleep( 100 );
     uart->data = c;
     push_writes_to_device();
     if (c == 'z') c = 'a'; else c = c + 1;
@@ -237,20 +230,20 @@ void send_to_uart( uint32_t handle, UART volatile *uart )
   __builtin_unreachable();
 }
 
-void start_send_to_uart( UART *uart )
+void start_send_to_uart( uint32_t uart_page )
 {
   static uint32_t const stack_size = 72;
   uint8_t *stack = shared_heap_allocate( stack_size );
 
   register void *start asm( "r0" ) = send_to_uart;
   register void *sp asm( "r1" ) = stack + stack_size;
-  register void *r0 asm( "r2" ) = uart;
+  register uint32_t r1 asm( "r2" ) = uart_page;
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_Create)
     , "r" (start)
     , "r" (sp)
-    , "r" (r0)
+    , "r" (r1)
     : "lr", "cc" );
 }
 
@@ -259,49 +252,13 @@ void __attribute__(( noreturn )) startup()
   // Running with multi-tasking enabled. This routine gets called
   // just once.
 
-  QA7 *qa7 = (void*) 0xfff00000;
-
-  memory_mapping map_qa7 = {
-    .base_page = 0x40000000 >> 12,
-    .pages = 1,
-    .vap = qa7,
-    .type = CK_Device,
-    .map_specific = 0,
-    .all_cores = 1,
-    .usr32_access = 1 };
-  map_memory( &map_qa7 );
-
-  GPIO *gpio = (void*) 0xfff01000;
-
-  memory_mapping map_gpio = {
-    .base_page = 0x3f200000 >> 12,
-    .pages = 1,
-    .vap = gpio,
-    .type = CK_Device,
-    .map_specific = 0,
-    .all_cores = 1,
-    .usr32_access = 1 };
-  map_memory( &map_gpio );
-
-  UART *uart = (void*) 0xfff02000;
-
-  memory_mapping map_uart = {
-    .base_page = 0x3f201000 >> 12,
-    .pages = 1,
-    .vap = uart,
-    .type = CK_Device,
-    .map_specific = 0,
-    .all_cores = 1,
-    .usr32_access = 1 };
-  map_memory( &map_uart );
-
   setup_system_heap();
   setup_shared_heap();
 
-  start_blink_some_leds( gpio );
-  start_send_to_uart( uart );
+  start_blink_some_leds( 0x3f200000 >> 12 );
+  start_send_to_uart( 0x3f201000 >> 12 );
 
-  start_ticker( qa7, gpio );
+  start_ticker( 0x40000000 >> 12 );
 
   asm ( "mov sp, %[reset_sp]"
     "\n  cpsid aif, #0x10"

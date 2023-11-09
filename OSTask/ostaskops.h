@@ -33,12 +33,25 @@ enum {
   , OSTask_InterruptIsOff               // Enable interrupts (I'm done,
                                         // but not yet waiting)
   , OSTask_SwitchToCore                 // Use sparingly!
+  , OSTask_MapDevicePages               // For device drivers
   , OSTask_Tick                         // For HAL module use only
 } OSTaskSWI;
 
 // These routines return the higher level data
 OSTaskSlot_extras *OSTaskSlot_extras_now();
 OSTask_extras *OSTask_extras_now();
+
+static inline
+void Task_Sleep( uint32_t ms )
+{
+#ifdef QEMU
+  ms = ms / 10;
+#endif
+  register uint32_t t asm( "r0" ) = ms;
+  // sets r0 to 0. volatile is needed, since the optimiser ignores
+  // asm statements with an output which is ignored.
+  asm volatile ( "svc %[swi]" : "=r" (t) : [swi] "i" (OSTask_Sleep), "r" (t) );
+}
 
 static inline
 void Task_EndTask()
@@ -59,6 +72,24 @@ void Task_RegisterInterruptSources( uint32_t n )
     : [swi] "i" (OSTask_RegisterInterruptSources)
     , "r" (number)
     : "lr", "cc" );
+}
+
+// Note: base page is physical address >> 12
+static inline
+void *Task_MapDevicePages( uint32_t base_page, uint32_t pages )
+{
+  register uint32_t page asm ( "r0" ) = base_page;
+  register uint32_t number asm ( "r1" ) = pages;
+  register void *mapped asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+    : "=r" (mapped)
+    : [swi] "i" (OSTask_MapDevicePages)
+    , "r" (page)
+    , "r" (number)
+    : "lr", "cc" );
+
+  return mapped;
 }
 
 static inline

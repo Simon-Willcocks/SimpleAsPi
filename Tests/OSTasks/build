@@ -23,7 +23,7 @@ arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init.
 
 SOURCES="$SYSTEM:$SUBSYSTEMS:"
 
-echo Sources: ${SOURCES//://*.c }
+echo Sources: ${SOURCES//://*.c } &&
 
 # 16MiB boot RAM
 # 256MiB minimum RAM
@@ -42,6 +42,8 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=system_heap_top=0xff500000 \
         -Wl,--defsym=shared_heap_base=0xff500000 \
         -Wl,--defsym=shared_heap_top=0xff600000 \
+        \
+        -Wl,--defsym=device_pages=0xfff00000 \
         \
         -Wl,--defsym=translation_table=0xfff80000 \
         -Wl,--defsym=global_translation_table=0xfff84000 \

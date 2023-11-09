@@ -309,6 +309,25 @@ static void sleeping_tasks_tick()
     mpsafe_manipulate_OSTask_list( &shared.ostask.runnable, add_woken, list );
 }
 
+uint32_t get_free_device_pages( uint32_t number )
+{
+  number = number << 12; // Bytes
+
+  // FIXME: Make the pages slot-specific. (Maybe work down from 0x8000?)
+  extern uint32_t device_pages;
+  uint32_t result = shared.ostask.device_pages;
+  if (result == 0) {
+    change_word_if_equal( &shared.ostask.device_pages, 0,
+                          (uint32_t) &device_pages );
+  }
+  for (;;) {
+    result = shared.ostask.device_pages;
+    if (result == change_word_if_equal( &shared.ostask.device_pages,
+                                        result, result + number )) break;
+  }
+  return result;
+}
+
 void NORET ostask_svc( svc_registers *regs, int number )
 {
   OSTask *running = workspace.ostask.running;
@@ -501,6 +520,21 @@ void NORET ostask_svc( svc_registers *regs, int number )
       PANIC;
     }
     break;
+  case OSTask_MapDevicePages:
+    {
+      uint32_t pages = regs->r[1];
+      memory_mapping map = {
+        .base_page = regs->r[0],
+        .pages = pages,
+        .va = get_free_device_pages( pages ),
+        .type = CK_Device,
+        .map_specific = 0,
+        .all_cores = 1,
+        .usr32_access = 1 };
+      map_memory( &map );
+      regs->r[0] = map.va;
+    }
+    break;
   case OSTask_Tick:
     {
       sleeping_tasks_tick();
@@ -520,6 +554,7 @@ void NORET ostask_svc( svc_registers *regs, int number )
     }
 
     if (resume->slot != currently_mapped_slot) {
+  PANIC;
       mmu_switch_map( resume->slot->mmu_map );
     }
   }
@@ -649,6 +684,7 @@ void __attribute__(( naked, noreturn )) irq_handler()
   // The interrupt task is always in OSTask_WaitForInterrupt
 
   if (irq_task->slot != interrupted_task->slot) {
+  PANIC;
     mmu_switch_map( irq_task->slot->mmu_map );
   }
 
