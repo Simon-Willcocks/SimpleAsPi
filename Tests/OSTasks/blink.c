@@ -82,7 +82,9 @@ void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
 {
   handle = handle; // Task handle not used
 
-  QA7 volatile *qa7 = Task_MapDevicePages( qa7_page, 1 );
+  QA7 volatile *qa7 = Task_MapDevicePages( 0x7000, qa7_page, 1 );
+
+  qa7->timer_prescaler = 0x06AAAAAB;
 
   uint32_t clock_frequency;
 
@@ -126,10 +128,7 @@ void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
 
 void start_ticker( uint32_t qa7_page )
 {
-  QA7 volatile *qa7 = Task_MapDevicePages( qa7_page, 1 );
-
   // Writing the cp15 registers has to be done at svc32 (module init)
-  qa7->timer_prescaler = 0x06AAAAAB;
 #ifdef QEMU
   const uint32_t clock_frequency = 62500000;
 #else
@@ -164,7 +163,7 @@ void start_ticker( uint32_t qa7_page )
 void blink_some_leds( uint32_t handle, uint32_t gpio_page )
 {
   handle = handle;
-  GPIO volatile *gpio = Task_MapDevicePages( gpio_page, 1 );
+  GPIO volatile *gpio = Task_MapDevicePages( 0x6000, gpio_page, 1 );
 
   uint32_t yellow = 27;
   uint32_t green = 22;
@@ -183,7 +182,7 @@ void blink_some_leds( uint32_t handle, uint32_t gpio_page )
     gpio->gpset[yellow/32] = 1 << (yellow % 32);
     gpio->gpclr[green/32] = 1 << (green % 32);
     push_writes_to_device();
-    Task_Sleep( 500 );
+    Task_Sleep( 900 );
     // for (int i = 0; i < 1 << 25; i++) asm ( "nop" );
     gpio->gpclr[yellow/32] = 1 << (yellow % 32);
     gpio->gpset[green/32] = 1 << (green % 32);
@@ -213,7 +212,7 @@ void start_blink_some_leds( uint32_t gpio_page )
 void send_to_uart( uint32_t handle, uint32_t uart_page )
 {
   handle = handle;
-  UART volatile *uart = Task_MapDevicePages( uart_page, 1 );
+  UART volatile *uart = Task_MapDevicePages( 0x5000, uart_page, 1 );
   uart->control = 0x31; // enable, tx & rx
   push_writes_to_device();
   uart->data = 'X';
@@ -251,6 +250,9 @@ void __attribute__(( noreturn )) startup()
 {
   // Running with multi-tasking enabled. This routine gets called
   // just once.
+
+  enable_page_level_mapping();
+  if (shared.mmu.free == 0) PANIC;
 
   setup_system_heap();
   setup_shared_heap();

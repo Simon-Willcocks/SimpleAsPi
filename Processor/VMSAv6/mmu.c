@@ -136,6 +136,33 @@ extern l2tt local_kernel_page_table[4];
 extern l2tt global_kernel_page_tables[4];
 extern uint8_t top_of_boot_RAM;
 
+static inline l2tt *shared_table( l1tt_table_entry entry )
+{
+  arm32_ptr phys = { .raw = entry.page_table_base << 10 };
+
+  extern l2tt VMSAv6_Level2_Tables[4096];
+  arm32_ptr vbase = { .rawp = &VMSAv6_Level2_Tables };
+  vbase.section_offset = phys.section_offset;
+
+  return vbase.rawp;
+}
+
+static inline l2tt *global_mapped_table( l1tt_table_entry entry )
+{
+  arm32_ptr base = { .page_base = shared.mmu.l2tables_phys_base };
+
+  arm32_ptr phys = { .raw = entry.page_table_base << 10 };
+
+  if (phys.section != base.section) {
+    uint32_t index = entry.page_table_base & 3;
+    if (index != 0) PANIC; // Untested, do they always match up with locals?
+    return &global_kernel_page_tables[index];
+  }
+  else {
+    return shared_table( entry );
+  }
+}
+
 static inline l2tt *mapped_table( l1tt_table_entry entry )
 {
   arm32_ptr base = { .page_base = shared.mmu.l2tables_phys_base };
@@ -144,12 +171,11 @@ static inline l2tt *mapped_table( l1tt_table_entry entry )
 
   if (phys.section != base.section) {
     uint32_t index = entry.page_table_base & 3;
+    if (index != 0) PANIC; // Untested, do they always match up with globals?
     return &local_kernel_page_table[index];
   }
   else {
-    extern l2tt VMSAv6_Level2_Tables[4096];
-    uint32_t index = entry.page_table_base & (4096-1);
-    return &VMSAv6_Level2_Tables[index];
+    return shared_table( entry );
   }
 }
 
@@ -158,27 +184,52 @@ static inline l1tt_table_entry table_entry( l2tt *table )
   arm32_ptr tab = { .rawp = table };
   arm32_ptr base = { .page_base = shared.mmu.l2tables_phys_base };
 
-  if (0 != (tab.raw & 0x3ff)) PANIC;
+  tab.section = base.section;
 
-  uint32_t offset = 0x000ffc00 & tab.raw;
+  if (0 != (tab.section_offset & 0x3ff)) PANIC;
 
-  l1tt_table_entry entry = { .type1 = 1,
-                .page_table_base = base.raw | offset };
+  l1tt_table_entry entry = { .type1 = 1, .page_table_base = tab.raw >> 10 };
 
   return entry;
 }
 
 static inline l2tt *make_section_page_mappable( arm32_ptr virt )
 {
+  // Replace an invalid l1tt entry with a table so that pages can
+  // be mapped into the area.
+
+  l2tt *table;
+  l1tt_table_entry entry;
+
   // Fill a level 2 table with the same handler
   // Reminder: MMU structures are protected by shared.mmu.lock
-  if (0 == shared.mmu.free) PANIC;
+  // or being called early in the boot sequence so single-tasking.
 
-  l2tt *table = shared.mmu.free->next;
+  if (0 == shared.mmu.free) {
+    // Early in the boot process, don't panic yet!
+PANIC;
+    int i;
 
-  dll_detach_l2tt( table );
+    for (i = 0; i < number_of( local_kernel_page_table ); i++) {
+      table = &local_kernel_page_table[i];
+      if (table->entry[0].raw == 0) break;
+    }
+    if (table->entry[i].raw != 0) PANIC;
 
-  translation_table.entry[virt.section].table = table_entry( table );
+    if (1 != translation_table.entry[0xfff].type) PANIC;
+
+    entry = translation_table.entry[0xfff].table;
+    entry.page_table_base |= i;
+  }
+  else {
+    table = shared.mmu.free->next;
+
+    dll_detach_l2tt( table );
+
+    entry = table_entry( table );
+  }
+
+  translation_table.entry[virt.section].table = entry;
 
   return table;
 }
@@ -227,7 +278,7 @@ void clear_memory_region(
 
   if (0 != virt.section_offset) PANIC;
 
-  while (va_pages > 256) { // Sections
+  while (va_pages >= 256) { // Sections
     if (translation_table.entry[virt.section].type == 1) {
       // Free up table
     }
@@ -258,6 +309,8 @@ void clear_memory_region(
       l2table->entry[virt.page++].handler = handler;
     }
   }
+
+  push_writes_to_cache();
 }
 
 // Orthogonal features. Cacheing, permissions. Pages default to small; large
@@ -379,8 +432,13 @@ void map_memory( memory_mapping const *mapping )
       PANIC;
     }
 
-    if (mapping->all_cores)
+    l2tt *global = 0;
+    if (mapping->all_cores) {
       entry.S = 1;
+      l1tt_entry l1 = global_translation_table.entry[virt.section];
+      if (l1.type != 1) PANIC;
+      global = global_mapped_table( l1.table );
+    }
 
     if (mapping->usr32_access)
       entry.unprivileged_access = 1;
@@ -392,9 +450,9 @@ void map_memory( memory_mapping const *mapping )
     entry.page_base = phys.page_base;
 
     for (int i = 0; i < mapping->pages; i++) {
-      local_kernel_page_table[0].entry[virt.page] = entry;
-      if (mapping->all_cores)
-        global_kernel_page_tables[0].entry[virt.page] = entry;
+      table->entry[virt.page] = entry;
+      if (global != 0)
+        global->entry[virt.page] = entry;
 
       entry.page_base++;
     }
@@ -617,14 +675,9 @@ void create_default_translation_tables( uint32_t memory )
 
 void forget_boot_low_memory_mapping()
 {
-  uint8_t *ram_top = &top_of_boot_RAM;
-  uint32_t sections = ((uint32_t) ram_top) >> 20;
+  uint32_t ram_top = (uint32_t) &top_of_boot_RAM;
 
-  for (int i = 0; i < sections; i++) {
-    translation_table.entry[i].handler = check_global_table;
-  }
-
-  push_writes_to_cache();
+  clear_memory_region( 0, ram_top >> 12, check_global_table );
 
   // Clear any TLB using ASID 1
   asm ( "mcr p15, 0, %[one], c8, c7, 2" : : [one] "r" (1) );
@@ -664,12 +717,13 @@ void enable_page_level_mapping()
 static memory_fault_handler find_handler( uint32_t fa )
 {
   arm32_ptr va = { .raw = fa };
-  switch (translation_table.entry[va.section].type) {
+  l1tt_entry l1 = translation_table.entry[va.section];
+  switch (l1.type) {
   case 0:
-    return translation_table.entry[va.section].handler;
+    return l1.handler;
   case 1:
     {
-      l2tt *table = mapped_table( translation_table.entry[va.section].table );
+      l2tt *table = mapped_table( l1.table );
       l2tt_entry l2 = table->entry[va.page];
       if (l2.type != 0) PANIC;
       return l2.handler;

@@ -17,47 +17,6 @@
 #include "mpsafe_dll.h"
 #include "heap.h"
 
-typedef struct OSTaskSlot OSTaskSlot;
-typedef struct OSTask OSTask;
-
-static inline uint32_t ostask_handle( OSTask *task )
-{
-  return 0x4b534154 ^ (uint32_t) task;
-}
-
-static inline OSTask *ostask_from_handle( uint32_t h )
-{
-  return (OSTask *) (0x4b534154 ^ h);
-}
-
-struct OSTaskSlot {
-  uint32_t mmu_map;
-  uint32_t number_of_tasks;
-  OSTaskSlot_extras extras;
-  struct {
-    uint32_t base;      // Pages
-    uint32_t pages;     // Pages
-    uint32_t va;        // Absolute
-  } app_mem[30];
-
-  // List is only used for free pool, ATM.
-  OSTaskSlot *next;
-  OSTaskSlot *prev;
-};
-
-struct __attribute__(( packed, aligned( 4 ) )) OSTask {
-  svc_registers regs;
-  uint32_t banked_sp_usr; // Only stored when leaving usr or sys mode
-  uint32_t banked_lr_usr; // Only stored when leaving usr or sys mode
-  int32_t resumes; // Signed: -1 => blocked
-  OSTaskSlot *slot;
-
-  OSTask_extras extras;
-
-  OSTask *next;
-  OSTask *prev;
-};
-
 // OK, to start with, temporarily, 1MiB sections
 extern OSTask OSTask_free_pool[];
 extern OSTaskSlot OSTaskSlot_free_pool[];
@@ -115,6 +74,8 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 {
   forget_boot_low_memory_mapping();
 
+  initialise_app_virtual_memory_area();
+
   bool reclaimed = core_claim_lock( &shared.ostask.lock, core + 1 );
   if (reclaimed) PANIC;
 
@@ -167,6 +128,13 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
     // Become the idle OSTask
     workspace.ostask.idle = workspace.ostask.running;
     workspace.ostask.idle->slot = shared.ostask.first;
+
+    // Before we start scheduling tasks from other cores, ensure the shared
+    // memory areas that memory_fault_handlers might use are mapped into this
+    // core's translation tables. (The first core in already has them.)
+
+    // This is not the prettiest approach, but I think it should work.
+    asm ( "ldr r0, [%[mem]]" : : [mem] "r" (&OSTaskSlot_free_pool) );
 
     asm ( "mov sp, %[reset_sp]"
       "\n  cpsid aif, #0x10"
@@ -307,24 +275,6 @@ static void sleeping_tasks_tick()
   OSTask *list = mpsafe_manipulate_OSTask_list( &shared.ostask.sleeping, wakey_wakey, 0 );
   if (list != 0)
     mpsafe_manipulate_OSTask_list( &shared.ostask.runnable, add_woken, list );
-}
-
-uint32_t get_free_device_pages( uint32_t number )
-{
-  number = number << 12; // Bytes
-
-  // FIXME: Make the pages slot-specific. (Maybe work down from 0x8000?)
-  extern uint32_t device_pages;
-  uint32_t result = shared.ostask.device_pages;
-  if (result == 0) {
-    change_word_if_equal( &shared.ostask.device_pages, 0, (uint32_t) &device_pages );
-  }
-  for (;;) {
-    result = shared.ostask.device_pages;
-    if (result == change_word_if_equal( &shared.ostask.device_pages,
-                                        result, result + number )) break;
-  }
-  return result;
 }
 
 void NORET ostask_svc( svc_registers *regs, int number )
@@ -521,17 +471,15 @@ void NORET ostask_svc( svc_registers *regs, int number )
     break;
   case OSTask_MapDevicePages:
     {
-      uint32_t pages = regs->r[1];
-      memory_mapping map = {
-        .base_page = regs->r[0],
-        .pages = pages,
-        .va = get_free_device_pages( pages ),
-        .type = CK_Device,
-        .map_specific = 0,
-        .all_cores = 1,
-        .usr32_access = 1 };
-      map_memory( &map );
-      regs->r[0] = map.va;
+      uint32_t virt = regs->r[0];
+      uint32_t page_base = regs->r[1];
+      uint32_t pages = regs->r[2];
+      regs->r[0] = map_device_pages( virt, page_base, pages );
+    }
+    break;
+  case OSTask_AppMemoryTop:
+    {
+      regs->r[0] = app_memory_top( regs->r[0] );
     }
     break;
   case OSTask_Tick:
@@ -553,8 +501,8 @@ void NORET ostask_svc( svc_registers *regs, int number )
     }
 
     if (resume->slot != currently_mapped_slot) {
-  PANIC;
-      mmu_switch_map( resume->slot->mmu_map );
+      // FIXME: Can we be 100% sure that the old slot still exists?
+      changing_slot( currently_mapped_slot, resume->slot );
     }
   }
 
@@ -683,8 +631,7 @@ void __attribute__(( naked, noreturn )) irq_handler()
   // The interrupt task is always in OSTask_WaitForInterrupt
 
   if (irq_task->slot != interrupted_task->slot) {
-  PANIC;
-    mmu_switch_map( irq_task->slot->mmu_map );
+    changing_slot( interrupted_task->slot, irq_task->slot );
   }
 
   asm (

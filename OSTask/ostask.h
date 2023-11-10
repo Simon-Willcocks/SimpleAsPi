@@ -41,3 +41,59 @@ void NORET execute_swi( svc_registers *regs, int number );
 
 void save_task_state( svc_registers *regs );
 void NORET resume_task( uint32_t blocked ); // handle of task not currently runnable or running
+
+typedef struct OSTaskSlot OSTaskSlot;
+typedef struct OSTask OSTask;
+
+static inline uint32_t ostask_handle( OSTask *task )
+{
+  return 0x4b534154 ^ (uint32_t) task;
+}
+
+static inline OSTask *ostask_from_handle( uint32_t h )
+{
+  return (OSTask *) (0x4b534154 ^ h);
+}
+
+typedef struct {
+  uint32_t page_base;   // Pages
+  uint32_t pages;       // Pages
+  uint32_t va_page:20;  // Start page
+  bool     device:1;
+  uint32_t res:11;
+} app_memory_block;
+
+struct OSTaskSlot {
+  uint32_t mmu_map;
+  uint32_t number_of_tasks;
+  OSTaskSlot_extras extras;
+
+  // See memory.c
+  app_memory_block app_mem[30];
+
+  // List is only used for free pool, ATM.
+  OSTaskSlot *next;
+  OSTaskSlot *prev;
+};
+
+struct __attribute__(( packed, aligned( 4 ) )) OSTask {
+  svc_registers regs;
+  uint32_t banked_sp_usr; // Only stored when leaving usr or sys mode
+  uint32_t banked_lr_usr; // Only stored when leaving usr or sys mode
+  int32_t resumes; // Signed: -1 => blocked
+  OSTaskSlot *slot;
+
+  OSTask_extras extras;
+
+  OSTask *next;
+  OSTask *prev;
+};
+
+// Application memory management (memory.c)
+uint32_t map_device_pages( uint32_t va,
+                           uint32_t page_base,
+                           uint32_t pages );
+uint32_t app_memory_top( uint32_t top );
+void initialise_app_virtual_memory_area();
+void clear_app_virtual_memory_area();
+void changing_slot( OSTaskSlot *old, OSTaskSlot *new );

@@ -34,6 +34,7 @@ enum {
                                         // but not yet waiting)
   , OSTask_SwitchToCore                 // Use sparingly!
   , OSTask_MapDevicePages               // For device drivers
+  , OSTask_AppMemoryTop                 // r0 = New value, or 0 to read
   , OSTask_Tick                         // For HAL module use only
 } OSTaskSWI;
 
@@ -76,20 +77,21 @@ void Task_RegisterInterruptSources( uint32_t n )
 
 // Note: base page is physical address >> 12
 static inline
-void *Task_MapDevicePages( uint32_t base_page, uint32_t pages )
+void *Task_MapDevicePages( uint32_t va, uint32_t base_page, uint32_t pages )
 {
-  register uint32_t page asm ( "r0" ) = base_page;
-  register uint32_t number asm ( "r1" ) = pages;
-  register void *virt asm ( "r0" );
+  register uint32_t virt asm ( "r0" ) = va;
+  register uint32_t page asm ( "r1" ) = base_page;
+  register uint32_t number asm ( "r2" ) = pages;
 
   asm volatile ( "svc %[swi]"
-    : "=r" (virt)
+    :
     : [swi] "i" (OSTask_MapDevicePages)
+    , "r" (virt)
     , "r" (page)
     , "r" (number)
     : "lr", "cc" );
 
-  return virt;
+  return (void*) va;
 }
 
 static inline

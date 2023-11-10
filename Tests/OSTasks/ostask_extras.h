@@ -20,6 +20,11 @@ struct OSTask_extras {
 };
 
 struct OSTaskSlot_extras {
+  struct {
+    uint32_t base;      // Pages
+    uint32_t pages;     // Pages
+    uint32_t va;        // Absolute
+  } app_mem[30];
 };
 
 // Functions required by the OSTask code
