@@ -19,6 +19,7 @@
 #include "bcm_gpio.h"
 #include "bcm_uart.h"
 #include "heap.h"
+#include "raw_memory_manager.h"
 
 void setup_system_heap()
 {
@@ -152,7 +153,7 @@ void start_ticker( uint32_t qa7_page )
   register uint32_t r2 asm( "r3" ) = qa7_page;
   asm ( "svc %[swi]"
     :
-    : [swi] "i" (OSTask_Create)
+    : [swi] "i" (OSTask_Spawn)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -163,7 +164,7 @@ void start_ticker( uint32_t qa7_page )
 void blink_some_leds( uint32_t handle, uint32_t gpio_page )
 {
   handle = handle;
-  GPIO volatile *gpio = Task_MapDevicePages( 0x6000, gpio_page, 1 );
+  GPIO volatile *gpio = Task_MapDevicePages( 0x7000, gpio_page, 1 );
 
   uint32_t yellow = 27;
   uint32_t green = 22;
@@ -202,34 +203,40 @@ void start_blink_some_leds( uint32_t gpio_page )
   register uint32_t r1 asm( "r2" ) = gpio_page;
   asm ( "svc %[swi]"
     :
-    : [swi] "i" (OSTask_Create)
+    : [swi] "i" (OSTask_Spawn)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
     : "lr", "cc" );
 }
 
-void send_to_uart( uint32_t handle, uint32_t uart_page )
+void send_to_uart( uint32_t handle, uint32_t uart_page, uint32_t pipe )
 {
   handle = handle;
-  UART volatile *uart = Task_MapDevicePages( 0x5000, uart_page, 1 );
+  UART volatile *uart = Task_MapDevicePages( 0x7000, uart_page, 1 );
   uart->control = 0x31; // enable, tx & rx
   push_writes_to_device();
   uart->data = 'X';
   push_writes_to_device();
 
-  uint32_t c = 'a';
+  PipeSpace data = {};
   for (;;) {
-    Task_Sleep( 100 );
-    uart->data = c;
-    push_writes_to_device();
-    if (c == 'z') c = 'a'; else c = c + 1;
+    if (data.available == 0)
+      data = PipeOp_WaitForData( pipe, 16 );
+
+asm ( "udf 88" );
+    for (int i = 0; i < data.available; i++) {
+      uart->data = ((char const*)data.location)[i];
+      push_writes_to_device();
+    }
+
+    data = PipeOp_DataConsumed( pipe, data.available );
   }
 
   __builtin_unreachable();
 }
 
-void start_send_to_uart( uint32_t uart_page )
+void start_send_to_uart( uint32_t uart_page, uint32_t pipe )
 {
   static uint32_t const stack_size = 72;
   uint8_t *stack = shared_heap_allocate( stack_size );
@@ -237,14 +244,95 @@ void start_send_to_uart( uint32_t uart_page )
   register void *start asm( "r0" ) = send_to_uart;
   register void *sp asm( "r1" ) = stack + stack_size;
   register uint32_t r1 asm( "r2" ) = uart_page;
+  register uint32_t r2 asm( "r3" ) = pipe;
   asm ( "svc %[swi]"
     :
-    : [swi] "i" (OSTask_Create)
+    : [swi] "i" (OSTask_Spawn)
+    , "r" (start)
+    , "r" (sp)
+    , "r" (r1)
+    , "r" (r2)
+    : "lr", "cc" );
+}
+
+void feed_pipe( uint32_t handle, uint32_t pipe )
+{
+  handle = handle;
+
+  PipeSpace space = {};
+  char c = 'C';
+  for (;;) {
+    Task_Sleep( 10 );
+    if (space.available == 0)
+      space = PipeOp_WaitForSpace( pipe, 1 );
+
+    *(char*) space.location = c;
+    c++;
+    if (c == 'Z') c = 'A';
+    space = PipeOp_SpaceFilled( pipe, 1 );
+  }
+
+  __builtin_unreachable();
+}
+
+void start_feed_pipe( uint32_t pipe )
+{
+  static uint32_t const stack_size = 72;
+  uint8_t *stack = shared_heap_allocate( stack_size );
+
+  register void *start asm( "r0" ) = feed_pipe;
+  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t r1 asm( "r2" ) = pipe;
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_Spawn)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
     : "lr", "cc" );
 }
+
+
+
+
+void ping_pong( uint32_t handle, uint32_t to, uint32_t fro, bool i )
+{
+  handle = handle;
+
+  PipeSpace space = {};
+  PipeSpace data = {};
+
+  for (;;) {
+    if (space.available < 5)
+      space = PipeOp_WaitForSpace( to, 5 );
+
+    char *out = space.location;
+    *out++ = 'P';
+    *out++ = i ? 'i' : 'o';
+    *out++ = 'n';
+    *out++ = 'g';
+    *out++ = ' ';
+
+    space = PipeOp_SpaceFilled( to, 5 );
+
+    if (data.available < 5)
+      data = PipeOp_WaitForData( fro, 5 );
+
+    char* in = data.location;
+
+    if ((data.available != 5)
+     || (in[0] != 'P')
+     || (in[1] != (i ? 'o' : 'i'))
+     || (in[2] != 'n')
+     || (in[3] != 'g')
+     || (in[4] != ' ')) asm ( "udf 2" );
+
+    data = PipeOp_DataConsumed( fro, 5 );
+  }
+
+  __builtin_unreachable();
+}
+
 
 void __attribute__(( noreturn )) startup()
 {
@@ -257,13 +345,74 @@ void __attribute__(( noreturn )) startup()
   setup_system_heap();
   setup_shared_heap();
 
-  start_blink_some_leds( 0x3f200000 >> 12 );
-  start_send_to_uart( 0x3f201000 >> 12 );
+  uint32_t pipe = PipeOp_CreateForTransfer( 4096 );
+  if (pipe == 0) PANIC;
 
-  start_ticker( 0x40000000 >> 12 );
+  PipeOp_SetSender( pipe, 0 );
+  PipeOp_SetReceiver( pipe, 0 );
+
+  if (pipe == 0) PANIC;
+
+//  start_blink_some_leds( 0x3f200000 >> 12 );
+//  start_send_to_uart( 0x3f201000 >> 12, pipe );
+//  start_feed_pipe( pipe );
+
+  // Test currently does not use sleep
+  // start_ticker( 0x40000000 >> 12 );
+
+  uint32_t to = PipeOp_CreateForTransfer( 4096 );
+  if (to == 0) PANIC;
+
+  PipeOp_SetSender( to, 0 );
+  PipeOp_SetReceiver( to, 0 );
+
+  uint32_t fro = PipeOp_CreateForTransfer( 4096 );
+  if (fro == 0) PANIC;
+
+  PipeOp_SetSender( fro, 0 );
+  PipeOp_SetReceiver( fro, 0 );
+
+{
+  static uint32_t const stack_size = 72;
+  uint8_t *stack = shared_heap_allocate( stack_size );
+
+  register void *start asm( "r0" ) = ping_pong;
+  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t r1 asm( "r2" ) = to;
+  register uint32_t r2 asm( "r3" ) = fro;
+  register uint32_t r3 asm( "r4" ) = 1;
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_Spawn)
+    , "r" (start)
+    , "r" (sp)
+    , "r" (r1)
+    , "r" (r2)
+    , "r" (r3)
+    : "lr", "cc" );
+}
+{
+  static uint32_t const stack_size = 72;
+  uint8_t *stack = shared_heap_allocate( stack_size );
+
+  register void *start asm( "r0" ) = ping_pong;
+  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t r1 asm( "r2" ) = fro;
+  register uint32_t r2 asm( "r3" ) = to;
+  register uint32_t r3 asm( "r4" ) = 0;
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_Spawn)
+    , "r" (start)
+    , "r" (sp)
+    , "r" (r1)
+    , "r" (r2)
+    , "r" (r3)
+    : "lr", "cc" );
+}
 
   asm ( "mov sp, %[reset_sp]"
-    "\n  cpsid aif, #0x10"
+    "\n  cpsie aif, #0x10"
     :
     : [reset_sp] "r" ((&workspace.svc_stack)+1) );
 

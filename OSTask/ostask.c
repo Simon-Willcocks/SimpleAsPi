@@ -166,7 +166,13 @@ void __attribute__(( naked )) reset_handler()
 
 void __attribute__(( naked )) undefined_instruction_handler()
 {
-  asm ( "bx lr" );
+  // return to the next instruction, it's useful as a debugging tool
+  // to insert asm ( "udf 1" ) to see the registers at that point.
+  asm volatile (
+        "srsdb sp!, #0x1b // Store return address and SPSR (UND mode)"
+    "\n  rfeia sp! // Restore execution and SPSR"
+      );
+
   for (;;) asm ( "wfi" );
 }
 
@@ -275,6 +281,22 @@ static void sleeping_tasks_tick()
   OSTask *list = mpsafe_manipulate_OSTask_list( &shared.ostask.sleeping, wakey_wakey, 0 );
   if (list != 0)
     mpsafe_manipulate_OSTask_list( &shared.ostask.runnable, add_woken, list );
+}
+
+error_block *PipeCreate( svc_registers *regs );
+error_block *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe );
+error_block *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe );
+error_block *PipeSetSender( svc_registers *regs, OSPipe *pipe );
+error_block *PipeUnreadData( svc_registers *regs, OSPipe *pipe );
+error_block *PipeNoMoreData( svc_registers *regs, OSPipe *pipe );
+error_block *PipeWaitForData( svc_registers *regs, OSPipe *pipe );
+error_block *PipeDataConsumed( svc_registers *regs, OSPipe *pipe );
+error_block *PipeSetReceiver( svc_registers *regs, OSPipe *pipe );
+error_block *PipeNotListening( svc_registers *regs, OSPipe *pipe );
+error_block *Kernel_Error_UnknownSWI()
+{
+  static error_block error = { 0x1e6, "Unknown SWI" }; // Could be "SWI name not known", or "SWI &3333 not known"
+  return &error;
 }
 
 void NORET ostask_svc( svc_registers *regs, int number )
@@ -487,8 +509,55 @@ void NORET ostask_svc( svc_registers *regs, int number )
       sleeping_tasks_tick();
     }
     break;
-  default:
-    PANIC;
+  case OSTask_PipeCreate ... OSTask_PipeCreate + 15:
+    {
+      bool reclaimed = core_claim_lock( &shared.ostask.pipes_lock, workspace.core + 1 );
+      if (reclaimed) PANIC; // I can't imagine a recursion situation
+
+      OSPipe *pipe = 0;
+      error_block *error = 0;
+
+      if (number != OSTask_PipeCreate) {
+        pipe = pipe_from_handle( regs->r[0] );
+        if (pipe == 0) {
+          static error_block err = { 0x888, "Invalid Pipe handle" };
+          error = &err;
+        }
+      }
+
+      if (error == 0) {
+        switch (number) {
+        case OSTask_PipeCreate: error = PipeCreate( regs ); break;
+        case OSTask_PipeWaitForSpace: error = PipeWaitForSpace( regs, pipe ); break;
+        case OSTask_PipeSpaceFilled: error = PipeSpaceFilled( regs, pipe ); break;
+        case OSTask_PipeSetSender: error = PipeSetSender( regs, pipe ); break;
+        case OSTask_PipeUnreadData: error = PipeUnreadData( regs, pipe ); break;
+        case OSTask_PipeNoMoreData: error = PipeNoMoreData( regs, pipe ); break;
+        case OSTask_PipeWaitForData: error = PipeWaitForData( regs, pipe ); break;
+        case OSTask_PipeDataConsumed: error = PipeDataConsumed( regs, pipe ); break;
+        case OSTask_PipeSetReceiver: error = PipeSetReceiver( regs, pipe ); break;
+        case OSTask_PipeNotListening: error = PipeNotListening( regs, pipe ); break;
+        case OSTask_PipeWaitUntilEmpty: error = Kernel_Error_UnknownSWI( regs ); break; // TODO? Same as WaitForSpace( max size, no?)
+        default:
+          {
+          static error_block err = { 0x888, "Unknown Pipe operation" };
+          error = &err;
+          }
+        }
+      }
+
+      if (!reclaimed) core_release_lock( &shared.ostask.pipes_lock );
+
+      if (error != 0) {
+        running->regs.r[0] = (uint32_t) error;
+        running->regs.spsr |= VF;
+        PANIC;
+      }
+
+      if (running != workspace.ostask.running) {
+        resume = workspace.ostask.running;
+      }
+    }
   }
 
   if (resume != 0) {
@@ -562,6 +631,7 @@ void __attribute__(( naked )) svc_handler()
   svc_registers *regs;
   asm volatile ( "mov %[regs], sp" : [regs] "=r" (regs) );
 
+  regs->spsr &= ~VF;
   execute_svc( regs );
 
   __builtin_unreachable();

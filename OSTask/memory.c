@@ -85,22 +85,51 @@ uint32_t app_memory_top( uint32_t new )
   return top;
 }
 
+static bool in_range( uint32_t n, uint32_t low, uint32_t above )
+{
+  return n >= low && n < above;
+}
+
+static uint32_t const app_top = (uint32_t) &app_memory_top;
+
 bool ask_slot( uint32_t va, uint32_t fault )
 {
   OSTaskSlot *slot = workspace.ostask.running->slot;
-  int i = 0;
-  while (slot->app_mem[i].pages != 0
-      && slot->app_mem[i].va_page <= (va >> 12)
-      && top_of( &slot->app_mem[i] ) < va) {
-    i++;
+
+  app_memory_block *block = 0;
+
+  if (va < app_top) {
+    int i = 0;
+    while (slot->app_mem[i].pages != 0
+        && !in_range( va,
+                      slot->app_mem[i].va_page << 12, 
+                      top_of( &slot->app_mem[i] ) )
+        && i < number_of( slot->app_mem )) {
+      i++;
+    }
+    if (slot->app_mem[i].pages == 0) return false;
+    block = &slot->app_mem[i];
   }
-  if (slot->app_mem[i].pages == 0) return false;
+  else {
+    int i = 0;
+
+    while (slot->pipe_mem[i].pages != 0
+        && !in_range( va,
+                      slot->pipe_mem[i].va_page << 12, 
+                      top_of( &slot->pipe_mem[i] ) )
+        && i < number_of( slot->pipe_mem )) {
+
+      i++;
+    }
+    if (slot->pipe_mem[i].pages == 0) return false;
+    block = &slot->pipe_mem[i];
+  }
 
   memory_mapping map = {
-    .base_page = slot->app_mem[i].page_base,
-    .pages = slot->app_mem[i].pages,
-    .va = slot->app_mem[i].va_page << 12,
-    .type = (slot->app_mem[i].device) ? CK_Device : CK_MemoryRWX,
+    .base_page = block->page_base,
+    .pages = block->pages,
+    .va = block->va_page << 12,
+    .type = (block->device) ? CK_Device : CK_MemoryRWX,
     .map_specific = 1,
     .all_cores = 0,
     .usr32_access = 1 };
@@ -110,19 +139,27 @@ bool ask_slot( uint32_t va, uint32_t fault )
   return true;
 }
 
+uint8_t pipes_base;
+uint8_t pipes_top;
+
 void initialise_app_virtual_memory_area()
 {
-  clear_memory_region( 0, 0x20000000 >> 12, ask_slot );
+  clear_memory_region( 0, app_top >> 12, ask_slot );
+  clear_memory_region( (&pipes_base - (uint8_t*) 0), 
+                       (&pipes_top - &pipes_base) >> 12, ask_slot );
 }
 
 void clear_app_virtual_memory_area( OSTaskSlot *old )
 {
-  clear_memory_region( 0, 0x20000000 >> 12, ask_slot );
+  clear_memory_region( 0, app_top >> 12, ask_slot );
+  clear_memory_region( (&pipes_base - (uint8_t*) 0), 
+                       (&pipes_top - &pipes_base) >> 12, ask_slot );
   // Obviously only change the minimum required! FIXME
 }
 
 void changing_slot( OSTaskSlot *old, OSTaskSlot *new )
 {
+  asm( "udf 2" );
   if (old != new) {
     clear_app_virtual_memory_area( old );
     mmu_switch_map( new->mmu_map );

@@ -59,9 +59,25 @@ static inline void wait_for_event()
 
 uint32_t number_of_cores();
 
+#define PANIC do { asm ( "udf %[line]\n wfi" : : [line] "i" (__LINE__) ); } while (true)
+
 // TODO:
 // push writes to RAM (va range)
 // RAM may have changed (va range) - invalidate cache
+
+static inline
+void push_writes_out_of_cache( uint32_t va, uint32_t size )
+{
+  // Clean cache
+  PANIC;
+}
+
+static inline
+void RAM_may_have_changed( uint32_t va, uint32_t size )
+{
+  // Invalidate cache
+  PANIC;
+}
 
 // Multi-processing primitives. No awareness of OSTasks.
 
@@ -132,8 +148,6 @@ void core_release_lock( uint32_t volatile *lock )
 
 // To satisfy the optimiser in gcc:
 void *memset(void *s, int c, size_t n);
-
-#define PANIC do { asm ( "udf %[line]\n wfi" : : [line] "i" (__LINE__) ); } while (true)
 
 #define C_CLOBBERED "r0-r3,r12"
 

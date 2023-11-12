@@ -15,10 +15,13 @@
 
 typedef struct OSTask OSTask;
 typedef struct OSTaskSlot OSTaskSlot;
+typedef struct OSPipe OSPipe;
+typedef struct OSQueue OSQueue;
 
 typedef struct {
   OSTask *running;
   OSTask *idle;
+  OSPipe *debug_pipe;
 
   struct {
     uint32_t stack[64];
@@ -33,12 +36,14 @@ typedef struct {
   } und_stack;
 
   struct {
-    uint32_t stack[64];
+    uint32_t stack[128];
   } abt_stack;
 } workspace_ostask;
 
 typedef struct {
   uint32_t lock;
+  uint32_t pipes_lock;
+  OSPipe *pipes;
 
   OSTask *runnable;
   OSTask *sleeping;

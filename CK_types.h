@@ -48,9 +48,9 @@ typedef struct __attribute__(( packed )) svc_registers {
 
 // This is rather RISC OS specific, but the task management
 // SWIs return errors in this format.
-typedef struct {
+typedef const struct {
   uint32_t code;
   char desc[];
-} const error_block;
+} error_block;
 
 #endif

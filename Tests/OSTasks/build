@@ -18,8 +18,8 @@ arm-none-eabi-gcc-9.2.1 \
         $MMU/mmu.c \
         --no-toplevel-reorder \
         $CFLAGS &&
-arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init.data processor.o processor.boot &&
-arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init.data mmu.o mmu.boot &&
+arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init processor.o processor.boot &&
+arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init mmu.o mmu.boot &&
 
 SOURCES="$SYSTEM:$SUBSYSTEMS:"
 
@@ -43,7 +43,10 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=shared_heap_base=0xff500000 \
         -Wl,--defsym=shared_heap_top=0xff600000 \
         \
-        -Wl,--defsym=device_pages=0xfff00000 \
+        -Wl,--defsym=debug_pipe=0xfff00000 \
+        -Wl,--defsym=app_memory_top=0x40000000 \
+        -Wl,--defsym=pipes_base=0x80000000 \
+        -Wl,--defsym=pipes_top=0xc0000000 \
         \
         -Wl,--defsym=translation_table=0xfff80000 \
         -Wl,--defsym=global_translation_table=0xfff84000 \

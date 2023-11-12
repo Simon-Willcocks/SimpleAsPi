@@ -238,6 +238,8 @@ void clear_memory_region(
                 uint32_t va_base, uint32_t va_pages,
                 memory_fault_handler handler )
 {
+  // Only affecting the local tables, with interrupts disabled.
+
   if (va_pages == 0) PANIC;
 
   arm32_ptr virt = { .raw = va_base };
@@ -278,12 +280,29 @@ void clear_memory_region(
 
   if (0 != virt.section_offset) PANIC;
 
+  // The only multi-processing danger is when level 2 tables are
+  // released. We'll make a collection of them and release them
+  // to the shared pool all at once.
+  // Alternatively, each core could maintain a pool of its own.
+
+  l2tt *freed = 0;
+
   while (va_pages >= 256) { // Sections
-    if (translation_table.entry[virt.section].type == 1) {
+    l1tt_entry l1 = translation_table.entry[virt.section];
+    if (l1.type == 1) {
       // Free up table
+      l2tt *l2 = mapped_table( l1.table );
+      dll_new_l2tt( l2 );
+      dll_attach_l2tt( l2, &freed );
     }
     translation_table.entry[virt.section++].handler = handler;
     va_pages -= 256;
+  }
+
+  if (freed != 0) {
+    bool reclaimed = core_claim_lock( &shared.mmu.lock, workspace.core + 1 );
+    dll_insert_l2tt_list_at_head( freed, &shared.mmu.free );
+    if (!reclaimed) core_release_lock( &shared.mmu.lock );
   }
 
   if (va_pages > 0) {
@@ -335,6 +354,23 @@ static l2tt_entry const dev_page = { .small_page = 1, .XN = 1, .read_only = 0, .
 void map_memory( memory_mapping const *mapping )
 {
   if (mapping->pages == 0) PANIC;
+
+  if ((mapping->va >> 24) == 0x40) asm ( "mov %0, %0"
+    "\n  mov %1, %1"
+    "\n  mov %2, %2"
+    "\n  mov %3, %3"
+    "\n  mov %4, %4"
+    "\n  mov %5, %5"
+    "\n  mov %6, %6"
+    "\n  udf 1"
+    :
+    : "r" (mapping->base_page)
+    , "r" (mapping->pages)
+    , "r" (mapping->va)
+    , "r" (mapping->type)
+    , "r" (mapping->map_specific)
+    , "r" (mapping->all_cores)
+    , "r" (mapping->usr32_access) );
 
   bool reclaimed = core_claim_lock( &shared.mmu.lock, workspace.core + 1 );
 

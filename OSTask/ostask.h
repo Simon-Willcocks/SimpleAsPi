@@ -13,26 +13,17 @@
  * limitations under the License.
  */
 
-// The OSTask code doesn't care about the content of the extras, but
-// will allocate space for them in OSTask and OSTaskSlot structures.
-
 #include "ostaskops.h"
 #include "processor.h"
 #include "raw_memory_manager.h"
+
+// This file contains declarations useful to the OSTask code.
 
 // The following routines must be provided by higher-level code.
 
 // This routine is called once, at startup, in svc32 mode with the
 // limited svc stack in workspace.
 void __attribute__(( noreturn )) startup();
-
-// Probable uses will include floating point state, etc.
-// Also, hopefully, claiming and releasing the legacy SVC
-// stack, so that it can eventually be done away with!
-void OSTask_switching_out( uint32_t handle, OSTask_extras *task );
-void OSTask_switching_in( uint32_t handle, OSTask_extras *task );
-
-void OSTask_dropping_to_usr32( uint32_t handle, OSTask_extras *task );
 
 #define NORET __attribute__(( noinline, noreturn ))
 
@@ -47,11 +38,13 @@ typedef struct OSTask OSTask;
 
 static inline uint32_t ostask_handle( OSTask *task )
 {
+  if (task == 0) return 0;
   return 0x4b534154 ^ (uint32_t) task;
 }
 
 static inline OSTask *ostask_from_handle( uint32_t h )
 {
+  if (h == 0) return 0;
   return (OSTask *) (0x4b534154 ^ h);
 }
 
@@ -60,16 +53,17 @@ typedef struct {
   uint32_t pages;       // Pages
   uint32_t va_page:20;  // Start page
   bool     device:1;
-  uint32_t res:11;
+  bool     read_only:1;
+  uint32_t res:10;
 } app_memory_block;
 
 struct OSTaskSlot {
   uint32_t mmu_map;
   uint32_t number_of_tasks;
-  OSTaskSlot_extras extras;
 
   // See memory.c
   app_memory_block app_mem[30];
+  app_memory_block pipe_mem[30];
 
   // List is only used for free pool, ATM.
   OSTaskSlot *next;
@@ -83,8 +77,6 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   int32_t resumes; // Signed: -1 => blocked
   OSTaskSlot *slot;
 
-  OSTask_extras extras;
-
   OSTask *next;
   OSTask *prev;
 };
@@ -97,3 +89,48 @@ uint32_t app_memory_top( uint32_t top );
 void initialise_app_virtual_memory_area();
 void clear_app_virtual_memory_area();
 void changing_slot( OSTaskSlot *old, OSTaskSlot *new );
+
+#include "heap.h"
+
+// Return a 4-byte aligned pointer to an area of at least
+// size bytes of privileged writable memory. Or NULL.
+// Will not be called until the OSTask subsystem has called startup.
+static inline void *system_heap_allocate( uint32_t size )
+{
+  extern uint8_t system_heap_base;
+  return heap_allocate( &system_heap_base, size );
+}
+
+// Ditto, except usr accessible and executable memory
+static inline void *shared_heap_allocate( uint32_t size )
+{
+  extern uint8_t shared_heap_base;
+  return heap_allocate( &shared_heap_base, size );
+}
+
+// Free memory allocated using one of the above
+static inline void system_heap_free( void *block )
+{
+  extern uint8_t system_heap_base;
+  heap_free( &system_heap_base, block );
+}
+
+static inline void shared_heap_free( void *block )
+{
+  extern uint8_t shared_heap_base;
+  heap_free( &shared_heap_base, block );
+}
+
+static inline OSPipe *pipe_from_handle( uint32_t handle )
+{
+  if (handle == 0) return 0;
+  return (OSPipe *) (0x45504950 ^ handle);
+}
+
+static inline uint32_t handle_from_pipe( OSPipe *pipe )
+{
+  if (pipe == 0) return 0;
+  return 0x45504950 ^ (uint32_t) pipe;
+}
+
+
