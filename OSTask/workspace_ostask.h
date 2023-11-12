@@ -58,6 +58,6 @@ typedef struct {
   OSTask **irq_tasks;   // 2-D array of tasks handling interrupts,
                         // number of cores x number of sources
 
-  uint32_t device_pages;
+  uint32_t queues_lock;
 } shared_ostask;
 

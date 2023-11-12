@@ -353,12 +353,11 @@ void __attribute__(( noreturn )) startup()
 
   if (pipe == 0) PANIC;
 
-//  start_blink_some_leds( 0x3f200000 >> 12 );
+  start_blink_some_leds( 0x3f200000 >> 12 );
 //  start_send_to_uart( 0x3f201000 >> 12, pipe );
 //  start_feed_pipe( pipe );
 
-  // Test currently does not use sleep
-  // start_ticker( 0x40000000 >> 12 );
+  start_ticker( 0x40000000 >> 12 );
 
   uint32_t to = PipeOp_CreateForTransfer( 4096 );
   if (to == 0) PANIC;

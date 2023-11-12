@@ -31,6 +31,10 @@ enum {
   , OSTask_SwitchToCore                 // Use sparingly!
   , OSTask_MapDevicePages               // For device drivers
   , OSTask_AppMemoryTop                 // r0 = New value, or 0 to read
+  , OSTask_RunThisForMe                 // Run code in the context of the task
+  , OSTask_GetRegisters                 // Get registers of controlled task
+  , OSTask_SetRegisters                 // Set registers of controlled task
+  , OSTask_ReleaseTask                  // Resume controlled task
   , OSTask_Tick                         // For HAL module use only
 
   , OSTask_PipeCreate = OSTask_Yield + 32
@@ -407,6 +411,78 @@ error_block *PipeOp_NoMoreData( uint32_t send_pipe )
         , "r" (pipe)
         : "lr", "cc", "memory"
         );
+
+  return error;
+}
+
+static inline
+error_block *Task_RunThisForMe( uint32_t client, svc_registers const *regs )
+{
+  register uint32_t h asm ( "r0" ) = client;
+  register svc_registers const *r asm ( "r1" ) = regs;
+  register error_block *error asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OSTask_RunThisForMe)
+      , "r" (h)
+      , "r" (r)
+      : "lr", "cc", "memory" );
+
+  return error;
+}
+
+static inline
+error_block *Task_ReleaseTask( uint32_t client, svc_registers const *regs )
+{
+  register uint32_t h asm ( "r0" ) = client;
+  register svc_registers const *r asm ( "r1" ) = regs;
+  register error_block *error asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OSTask_ReleaseTask)
+      , "r" (h)
+      , "r" (r)
+      : "lr", "cc", "memory" );
+
+  return error;
+}
+
+static inline
+error_block *Task_GetRegisters( uint32_t controlled, svc_registers *regs )
+{
+  register uint32_t h asm ( "r0" ) = controlled;
+  register svc_registers *r asm ( "r1" ) = regs;
+  register error_block *error asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OSTask_GetRegisters)
+      , "r" (h)
+      , "r" (r)
+      : "lr" );
+
+  return error;
+}
+
+static inline
+error_block *Task_SetRegisters( uint32_t controlled, svc_registers *regs )
+{
+  register uint32_t h asm ( "r0" ) = controlled;
+  register svc_registers *r asm ( "r1" ) = regs;
+  register error_block *error asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OSTask_SetRegisters)
+      , "r" (h)
+      , "r" (r)
+      : "lr" );
 
   return error;
 }

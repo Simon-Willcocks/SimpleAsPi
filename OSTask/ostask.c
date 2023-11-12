@@ -299,6 +299,111 @@ error_block *Kernel_Error_UnknownSWI()
   return &error;
 }
 
+error_block *QueueCreate( svc_registers *regs );
+error_block *QueueWait( svc_registers *regs,
+                        OSQueue *queue, bool swi, bool core );
+
+error_block *Error_InvalidQueue()
+{
+  static error_block error = { 0x888, "Invalid OSTask Queue handle" };
+  return &error;
+}
+
+error_block *TaskOp_Error_NotATask()
+{
+  static error_block error = { 0x666, "Programmer error: Not a task" };
+  return &error;
+}
+
+error_block *TaskOp_Error_NotYourTask()
+{
+  static error_block error = { 0x666, "Programmer error: Not your task" };
+  return &error;
+}
+
+static error_block *RunInControlledTask( svc_registers *regs, bool wait )
+{
+  // This implementation depends on the shared.ostask.lock being held by this core
+
+  OSTask *running = workspace.ostask.running;
+  OSTask *release = task_from_handle( regs->r[0] );
+  svc_registers *context = (void*) regs->r[1];
+
+  if (release == 0) {
+    return TaskOp_Error_NotATask();
+  }
+
+  if (release->controller != running) {
+    return TaskOp_Error_NotYourTask();
+  }
+
+  if (context != 0) {
+    release->regs = *context;
+  }
+
+  release->controller = 0;
+
+  // This must be done before the release Task is known to be runnable
+  if (wait) {
+    save_task_state( regs );
+    workspace.ostask.running = running->next;
+    dll_detach_OSTask( running );
+    running->controller = release;
+  }
+
+  OSTask *tail = workspace.ostask.running->next;
+
+  mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, release );
+
+  return 0;
+}
+
+error_block *TaskOpRunThisForMe( svc_registers *regs )
+{ return RunInControlledTask( regs, true );
+}
+
+error_block *TaskOpReleaseTask( svc_registers *regs )
+{
+  return RunInControlledTask( regs, false );
+}
+
+error_block *TaskOpGetRegisters( svc_registers *regs )
+{
+  OSTask *controlled = task_from_handle( regs->r[0] );
+  svc_registers *context = (void*) regs->r[1];
+  OSTask *running = workspace.ostask.running;
+
+  if (controlled == 0) {
+    return TaskOp_Error_NotATask();
+  }
+  if (controlled->controller != running) {
+    return TaskOp_Error_NotYourTask();
+  }
+
+  *context = controlled->regs;
+
+  return 0;
+}
+
+error_block *TaskOpSetRegisters( svc_registers *regs )
+{
+  OSTask *controlled = task_from_handle( regs->r[0] );
+  svc_registers *context = (void*) regs->r[1];
+  OSTask *running = workspace.ostask.running;
+
+  if (controlled == 0) {
+    return TaskOp_Error_NotATask();
+  }
+  if (controlled->controller != running) {
+    return TaskOp_Error_NotYourTask();
+  }
+
+  controlled->regs = *context;
+
+  return 0;
+}
+
+
 void NORET ostask_svc( svc_registers *regs, int number )
 {
   OSTask *running = workspace.ostask.running;
@@ -314,6 +419,8 @@ void NORET ostask_svc( svc_registers *regs, int number )
         : [sp] "=r" (running->banked_sp_usr)
         , [lr] "=r" (running->banked_lr_usr) );
   }
+
+  error_block *error = 0;
 
   switch (number) {
   case OSTask_Yield:
@@ -504,6 +611,18 @@ void NORET ostask_svc( svc_registers *regs, int number )
       regs->r[0] = app_memory_top( regs->r[0] );
     }
     break;
+  case OSTask_RunThisForMe:
+    error = TaskOpRunThisForMe( regs );
+    break;
+  case OSTask_GetRegisters:
+    error = TaskOpGetRegisters( regs );
+    break;
+  case OSTask_SetRegisters:
+    error = TaskOpSetRegisters( regs );
+    break;
+  case OSTask_ReleaseTask:
+    error = TaskOpReleaseTask( regs );
+    break;
   case OSTask_Tick:
     {
       sleeping_tasks_tick();
@@ -515,7 +634,6 @@ void NORET ostask_svc( svc_registers *regs, int number )
       if (reclaimed) PANIC; // I can't imagine a recursion situation
 
       OSPipe *pipe = 0;
-      error_block *error = 0;
 
       if (number != OSTask_PipeCreate) {
         pipe = pipe_from_handle( regs->r[0] );
@@ -548,16 +666,58 @@ void NORET ostask_svc( svc_registers *regs, int number )
 
       if (!reclaimed) core_release_lock( &shared.ostask.pipes_lock );
 
-      if (error != 0) {
-        running->regs.r[0] = (uint32_t) error;
-        running->regs.spsr |= VF;
-        PANIC;
+      if (running != workspace.ostask.running) {
+        resume = workspace.ostask.running;
       }
+    }
+    break;
+  case OSTask_QueueCreate ... OSTask_QueueCreate + 16:
+    {
+      OSQueue *queue = 0;
+
+      if (number != OSTask_QueueCreate) {
+        queue = queue_from_handle( regs->r[0] );
+        if (queue == 0) {
+          error = Error_InvalidQueue();
+        }
+      }
+
+      if (error == 0) {
+        switch (number) {
+        case OSTask_QueueCreate:
+          error = QueueCreate( regs );
+          break;
+        case OSTask_QueueWait:
+          error = QueueWait( regs, queue, false, false );
+          break;
+        case OSTask_QueueWaitSWI:
+          error = QueueWait( regs, queue, true, false );
+          break;
+        case OSTask_QueueWaitCore:
+          error = QueueWait( regs, queue, false, true );
+          break;
+        case OSTask_QueueWaitCoreAndSWI:
+          error = QueueWait( regs, queue, true, true );
+          break;
+        default:
+          {
+          static error_block err = { 0x888, "Unknown Pipe operation" };
+          error = &err;
+          }
+        }; 
+      } 
 
       if (running != workspace.ostask.running) {
         resume = workspace.ostask.running;
       }
     }
+    break;
+  }
+
+  if (error != 0) {
+    running->regs.r[0] = (uint32_t) error;
+    running->regs.spsr |= VF;
+    PANIC;
   }
 
   if (resume != 0) {

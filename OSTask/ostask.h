@@ -48,6 +48,17 @@ static inline OSTask *ostask_from_handle( uint32_t h )
   return (OSTask *) (0x4b534154 ^ h);
 }
 
+static inline OSQueue *queue_from_handle( uint32_t handle )
+{
+  // TODO check in system heap
+  return (OSQueue *) handle;
+}
+
+static inline uint32_t handle_from_queue( OSQueue *queue )
+{
+  return (uint32_t) queue;
+}
+
 typedef struct {
   uint32_t page_base;   // Pages
   uint32_t pages;       // Pages
@@ -76,6 +87,22 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   uint32_t banked_lr_usr; // Only stored when leaving usr or sys mode
   int32_t resumes; // Signed: -1 => blocked
   OSTaskSlot *slot;
+
+  union {
+    OSTask *controller;
+    struct __attribute__(( packed )) {
+      uint32_t offset:6;
+      uint32_t core:8;
+      uint32_t res:18;
+    } swi;
+    struct __attribute__(( packed )) {
+      uint32_t swi_offset:6;
+      uint32_t core:8;
+      uint32_t res:16;
+      uint32_t match_swi:1;
+      uint32_t match_core:1;
+    } handler;
+  };
 
   OSTask *next;
   OSTask *prev;
@@ -133,4 +160,16 @@ static inline uint32_t handle_from_pipe( OSPipe *pipe )
   return 0x45504950 ^ (uint32_t) pipe;
 }
 
+static inline OSTask *task_from_handle( uint32_t handle )
+{
+  if (handle == 0) return 0;
+  return (OSTask *) (0x4b534154 ^ handle);
+}
 
+static inline uint32_t handle_from_task( OSTask *task )
+{
+  if (task == 0) return 0;
+  return 0x4b534154 ^ (uint32_t) task;
+}
+
+error_block *Error_InvalidQueue();
