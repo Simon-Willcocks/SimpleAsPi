@@ -333,6 +333,10 @@ void ping_pong( uint32_t handle, uint32_t to, uint32_t fro, bool i )
   __builtin_unreachable();
 }
 
+void execute_swi( svc_registers *regs, int number )
+{
+  PANIC;
+}
 
 void __attribute__(( noreturn )) startup()
 {
@@ -354,8 +358,8 @@ void __attribute__(( noreturn )) startup()
   if (pipe == 0) PANIC;
 
   start_blink_some_leds( 0x3f200000 >> 12 );
-//  start_send_to_uart( 0x3f201000 >> 12, pipe );
-//  start_feed_pipe( pipe );
+  start_send_to_uart( 0x3f201000 >> 12, pipe );
+  start_feed_pipe( pipe );
 
   start_ticker( 0x40000000 >> 12 );
 

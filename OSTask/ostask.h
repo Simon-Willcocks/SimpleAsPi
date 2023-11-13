@@ -27,11 +27,14 @@ void __attribute__(( noreturn )) startup();
 
 #define NORET __attribute__(( noinline, noreturn ))
 
-// Provided by higher layers, may use the utility functions below.
-void NORET execute_swi( svc_registers *regs, int number );
+// Run a non-OSTask SWI
+void execute_swi( svc_registers *regs, int number );
 
 void save_task_state( svc_registers *regs );
-void NORET resume_task( uint32_t blocked ); // handle of task not currently runnable or running
+
+// Either a task handle or 0 to resume the current task with
+// the (possibly modified) svc_registers passed to execute_swi.
+void NORET resume_task( uint32_t task );
 
 typedef struct OSTaskSlot OSTaskSlot;
 typedef struct OSTask OSTask;
@@ -113,9 +116,7 @@ uint32_t map_device_pages( uint32_t va,
                            uint32_t page_base,
                            uint32_t pages );
 uint32_t app_memory_top( uint32_t top );
-void initialise_app_virtual_memory_area();
-void clear_app_virtual_memory_area();
-void changing_slot( OSTaskSlot *old, OSTaskSlot *new );
+void map_slot( OSTaskSlot *new );
 
 #include "heap.h"
 

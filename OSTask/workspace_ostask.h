@@ -22,6 +22,7 @@ typedef struct {
   OSTask *running;
   OSTask *idle;
   OSPipe *debug_pipe;
+  OSTaskSlot *currently_mapped;
 
   struct {
     uint32_t stack[64];

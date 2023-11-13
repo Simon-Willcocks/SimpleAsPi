@@ -74,8 +74,6 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 {
   forget_boot_low_memory_mapping();
 
-  initialise_app_virtual_memory_area();
-
   bool reclaimed = core_claim_lock( &shared.ostask.lock, core + 1 );
   if (reclaimed) PANIC;
 
@@ -166,14 +164,12 @@ void __attribute__(( naked )) reset_handler()
 
 void __attribute__(( naked )) undefined_instruction_handler()
 {
-  // return to the next instruction, it's useful as a debugging tool
+  // Return to the next instruction. It's useful as a debugging tool
   // to insert asm ( "udf 1" ) to see the registers at that point.
   asm volatile (
         "srsdb sp!, #0x1b // Store return address and SPSR (UND mode)"
     "\n  rfeia sp! // Restore execution and SPSR"
       );
-
-  for (;;) asm ( "wfi" );
 }
 
 void save_task_state( svc_registers *regs )
@@ -182,9 +178,11 @@ void save_task_state( svc_registers *regs )
   if (workspace.ostask.running->regs.lr == 0) PANIC;
 }
 
-void NORET execute_swi( svc_registers *regs, int number )
+OSTask *non_ostask_svc( svc_registers *regs, int number )
 {
-  PANIC;
+  // First stab.
+  execute_swi( regs, number );
+  return 0;
 }
 
 void unexpected_task_return()
@@ -351,8 +349,6 @@ static error_block *RunInControlledTask( svc_registers *regs, bool wait )
     running->controller = release;
   }
 
-  OSTask *tail = workspace.ostask.running->next;
-
   mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, release );
 
   return 0;
@@ -404,23 +400,11 @@ error_block *TaskOpSetRegisters( svc_registers *regs )
 }
 
 
-void NORET ostask_svc( svc_registers *regs, int number )
+OSTask *ostask_svc( svc_registers *regs, int number )
 {
+  error_block *error = 0;
   OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;
-
-  // Read this now, another core might run the task to completion
-  // before we get to the end of this routine.
-  OSTaskSlot *currently_mapped_slot = running->slot;
-
-  if (0 == (regs->spsr & 15)) {
-    asm ( "mrs %[sp], sp_usr"
-      "\n  mrs %[lr], lr_usr"
-        : [sp] "=r" (running->banked_sp_usr)
-        , [lr] "=r" (running->banked_lr_usr) );
-  }
-
-  error_block *error = 0;
 
   switch (number) {
   case OSTask_Yield:
@@ -717,7 +701,33 @@ void NORET ostask_svc( svc_registers *regs, int number )
   if (error != 0) {
     running->regs.r[0] = (uint32_t) error;
     running->regs.spsr |= VF;
-    PANIC;
+  }
+
+  return resume;
+}
+
+void NORET execute_svc( svc_registers *regs )
+{
+  OSTask *running = workspace.ostask.running;
+  OSTask *resume = 0;
+
+  if (0 == (regs->spsr & 15)) {
+    asm ( "mrs %[sp], sp_usr"
+      "\n  mrs %[lr], lr_usr"
+        : [sp] "=r" (running->banked_sp_usr)
+        , [lr] "=r" (running->banked_lr_usr) );
+  }
+
+  uint32_t number = get_svc_number( regs->lr );
+  uint32_t swi = (number & ~Xbit); // A bit of RISC OS creeping in!
+
+  switch (swi) {
+  case OSTask_Yield ... OSTask_Yield + 63:
+    resume = ostask_svc( regs, number );
+    break;
+  default:
+    resume = non_ostask_svc( regs, number );
+    break;
   }
 
   if (resume != 0) {
@@ -729,10 +739,7 @@ void NORET ostask_svc( svc_registers *regs, int number )
           , [lr] "r" (resume->banked_lr_usr) );
     }
 
-    if (resume->slot != currently_mapped_slot) {
-      // FIXME: Can we be 100% sure that the old slot still exists?
-      changing_slot( currently_mapped_slot, resume->slot );
-    }
+    map_slot( resume->slot );
   }
 
   // Restore the stack pointer to where it was before the SVC
@@ -758,21 +765,6 @@ void NORET ostask_svc( svc_registers *regs, int number )
       : "r" (lr) );
 
   __builtin_unreachable();
-}
-
-void NORET execute_svc( svc_registers *regs )
-{
-  OSTask *caller = workspace.ostask.running;
-
-  uint32_t number = get_svc_number( regs->lr );
-  uint32_t swi = (number & ~Xbit); // A bit of RISC OS creeping in!
-
-  switch (swi) {
-  case OSTask_Yield ... OSTask_Yield + 63:
-    ostask_svc( regs, number );
-  default:
-    execute_swi( regs, number );
-  }
 }
 
 void __attribute__(( naked )) svc_handler()
@@ -860,9 +852,7 @@ void __attribute__(( naked, noreturn )) irq_handler()
 
   // The interrupt task is always in OSTask_WaitForInterrupt
 
-  if (irq_task->slot != interrupted_task->slot) {
-    changing_slot( interrupted_task->slot, irq_task->slot );
-  }
+  map_slot( irq_task->slot );
 
   asm (
     "\n  msr sp_usr, %[usrsp]"

@@ -157,11 +157,20 @@ void clear_app_virtual_memory_area( OSTaskSlot *old )
   // Obviously only change the minimum required! FIXME
 }
 
-void changing_slot( OSTaskSlot *old, OSTaskSlot *new )
+void map_slot( OSTaskSlot *new )
 {
-  asm( "udf 2" );
-  if (old != new) {
-    clear_app_virtual_memory_area( old );
+  OSTaskSlot *current = workspace.ostask.currently_mapped;
+  asm( "udf 2" : : "r" (current) );
+
+  if (current != new) {
+    if (0 == current) {
+      // Ensure all slot-relevant entries are set to call ask_slot
+      initialise_app_virtual_memory_area();
+    }
+    else if (current != new) {
+      clear_app_virtual_memory_area( current );
+    }
     mmu_switch_map( new->mmu_map );
+    workspace.ostask.currently_mapped = new;
   }
 }
