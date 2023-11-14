@@ -21,6 +21,7 @@
 #include "heap.h"
 #include "raw_memory_manager.h"
 #include "legacy.h"
+#include "queues.h"
 
 void setup_system_heap()
 {
@@ -67,21 +68,48 @@ void setup_shared_heap()
   heap_initialise( &shared_heap_base, size );
 }
 
+// Shared block of memory that's (user?) rw (x?)
+// Up to 1MiB size, and MiB aligned (for SharedCLib).
+extern uint8_t legacy_svc_stack_top;
+
 void setup_legacy_svc_stack()
 {
-  // Shared block of memory that's (user?) rw (x?)
-  // Always 1MiB size, and aligned.
-  extern uint8_t legacy_svc_stack_base;
+  uint32_t top = (uint32_t) &legacy_svc_stack_top;
+  uint32_t base = (top - 1) & ~0xfffff; // on MiB boundary
+  // -1 in case whole MiB is used
+  // e.g. top 0xff100000 -> 0xff0fffff -> base 0xff000000
 
-  memory_mapping map_shared_heap = {
+  memory_mapping map = {
     .base_page = claim_contiguous_memory( 256 ),
-    .pages = 256,
-    .vap = &legacy_svc_stack_base,
+    .pages = (top - base) >> 12,
+    .va = base,
     .type = CK_MemoryRW,
     .map_specific = 0,
     .all_cores = 1,
     .usr32_access = 1 };
-  map_memory( &map_shared_heap );
+
+  map_memory( &map );
+}
+
+extern uint8_t legacy_zero_page;
+
+void setup_legacy_zero_page()
+{
+  uint32_t base = (uint32_t) &legacy_zero_page;
+  uint32_t pages = 4; // 16KiB
+
+  memory_mapping map = {
+    .base_page = claim_contiguous_memory( pages ),
+    .pages = pages,
+    .va = base,
+    .type = CK_MemoryRW,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+
+  map_memory( &map );
+
+  memset( &legacy_zero_page, 0, pages << 12 );
 }
 
 // This routine is for SWIs implemented in the legacy kernel, 0-255, not in
@@ -128,11 +156,45 @@ run_risos_code_implementing_swi( svc_registers *regs,
 
 void run_kernel_swi( svc_registers *regs, int swi )
 {
-  // CallASWI
-  if (swi == 0x6f) { swi = regs->r[10]; }
-  else if (swi == 0x71) { swi = regs->r[12]; }
-  if (swi == 0x6f || swi == 0x71) PANIC;
+  uint32_t legacy_top = (uint32_t) &legacy_svc_stack_top;
+  uint32_t legacy_base = (legacy_top - 1) & ~0xfffff;
+  uint32_t std_top = (uint32_t) (&workspace.svc_stack+1);
 
+  // It will be this or the legacy stack. So far, just this...
+  if ((uint32_t)(regs + 1) != std_top) PANIC;
+
+  OSTask *running = workspace.ostask.running;
+  uint32_t handle = ostask_handle( running );
+
+  // This comparison is mp-safe because a word access is atomic and
+  // no other core will ever set it to this task's handle.
+  if (shared.legacy.owner != handle) {
+    if (0 == change_word_if_equal( &shared.legacy.owner, 0, handle )) {
+      // Just gained the legacy stack!
+      // Duplicate the core's stack onto it so we can return safely
+
+      asm ( "mov r0, sp"
+        "\n  mov sp, %[top]"
+        "\n0:"
+        "\n  ldr r1, [%[ctop], #-4]!"
+        "\n  push { r1 }"
+        "\n  cmp r0, %[ctop]"
+        "\n  bne 0b"
+        :
+        : [top] "r" (legacy_top)
+        , [ctop] "r" (std_top)
+        : "r0", "r1" );
+
+      if ((uint32_t)(regs + 1) != std_top) PANIC;
+      regs = (void*) (((uint32_t) regs) - std_top + legacy_top);
+      if ((uint32_t)(regs + 1) != legacy_top) PANIC;
+    }
+    else {
+      // Not owner of legacy stack, wait for it.
+      queue_running_OSTask( regs, shared.legacy.queue, swi );
+      return;
+    }
+  }
   switch (swi) {
   case 0 ... 127:
     {
@@ -143,6 +205,17 @@ void run_kernel_swi( svc_registers *regs, int swi )
       else PANIC; // Queue
     }
     break;
+  default: PANIC;
+  }
+
+  uint32_t sp;
+  asm ( "mov %[sp], sp" : [sp] "=r" (sp) );
+  if ((sp >> 20) != (legacy_base >> 20)) PANIC;
+
+  if ((uint32_t)(regs + 1) != legacy_top) PANIC;
+
+  if ((uint32_t)(regs + 1) == legacy_top) {
+    // Run callbacks
   }
 }
 
@@ -176,6 +249,20 @@ void execute_swi( svc_registers *regs, int number )
   }
 }
 
+void spawn_legacy_manager( uint32_t pipe )
+{
+  register void *start asm( "r0" ) = serve_legacy_swis;
+  register void *sp asm( "r1" ) = 0;
+  register uint32_t r1 asm( "r2" ) = pipe;
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_Spawn)
+    , "r" (start)
+    , "r" (sp)
+    , "r" (r1)
+    : "lr", "cc" );
+}
+
 void __attribute__(( noreturn )) startup()
 {
   // Running with multi-tasking enabled. This routine gets called
@@ -189,11 +276,26 @@ void __attribute__(( noreturn )) startup()
   setup_system_heap(); // System heap
   setup_shared_heap(); // "RMA" heap
 
+  setup_legacy_svc_stack();
+  setup_legacy_zero_page(); // FIXME: universal, or per task or slot?
+
   extern uint32_t JTABLE[128];
 
   for (int i = 0; i < number_of( shared.legacy.jtable ); i++) {
     shared.legacy.jtable[i] = JTABLE[i];
   }
+
+  register uint32_t handle asm( "r0" );
+  asm ( "svc %[swi]"
+    : "=r" (handle)
+    : [swi] "i" (OSTask_QueueCreate)
+    : "lr" );
+
+  shared.legacy.queue = handle;
+
+  spawn_legacy_manager( handle );
+
+  svc_pre_boot_sequence();
 
   asm ( "mov sp, %[reset_sp]"
     "\n  cpsie aif, #0x10"

@@ -15,9 +15,6 @@
 
 #include "ostask.h"
 #include "raw_memory_manager.h"
-#include "mpsafe_dll.h"
-
-MPSAFE_DLL_TYPE( OSTask );
 
 struct __attribute__(( packed, aligned( 4 ) )) OSQueue {
   OSTask *queue;

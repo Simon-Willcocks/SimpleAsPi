@@ -26,6 +26,7 @@ SOURCES="$SYSTEM:$SUBSYSTEMS:"
 echo Sources: ${SOURCES//://*.c } &&
 
 # JTABLE can be found from your image's RiscOS/Sources/Kernel/bin/Kernel_gpa
+# legacy_zero_page must match ZeroPage in Sources/Kernel/hdr/KernelWS
 
 # 16MiB boot RAM
 # 256MiB minimum RAM
@@ -35,7 +36,8 @@ arm-none-eabi-gcc-9.2.1 \
         -o kernel7.elf \
         $CFLAGS \
         -Wl,--defsym=JTABLE=0xfc0100b8 \
-        -Wl,--defsym=legacy_svc_stack_base=0xff000000 \
+        -Wl,--defsym=legacy_svc_stack_top=0xff100000 \
+        -Wl,--defsym=legacy_zero_page=0xfff40000 \
         \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
         -Wl,--defsym=top_of_minimum_RAM=0x10000000 \

@@ -175,6 +175,18 @@ void boot()
 {
   start_blink_some_leds( 0x3f200000 >> 12 );
 
+  static uint32_t const stack_size = 72;
+  uint8_t *stack = shared_heap_allocate( stack_size );
+
+  register uint8_t *stack_top asm ( "r0" ) = stack + stack_size;
+
+  asm ( "mov sp, %[reset_sp]"
+    "\n  cpsie aif, #0x10"
+    "\n  mov sp, r0"
+    :
+    : [reset_sp] "r" ((&workspace.svc_stack)+1) );
+
+for (;;) {
   register uint32_t base_and_flags asm ( "r0" ) = 10;
   register char const *string asm ( "r1" ) = "23";
   register char const *end asm ( "r1" );
@@ -184,12 +196,8 @@ void boot()
 
   if (value != 23) PANIC;
 
-  asm ( "mov sp, %[reset_sp]"
-    "\n  cpsie aif, #0x10"
-    :
-    : [reset_sp] "r" ((&workspace.svc_stack)+1) );
-
-  for (;;) { asm ( "mov r0, #10000\n  svc %[swi]" : : [swi] "i" (OSTask_Sleep) ); }
+  Task_Sleep( 10 );
+}
 
   __builtin_unreachable();
 }
@@ -200,6 +208,7 @@ void __attribute__(( naked, noreturn )) boot_sequence()
   asm ( "mov r0, #0x9000"
     "\n  svc %[settop]"
     "\n  mov sp, r0"
+    "\n  sub sp, r0, #0x800"
     :
     : [settop] "i" (OSTask_AppMemoryTop)
     : "r0", "r1" );

@@ -14,14 +14,11 @@
  */
 
 #include "ostask.h"
-#include "mpsafe_dll.h"
-#include "heap.h"
 
 // OK, to start with, temporarily, 1MiB sections
 extern OSTask OSTask_free_pool[];
 extern OSTaskSlot OSTaskSlot_free_pool[];
 
-MPSAFE_DLL_TYPE( OSTask );
 MPSAFE_DLL_TYPE( OSTaskSlot );
 
 void setup_pools()
@@ -365,6 +362,45 @@ error_block *TaskOpReleaseTask( svc_registers *regs )
   return RunInControlledTask( regs, false );
 }
 
+error_block *TaskOpRelinquishControl( svc_registers *regs )
+{
+  OSTask *running = workspace.ostask.running;
+
+  if (running->controller != 0) PANIC;
+
+  running->controller = ostask_from_handle( regs->r[0] );
+  if (0 == running->controller) {
+    return TaskOp_Error_NotATask();
+  }
+
+  OSTask *resume = running->next;
+
+  save_task_state( regs );
+  workspace.ostask.running = running->next;
+  dll_detach_OSTask( running );
+
+  OSTask *waiting = running->controller;
+
+  if (waiting->controller != 0 && waiting->controller != running) PANIC;
+
+  if (running == waiting->controller    // Resuming the creating task that created this one
+   || 0 == ++waiting->resumes) {        // Only increment otherwise
+    // Task is waiting, detached from the running list
+    // Place at head of this core's running list
+
+    if (waiting->next != waiting) PANIC;
+    if (waiting->prev != waiting) PANIC;
+
+    waiting->controller = 0;
+
+    waiting->regs.r[0] = 1; // One resume. This one.
+
+    dll_attach_OSTask( waiting, &workspace.ostask.running );
+  }
+
+  return 0;
+}
+
 error_block *TaskOpGetRegisters( svc_registers *regs )
 {
   OSTask *controlled = ostask_from_handle( regs->r[0] );
@@ -605,6 +641,9 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     break;
   case OSTask_SetRegisters:
     error = TaskOpSetRegisters( regs );
+    break;
+  case OSTask_RelinquishControl:
+    error = TaskOpRelinquishControl( regs );
     break;
   case OSTask_ReleaseTask:
     error = TaskOpReleaseTask( regs );

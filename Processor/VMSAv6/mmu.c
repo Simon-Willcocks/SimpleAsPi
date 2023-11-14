@@ -355,23 +355,6 @@ void map_memory( memory_mapping const *mapping )
 {
   if (mapping->pages == 0) PANIC;
 
-  if ((mapping->va >> 24) == 0x40) asm ( "mov %0, %0"
-    "\n  mov %1, %1"
-    "\n  mov %2, %2"
-    "\n  mov %3, %3"
-    "\n  mov %4, %4"
-    "\n  mov %5, %5"
-    "\n  mov %6, %6"
-    "\n  udf 1"
-    :
-    : "r" (mapping->base_page)
-    , "r" (mapping->pages)
-    , "r" (mapping->va)
-    , "r" (mapping->type)
-    , "r" (mapping->map_specific)
-    , "r" (mapping->all_cores)
-    , "r" (mapping->usr32_access) );
-
   bool reclaimed = core_claim_lock( &shared.mmu.lock, workspace.core + 1 );
 
   // Note: Could allow for base_page to be above 4GiB,
@@ -491,6 +474,7 @@ void map_memory( memory_mapping const *mapping )
         global->entry[virt.page] = entry;
 
       entry.page_base++;
+      virt.page++;
     }
   }
 

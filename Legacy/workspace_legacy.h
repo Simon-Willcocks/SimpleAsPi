@@ -18,5 +18,7 @@ typedef struct {
 
 typedef struct {
   uint32_t jtable[128];
+  uint32_t queue;
+  uint32_t owner;
 } shared_legacy;
 

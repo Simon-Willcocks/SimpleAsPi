@@ -20,3 +20,5 @@ void svc_pre_boot_sequence();
 // Called in usr32 mode with no stack. (Ditto, RMRun.)
 void __attribute__(( naked, noreturn )) boot_sequence();
 
+// Server task, passed handle to pipe.
+void __attribute__(( naked, noreturn )) serve_legacy_swis( uint32_t pipe );

@@ -16,6 +16,7 @@
 #include "ostaskops.h"
 #include "processor.h"
 #include "raw_memory_manager.h"
+#include "mpsafe_dll.h"
 
 // This file contains declarations useful to the OSTask code.
 
@@ -119,6 +120,8 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   OSTask *next;
   OSTask *prev;
 };
+
+MPSAFE_DLL_TYPE( OSTask );
 
 // Application memory management (memory.c)
 uint32_t map_device_pages( uint32_t va,

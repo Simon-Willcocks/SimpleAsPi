@@ -34,6 +34,7 @@ enum {
   , OSTask_RunThisForMe                 // Run code in the context of the task
   , OSTask_GetRegisters                 // Get registers of controlled task
   , OSTask_SetRegisters                 // Set registers of controlled task
+  , OSTask_RelinquishControl            // Resume controlling task
   , OSTask_ReleaseTask                  // Resume controlled task
   , OSTask_Tick                         // For HAL module use only
 
@@ -485,5 +486,45 @@ error_block *Task_SetRegisters( uint32_t controlled, svc_registers *regs )
       : "lr" );
 
   return error;
+}
+
+typedef struct {
+  uint32_t task_handle;
+  uint32_t swi;
+  uint32_t core;
+  error_block *error;
+} queued_task;
+
+#ifndef NOT_DEBUGGING
+static inline
+#endif
+queued_task Task_QueueWait( uint32_t queue_handle )
+{
+  queued_task result = { 0, 0 };
+
+  register uint32_t handle asm ( "r0" ) = queue_handle;
+  register uint32_t task_handle asm ( "r0" );
+  register uint32_t swi asm ( "r1" );
+  register uint32_t core asm ( "r2" );
+  register error_block *error asm ( "r3" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r3, #0"
+             "\n  movvs r3, r0"
+             "\n  movvs r0, #0"
+      : "=r" (task_handle)
+      , "=r" (swi)
+      , "=r" (core)
+      , "=r" (error)
+      : [swi] "i" (OSTask_QueueWait)
+      , "r" (handle)
+      : "lr", "cc" );
+
+  result.task_handle = task_handle;
+  result.swi = swi;
+  result.core = core;
+  result.error = error;
+
+  return result;
 }
 

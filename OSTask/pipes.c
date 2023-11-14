@@ -42,9 +42,7 @@ struct OSPipe {
   uint32_t read_index;
 };
 
-#include "mpsafe_dll.h"
 DLL_TYPE( OSPipe );
-MPSAFE_DLL_TYPE( OSTask );
 
 static inline void mark_pipe_sender_finished( OSPipe *pipe )
 {
