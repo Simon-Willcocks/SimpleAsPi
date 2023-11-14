@@ -41,7 +41,7 @@ uint32_t new_queue()
   queue->handlers = 0;
   queue->queue = 0;
 
-  return handle_from_queue( queue );
+  return queue_handle( queue );
 }
 
 error_block *QueueCreate( svc_registers *regs )
@@ -92,7 +92,7 @@ error_block *QueueWait( svc_registers *regs, OSQueue *queue, bool swi, bool core
     else {
       dll_detach_OSTask( head );
     }
-    regs->r[0] = handle_from_task( head );
+    regs->r[0] = ostask_handle( head );
     regs->r[1] = head->swi.offset;
     regs->r[2] = head->swi.core;
     head->controller = running;
@@ -156,7 +156,7 @@ error_block *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, u
     // It should run on this core, so as to implement the SWI
     // functionality asap
     svc_registers *regs = &matched_handler->regs;
-    regs->r[0] = handle_from_task( running );
+    regs->r[0] = ostask_handle( running );
     regs->r[1] = op;
     regs->r[2] = core;
     running->controller = matched_handler;

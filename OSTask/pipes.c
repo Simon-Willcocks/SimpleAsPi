@@ -209,7 +209,7 @@ error_block *PipeCreate( svc_registers *regs )
 
   dll_attach_OSPipe( pipe, &shared.ostask.pipes );
 
-  regs->r[0] = handle_from_pipe( pipe );
+  regs->r[0] = pipe_handle( pipe );
 
   return 0;
 }

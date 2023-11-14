@@ -90,7 +90,8 @@ static bool in_range( uint32_t n, uint32_t low, uint32_t above )
   return n >= low && n < above;
 }
 
-static uint32_t const app_top = (uint32_t) &app_memory_top;
+extern uint8_t app_memory_limit;
+static uint32_t const app_top = (uint32_t) &app_memory_limit;
 
 bool ask_slot( uint32_t va, uint32_t fault )
 {

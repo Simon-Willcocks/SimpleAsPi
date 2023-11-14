@@ -53,13 +53,22 @@ static inline OSTask *ostask_from_handle( uint32_t h )
 
 static inline OSQueue *queue_from_handle( uint32_t handle )
 {
-  // TODO check in system heap
-  return (OSQueue *) handle;
+  if (handle == 0) return 0;
+
+  // TODO check that it's in system heap
+  // 0x55455551 = "QUEU" - important that it's an odd number
+  // so handles can be distinguished from function pointers.
+  return (OSQueue *) (handle ^ 0x55455551);
 }
 
-static inline uint32_t handle_from_queue( OSQueue *queue )
+static inline uint32_t queue_handle( OSQueue *queue )
 {
-  return (uint32_t) queue;
+  uint32_t handle;
+  if (queue == 0)
+    handle = 0;
+  else
+    handle = (0x55455551 ^ (uint32_t) queue);
+  return handle;
 }
 
 typedef struct {
@@ -155,22 +164,10 @@ static inline OSPipe *pipe_from_handle( uint32_t handle )
   return (OSPipe *) (0x45504950 ^ handle);
 }
 
-static inline uint32_t handle_from_pipe( OSPipe *pipe )
+static inline uint32_t pipe_handle( OSPipe *pipe )
 {
   if (pipe == 0) return 0;
   return 0x45504950 ^ (uint32_t) pipe;
-}
-
-static inline OSTask *task_from_handle( uint32_t handle )
-{
-  if (handle == 0) return 0;
-  return (OSTask *) (0x4b534154 ^ handle);
-}
-
-static inline uint32_t handle_from_task( OSTask *task )
-{
-  if (task == 0) return 0;
-  return 0x4b534154 ^ (uint32_t) task;
 }
 
 error_block *Error_InvalidQueue();

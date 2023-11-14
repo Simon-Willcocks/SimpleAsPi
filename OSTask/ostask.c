@@ -105,6 +105,8 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   workspace.ostask.running = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
   workspace.ostask.running->slot = shared.ostask.first;
 
+  map_slot( workspace.ostask.running->slot );
+
   if (first) {
     // Create a separate idle OSTask
     workspace.ostask.idle = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
@@ -324,7 +326,7 @@ static error_block *RunInControlledTask( svc_registers *regs, bool wait )
   // This implementation depends on the shared.ostask.lock being held by this core
 
   OSTask *running = workspace.ostask.running;
-  OSTask *release = task_from_handle( regs->r[0] );
+  OSTask *release = ostask_from_handle( regs->r[0] );
   svc_registers *context = (void*) regs->r[1];
 
   if (release == 0) {
@@ -365,7 +367,7 @@ error_block *TaskOpReleaseTask( svc_registers *regs )
 
 error_block *TaskOpGetRegisters( svc_registers *regs )
 {
-  OSTask *controlled = task_from_handle( regs->r[0] );
+  OSTask *controlled = ostask_from_handle( regs->r[0] );
   svc_registers *context = (void*) regs->r[1];
   OSTask *running = workspace.ostask.running;
 
@@ -383,7 +385,7 @@ error_block *TaskOpGetRegisters( svc_registers *regs )
 
 error_block *TaskOpSetRegisters( svc_registers *regs )
 {
-  OSTask *controlled = task_from_handle( regs->r[0] );
+  OSTask *controlled = ostask_from_handle( regs->r[0] );
   svc_registers *context = (void*) regs->r[1];
   OSTask *running = workspace.ostask.running;
 

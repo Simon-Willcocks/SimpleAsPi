@@ -139,7 +139,8 @@ void call_boot_with_stack_in_high_memory( uint32_t core )
 void *memset(void *s, int c, uint32_t n)
 {
   uint8_t *p = s;
-    // Trivial implementation
+  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
+  // to calling this function!
     // for (int i = 0; i < n; i++) { p[i] = c; asm( "" ); }
     // return s;
   if (n < 16) {
@@ -163,6 +164,16 @@ void *memset(void *s, int c, uint32_t n)
   }
 
   return s;
+}
+
+void *memcpy(void *d, void *s, uint32_t n)
+{
+  uint8_t const *src = s;
+  uint8_t *dest = d;
+  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
+  // to calling this function!
+  for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
+  return d;
 }
 
 // As yet unused...
