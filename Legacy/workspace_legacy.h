@@ -19,6 +19,7 @@ typedef struct {
 typedef struct {
   uint32_t jtable[128];
   uint32_t queue;
-  uint32_t owner;
+  uint32_t *owner;
+  uint32_t *sp;         // The SP when the legacy task was interrupted
 } shared_legacy;
 

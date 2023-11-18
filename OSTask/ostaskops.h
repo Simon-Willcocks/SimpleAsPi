@@ -36,6 +36,11 @@ enum {
   , OSTask_SetRegisters                 // Set registers of controlled task
   , OSTask_RelinquishControl            // Resume controlling task
   , OSTask_ReleaseTask                  // Resume controlled task
+
+  , OSTask_GetTaskHandle                // Current task - also passed to code
+  , OSTask_LockClaim
+  , OSTask_LockRelease
+
   , OSTask_Tick                         // For HAL module use only
 
   , OSTask_PipeCreate = OSTask_Yield + 32
@@ -52,9 +57,9 @@ enum {
 
   , OSTask_QueueCreate = OSTask_PipeCreate + 16
   , OSTask_QueueWait
-  , OSTask_QueueWaitCore
-  , OSTask_QueueWaitSWI
-  , OSTask_QueueWaitCoreAndSWI
+  , OSTask_QueueWaitCore        // No implementation
+  , OSTask_QueueWaitSWI         // No implementation
+  , OSTask_QueueWaitCoreAndSWI  // No implementation
 };
 
 static inline
@@ -67,6 +72,12 @@ void Task_Sleep( uint32_t ms )
   // sets r0 to 0. volatile is needed, since the optimiser ignores
   // asm statements with an output which is ignored.
   asm volatile ( "svc %[swi]" : "=r" (t) : [swi] "i" (OSTask_Sleep), "r" (t) );
+}
+
+static inline
+void Task_Yield()
+{
+  asm volatile ( "svc %[swi]" : : [swi] "i" (OSTask_Yield) );
 }
 
 static inline
@@ -526,5 +537,57 @@ queued_task Task_QueueWait( uint32_t queue_handle )
   result.error = error;
 
   return result;
+}
+
+// This function is for information only, to allow a task that
+// owns a lock to wrap up what it's doing and release the lock
+// if it detects another task waiting.
+// Specifically, do NOT use it to decide not to call Release on
+// the lock! (Another task on another core might call Claim before
+// you know it.)
+// DO NOT try to set the bit yourself! Use OSTask_LockClaim to
+// do it for you (and put your task to sleep until released).
+static inline
+bool tasks_waiting_for( uint32_t *lock )
+{
+  return (1 & *lock) != 0;
+}
+
+// Returns true if lock has been reclaimed by the same task (in
+// which case you don't want to release it this time).
+// If your code doesn't expect to re-claim the lock, a true result
+// probably indicates a serious programming error.
+static inline
+bool Task_LockClaim( uint32_t *lock, uint32_t handle )
+{
+/*
+  // Considering making change_word_if_equal globally available...
+  uint32_t old = change_word_if_equal( lock, 0, handle );
+  if (0 != old && handle != (old & ~1)) {
+*/
+    register uint32_t *p asm( "r0" ) = lock;
+    register uint32_t h asm( "r1" ) = handle;
+    bool reclaimed;
+    asm volatile ( "svc %[swi]"
+        : [reclaimed] "=r" (reclaimed)
+        : [swi] "i" (OSTask_LockClaim)
+        , "r" (p)
+        , "r" (h) );
+  return reclaimed;
+/*
+  }
+  return (handle == (old & ~1));
+*/
+}
+
+// Release a lock, allowing any waiting tasks to claim it.
+static inline
+void Task_LockRelease( uint32_t *lock )
+{
+  register uint32_t *p asm( "r0" ) = lock;
+  asm volatile ( "svc %[swi]"
+      :
+      : [swi] "i" (OSTask_LockRelease)
+      , "r" (p) );
 }
 

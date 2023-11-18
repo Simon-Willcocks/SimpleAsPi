@@ -29,13 +29,16 @@ void __attribute__(( noreturn )) startup();
 #define NORET __attribute__(( noinline, noreturn ))
 
 // Run a non-OSTask SWI
-void execute_swi( svc_registers *regs, int number );
+// Return 0 to continue the current task, an OSTask to run otherwise
+OSTask *execute_swi( svc_registers *regs, int number );
+
+OSTask *queue_running_OSTask( svc_registers *regs,
+                              uint32_t queue_handle,
+                              uint32_t SWI );
 
 void save_task_state( svc_registers *regs );
 
-// Either a task handle or 0 to resume the current task with
-// the (possibly modified) svc_registers passed to execute_swi.
-void NORET resume_task( uint32_t task );
+void interrupting_privileged_code( OSTask *task );
 
 typedef struct OSTaskSlot OSTaskSlot;
 typedef struct OSTask OSTask;
@@ -173,4 +176,18 @@ static inline uint32_t pipe_handle( OSPipe *pipe )
   return 0x45504950 ^ (uint32_t) pipe;
 }
 
-error_block *Error_InvalidQueue();
+OSTask *PipeCreate( svc_registers *regs );
+OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeSetSender( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeUnreadData( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeNoMoreData( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeSetReceiver( svc_registers *regs, OSPipe *pipe );
+OSTask *PipeNotListening( svc_registers *regs, OSPipe *pipe );
+
+OSTask *QueueCreate( svc_registers *regs );
+OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
+                   bool swi, bool core );
+

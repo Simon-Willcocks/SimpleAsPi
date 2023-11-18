@@ -21,7 +21,7 @@
 #include "heap.h"
 #include "raw_memory_manager.h"
 #include "legacy.h"
-#include "queues.h"
+#include "kernel_swis.h"
 
 void setup_system_heap()
 {
@@ -91,12 +91,12 @@ void setup_legacy_svc_stack()
   map_memory( &map );
 }
 
-extern uint8_t legacy_zero_page;
+extern uint32_t legacy_zero_page[4096]; // 16 KiB
 
 void setup_legacy_zero_page()
 {
   uint32_t base = (uint32_t) &legacy_zero_page;
-  uint32_t pages = 4; // 16KiB
+  uint32_t pages = sizeof( legacy_zero_page ) >> 12;
 
   memory_mapping map = {
     .base_page = claim_contiguous_memory( pages ),
@@ -109,7 +109,7 @@ void setup_legacy_zero_page()
 
   map_memory( &map );
 
-  memset( &legacy_zero_page, 0, pages << 12 );
+  memset( &legacy_zero_page, 0, sizeof( legacy_zero_page ) );
 }
 
 // This routine is for SWIs implemented in the legacy kernel, 0-255, not in
@@ -154,112 +154,136 @@ run_risos_code_implementing_swi( svc_registers *regs,
       , "r8", "r9", "lr", "memory" );
 }
 
-void run_kernel_swi( svc_registers *regs, int swi )
+static void switch_stacks( uint32_t ftop, uint32_t ttop )
+{
+  // Copy the stack above the current stack pointer to the new stack,
+  // and set the stack pointer to the bottom of the new stack.
+  asm ( "mov r0, sp"
+    "\n  mov sp, %[ttop]"
+    "\n  mov r2, %[ftop]"
+    "\n0:"
+    "\n  ldr r1, [r2, #-4]!"
+    "\n  push { r1 }"
+    "\n  cmp r0, r2"
+    "\n  bne 0b"
+    :
+    : [ftop] "r" (ftop)
+    , [ttop] "r" (ttop)
+    : "r0", "r1", "r2" );
+}
+
+static bool in_legacy_stack()
 {
   uint32_t legacy_top = (uint32_t) &legacy_svc_stack_top;
   uint32_t legacy_base = (legacy_top - 1) & ~0xfffff;
-  uint32_t std_top = (uint32_t) (&workspace.svc_stack+1);
+  uint32_t sp_section;
+  asm volatile ( "mov %[sp], sp, lsr#20" : [sp] "=r" (sp_section) );
+  return sp_section == (legacy_base >> 20);
+}
 
-  // It will be this or the legacy stack. So far, just this...
-  if ((uint32_t)(regs + 1) != std_top) PANIC;
-
-  OSTask *running = workspace.ostask.running;
-  uint32_t handle = ostask_handle( running );
-
-  // This comparison is mp-safe because a word access is atomic and
-  // no other core will ever set it to this task's handle.
-  if (shared.legacy.owner != handle) {
-    if (0 == change_word_if_equal( &shared.legacy.owner, 0, handle )) {
-      // Just gained the legacy stack!
-      // Duplicate the core's stack onto it so we can return safely
-
-      asm ( "mov r0, sp"
-        "\n  mov sp, %[top]"
-        "\n0:"
-        "\n  ldr r1, [%[ctop], #-4]!"
-        "\n  push { r1 }"
-        "\n  cmp r0, %[ctop]"
-        "\n  bne 0b"
-        :
-        : [top] "r" (legacy_top)
-        , [ctop] "r" (std_top)
-        : "r0", "r1" );
-
-      if ((uint32_t)(regs + 1) != std_top) PANIC;
-      regs = (void*) (((uint32_t) regs) - std_top + legacy_top);
-      if ((uint32_t)(regs + 1) != legacy_top) PANIC;
-    }
-    else {
-      // Not owner of legacy stack, wait for it.
-      queue_running_OSTask( regs, shared.legacy.queue, swi );
-      return;
-    }
-  }
-  switch (swi) {
-  case 0 ... 127:
-    {
-      uint32_t entry = shared.legacy.jtable[swi];
-      if ((entry & 3) == 0) {
-        run_risos_code_implementing_swi( regs, swi, entry );
-      }
-      else PANIC; // Queue
-    }
-    break;
-  default: PANIC;
-  }
-
-  uint32_t sp;
-  asm ( "mov %[sp], sp" : [sp] "=r" (sp) );
-  if ((sp >> 20) != (legacy_base >> 20)) PANIC;
-
-  if ((uint32_t)(regs + 1) != legacy_top) PANIC;
-
-  if ((uint32_t)(regs + 1) == legacy_top) {
-    // Run callbacks
-  }
+// SWIs from usr32 mode all go through the queue and the server task.
+// Any SWIs they call will be run directly, on the legacy stack.
+// On return from the initial SWI, it will run any callbacks and then
+// release the legacy stack.
+// Returning from that SWI will return to the run_swi routine which
+// resumes the server task.
+bool swi_is_legacy()
+{
+  return true;
 }
 
 extern void run_module_swi( svc_registers *regs, int swi );
 
-void execute_swi( svc_registers *regs, int number )
+OSTask *execute_swi( svc_registers *regs, int number )
 {
   int swi = number & ~Xbit;
+  bool generate_error = (number == swi);
 
-  // OSTask SWIs have already been filtered out
-  if (swi >= 0x100 && swi < 0x200) {
-    // WriteI
-    // Translate to OS_WriteC with number & 0xff
-    uint32_t r0 = regs->r[0];
-    regs->r[0] = (swi & 0xff);
-    run_kernel_swi( regs, 0 );
-    regs->r[0] = r0;
+  uint32_t legacy_top = (uint32_t) &legacy_svc_stack_top;
+  uint32_t std_top = (uint32_t) (&workspace.svc_stack+1);
+  svc_registers *legacy_regs = regs;
+
+  OSTask *running = workspace.ostask.running;
+  uint32_t handle = ostask_handle( running );
+
+  bool new_owner = !in_legacy_stack();
+
+  if (new_owner && (uint32_t)(regs + 1) != std_top) PANIC;
+
+  // This comparison is mp-safe because a word access is atomic and
+  // no other core will ever set it to this task's handle because they're
+  // not running this task.
+  if (*shared.legacy.owner == handle) {
+    if (new_owner) {
+      // Duplicate the core's stack onto it so we can return safely
+
+      switch_stacks( std_top, legacy_top );
+
+      if ((uint32_t)(regs + 1) != std_top) PANIC;
+      legacy_regs = (void*) (((uint32_t) regs) - std_top + legacy_top);
+      if ((uint32_t)(legacy_regs + 1) != legacy_top) PANIC;
+    }
+
+    if (swi == OS_CallASWIR12) {
+      swi = regs->r[12];
+    }
+    else if (swi == OS_CallASWI) {
+      swi = regs->r[10];
+    }
+    if (swi == OS_CallASWIR12
+     || swi == OS_CallASWI) {
+      PANIC; // I think the legacy implementation loops forever...
+    }
+
+    switch (swi) {
+    case 0 ... 127:
+      {
+        uint32_t entry = shared.legacy.jtable[swi];
+        if ((entry & 3) == 0) {
+          run_risos_code_implementing_swi( legacy_regs, swi, entry );
+        }
+        else PANIC; // Queue
+      }
+      break;
+    default: PANIC;
+    }
+
+    *regs = *legacy_regs;
+
+    if (generate_error && (regs->spsr & VF) != 0) {
+      PANIC; // Call OS_GenerateError!
+    }
+
+    if (new_owner) {
+      // Will be returning to the server task now.
+
+      // TODO: Run callbacks
+
+      switch_stacks( legacy_top, std_top );
+    }
   }
   else {
-    switch (swi) {
-    case 0 ... 128:
-      run_kernel_swi( regs, swi );
-      break;
-    default:
-      PANIC;
-    }
-
-    if ((number & Xbit) != 0 && (regs->spsr & VF) != 0) {
-      PANIC; // call OS_GenerateError
-    }
+    // Not owner of legacy stack, wait for it.
+    return queue_running_OSTask( regs, shared.legacy.queue, swi );
+    // Changed workspace.ostask.running
   }
+
+  return 0;
 }
 
-void spawn_legacy_manager( uint32_t pipe )
+void spawn_legacy_manager( uint32_t pipe, uint32_t *owner )
 {
   register void *start asm( "r0" ) = serve_legacy_swis;
   register void *sp asm( "r1" ) = 0;
   register uint32_t r1 asm( "r2" ) = pipe;
+  register uint32_t *r2 asm( "r3" ) = owner;
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_Spawn)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
+    , "r" (r2)
     : "lr", "cc" );
 }
 
@@ -292,8 +316,9 @@ void __attribute__(( noreturn )) startup()
     : "lr" );
 
   shared.legacy.queue = handle;
+  shared.legacy.owner = shared_heap_allocate( 4 );
 
-  spawn_legacy_manager( handle );
+  spawn_legacy_manager( handle, shared.legacy.owner );
 
   svc_pre_boot_sequence();
 
@@ -305,3 +330,28 @@ void __attribute__(( noreturn )) startup()
   boot_sequence();
 }
 
+void __attribute__(( naked, noreturn )) ResumeLegacy()
+{
+  // When interrupted task resumes, that will restore sp, lr, and the pc.
+  register uint32_t **legacy_sp asm( "lr" ) = &shared.legacy.sp;
+  asm ( "ldr sp, [lr]"
+    "\n  pop { lr, pc }"
+    :
+    : "r" (legacy_sp) );
+}
+
+void interrupting_privileged_code( OSTask *task )
+{
+  uint32_t svc_lr;
+  asm ( "mrs %[sp], sp_svc"
+    "\n  mrs %[lr], lr_svc"
+    "\n  msr sp_svc, %[reset_sp]"
+    : [sp] "=&r" (shared.legacy.sp)
+    , [lr] "=&r" (svc_lr)
+    : [reset_sp] "r" ((&workspace.svc_stack)+1) );
+
+  shared.legacy.sp -= 2;
+  shared.legacy.sp[0] = svc_lr;
+  shared.legacy.sp[1] = task->regs.lr;
+  task->regs.lr = (uint32_t) ResumeLegacy;
+}

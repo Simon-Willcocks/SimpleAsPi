@@ -21,16 +21,12 @@ struct __attribute__(( packed, aligned( 4 ) )) OSQueue {
   OSTask *handlers;
 };
 
-static inline error_block *QueueOp_CreationProblem( svc_registers *regs )
-{
-  static error_block error = { 0x888, "OSTask Queue creation problem" };
-  return &error;
-}
+DEFINE_ERROR( QueueCreationProblem, 0x888, "OSTask Queue creation problem" );
 
 uint32_t new_queue()
 {
   OSQueue *queue = system_heap_allocate( sizeof( OSQueue ) );
-  
+
   if (queue == 0) {
     return 0;
   }
@@ -41,13 +37,13 @@ uint32_t new_queue()
   return queue_handle( queue );
 }
 
-error_block *QueueCreate( svc_registers *regs )
+OSTask *QueueCreate( svc_registers *regs )
 {
   uint32_t handle = new_queue();
   OSQueue *queue = queue_from_handle( handle );
-  
+
   if (queue == 0) {
-    return QueueOp_CreationProblem( regs );
+    return Error_QueueCreationProblem( regs );
   }
 
   regs->r[0] = handle;
@@ -55,7 +51,8 @@ error_block *QueueCreate( svc_registers *regs )
   return 0;
 }
 
-error_block *QueueWait( svc_registers *regs, OSQueue *queue, bool swi, bool core )
+OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
+                   bool swi, bool core )
 {
   // Wait for any queued OSTask
 
@@ -64,7 +61,11 @@ error_block *QueueWait( svc_registers *regs, OSQueue *queue, bool swi, bool core
 
   OSTask *running = workspace.ostask.running;
   OSTask *next = running->next;
+  OSTask *result = 0;
 
+  if (next == running) PANIC;
+
+  // TODO: lock per queue?
   bool reclaimed = core_claim_lock( &shared.ostask.queues_lock,
                                     workspace.core + 1 );
 
@@ -76,10 +77,12 @@ error_block *QueueWait( svc_registers *regs, OSQueue *queue, bool swi, bool core
     workspace.ostask.running = next;
     dll_detach_OSTask( running );
     dll_attach_OSTask( running, &queue->handlers );
+    result = next;
   }
   else {
     // TODO scan queue for matching swi and/or core, if required
     // For now, just return the head
+
     OSTask *head = queue->queue;
     queue->queue = head->next;
     if (queue->queue == head) {
@@ -97,18 +100,21 @@ error_block *QueueWait( svc_registers *regs, OSQueue *queue, bool swi, bool core
 
   core_release_lock( &shared.ostask.queues_lock );
 
-  return 0;
+  return result;
 }
 
-error_block *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32_t SWI )
+DECLARE_ERROR( InvalidQueue );
+
+OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32_t SWI )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *next = running->next;
+  OSTask *result = next;
 
   OSQueue *queue = queue_from_handle( queue_handle );
 
   if (queue == 0) {
-    return Error_InvalidQueue();
+    return Error_InvalidQueue( regs );
   }
 
   // Whatever happens, the caller stops running
@@ -158,6 +164,7 @@ error_block *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, u
     regs->r[2] = core;
     running->controller = matched_handler;
     dll_attach_OSTask( matched_handler, &workspace.ostask.running );
+    result = matched_handler;
   }
   else {
     // No matching handler, block caller
@@ -168,6 +175,6 @@ error_block *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, u
 
   core_release_lock( &shared.ostask.queues_lock );
 
-  return 0;
+  return result;
 }
 

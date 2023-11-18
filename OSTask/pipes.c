@@ -120,26 +120,11 @@ void *set_and_map_debug_pipe()
   return (void*) va;
 }
 
-error_block *PipeOp_NotYourPipeError()
-{
-    PANIC;
-  static error_block error = { 0x888, "Pipe not owned by this task" };
-  return &error;
-}
+DEFINE_ERROR( NotYourPipe, 0x888, "Pipe not owned by this task" );
+DEFINE_ERROR( PipeCreationError, 0x888, "Pipe creation error" );
+DEFINE_ERROR( PipeCreationProblem, 0x888, "Pipe creation problem" );
 
-error_block *PipeOp_CreationError()
-{
-  static error_block error = { 0x888, "Pipe creation error" };
-  return &error;
-}
-
-error_block *PipeOp_CreationProblem()
-{
-  static error_block error = { 0x888, "Pipe creation problem" };
-  return &error;
-}
-
-error_block *PipeCreate( svc_registers *regs )
+OSTask *PipeCreate( svc_registers *regs )
 {
   uint32_t max_block_size = regs->r[1];
   uint32_t max_data = regs->r[2];
@@ -148,13 +133,13 @@ error_block *PipeCreate( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
 
   if (max_data != 0 && max_block_size > max_data) {
-    return PipeOp_CreationError();
+    return Error_PipeCreationError( regs );
   }
 
   OSPipe *pipe = system_heap_allocate( sizeof( OSPipe ) );
 
   if (pipe == 0) {
-    return PipeOp_CreationProblem();
+    return Error_PipeCreationProblem( regs );
   }
 
   dll_new_OSPipe( pipe );
@@ -257,6 +242,7 @@ bool insert_pipe_in_gap( OSTaskSlot *slot, OSPipe *pipe, bool sender )
       && block - first < number_of( slot->pipe_mem )) {
     potential_va = top_of( block );
     block++;
+    if (potential_va + size >= top) PANIC;
   }
 
   if (block->pages != 0) PANIC;
@@ -351,7 +337,7 @@ static uint32_t write_location( OSPipe *pipe, OSTaskSlot *slot )
     return pipe->sender_va + pipe->write_index;
 }
 
-error_block *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
 {
   uint32_t amount = regs->r[1];
   // TODO validation
@@ -365,7 +351,7 @@ error_block *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
   if (pipe->sender != running
    && pipe->sender != 0
    && is_normal_pipe) {
-    return PipeOp_NotYourPipeError();
+    return Error_NotYourPipe( regs );
   }
 
   if (is_normal_pipe && pipe->sender == 0) {
@@ -401,10 +387,10 @@ error_block *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
   return 0;
 }
 
-error_block *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
-{
-  error_block *error = 0;
+DEFINE_ERROR( OverfilledPipe, 0x888, "Overfilled pipe" );
 
+OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
+{
   uint32_t amount = regs->r[1];
   // TODO validation
 
@@ -415,55 +401,50 @@ error_block *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
    && (pipe != workspace.ostask.debug_pipe)) {
     // No setting of sender, here, if the task hasn't already checked for
     // space, how is it going to have written to the pipe?
-    return PipeOp_NotYourPipeError();
+    return Error_NotYourPipe( regs );
   }
 
   uint32_t available = space_in_pipe( pipe );
 
   if (available < amount) {
-    static error_block err = { 0x888, "Overfilled pipe" };
-    error = &err;
-  }
-  else {
-    pipe->write_index += amount;
-
-    // Update the caller's idea of the state of the pipe
-    regs->r[1] = available - amount;
-    regs->r[2] = write_location( pipe, slot );
-
-    OSTask *receiver = pipe->receiver;
-
-    // If there is no receiver, there's nothing to wait for data.
-    if (receiver == 0 && pipe->receiver_waiting_for != 0) PANIC;
-    // If the receiver is running, it is not waiting for data.
-    if ((receiver == running) && (pipe->receiver_waiting_for != 0)) PANIC;
-
-    // Special case: the debug_pipe is sometimes filled from the reader task
-    // FIXME Is it really, any more? I don't think so.
-
-    if (pipe->receiver_waiting_for > 0
-     && pipe->receiver_waiting_for <= data_in_pipe( pipe )) {
-      pipe->receiver_waiting_for = 0;
-
-      receiver->regs.r[1] = data_in_pipe( pipe );
-      receiver->regs.r[2] = read_location( pipe, slot );
-
-      if (workspace.ostask.running != running) PANIC;
-
-      // Make the receiver ready to run when the sender blocks.
-      // This could be take up instantly, this core has no more
-      // control over this task.
-      mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, receiver );
-    }
+    return Error_OverfilledPipe( regs );
   }
 
-  return error;
+  pipe->write_index += amount;
+
+  // Update the caller's idea of the state of the pipe
+  regs->r[1] = available - amount;
+  regs->r[2] = write_location( pipe, slot );
+
+  OSTask *receiver = pipe->receiver;
+
+  // If there is no receiver, there's nothing to wait for data.
+  if (receiver == 0 && pipe->receiver_waiting_for != 0) PANIC;
+  // If the receiver is running, it is not waiting for data.
+  if ((receiver == running) && (pipe->receiver_waiting_for != 0)) PANIC;
+
+  if (pipe->receiver_waiting_for > 0
+   && pipe->receiver_waiting_for <= data_in_pipe( pipe )) {
+    pipe->receiver_waiting_for = 0;
+
+    receiver->regs.r[1] = data_in_pipe( pipe );
+    receiver->regs.r[2] = read_location( pipe, slot );
+
+    if (workspace.ostask.running != running) PANIC;
+
+    // Make the receiver ready to run when the sender blocks.
+    // This could be take up instantly, this core has no more
+    // control over this task.
+    mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, receiver );
+  }
+
+  return 0;
 }
 
-error_block *PipeSetSender( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeSetSender( svc_registers *regs, OSPipe *pipe )
 {
   if (pipe->sender != workspace.ostask.running) {
-    return PipeOp_NotYourPipeError();
+    return Error_NotYourPipe( regs );
   }
   pipe->sender = ostask_from_handle( regs->r[1] );
   pipe->sender_va = 0; // FIXME unmap and free the virtual area for re-use
@@ -473,14 +454,14 @@ error_block *PipeSetSender( svc_registers *regs, OSPipe *pipe )
   return 0;
 }
 
-error_block *PipeUnreadData( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeUnreadData( svc_registers *regs, OSPipe *pipe )
 {
   regs->r[1] = data_in_pipe( pipe );
 
   return 0;
 }
 
-error_block *PipeNoMoreData( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeNoMoreData( svc_registers *regs, OSPipe *pipe )
 {
   // Mark the pipe as uninteresting from the sender's end
   // If it's also uninteresting from the receiver's end, delete it
@@ -497,7 +478,7 @@ error_block *PipeNoMoreData( svc_registers *regs, OSPipe *pipe )
   return 0; 
 }
 
-error_block *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 {
   uint32_t amount = regs->r[1];
   // TODO validation
@@ -509,7 +490,7 @@ error_block *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
   // debug_pipe is not a special case, here; only one task can receive from it.
   if (pipe->receiver != running
    && pipe->receiver != 0) {
-    return PipeOp_NotYourPipeError();
+    return Error_NotYourPipe( regs );
   }
 
   if (pipe->receiver == 0) {
@@ -547,7 +528,7 @@ error_block *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
   return 0;
 }
 
-error_block *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
 {
   uint32_t amount = regs->r[1];
   // TODO validation
@@ -558,7 +539,7 @@ error_block *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
   if (pipe->receiver != running) {
     // No setting of receiver, here, if the task hasn't already checked for
     // data, how is it going to have read from the pipe?
-    return PipeOp_NotYourPipeError();
+    return Error_NotYourPipe( regs );
   }
 
   uint32_t available = data_in_pipe( pipe );
@@ -592,10 +573,10 @@ error_block *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
   return 0;
 }
 
-error_block *PipeSetReceiver( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeSetReceiver( svc_registers *regs, OSPipe *pipe )
 {
   if (pipe->receiver != workspace.ostask.running) {
-    return PipeOp_NotYourPipeError();
+    return Error_NotYourPipe( regs );
   }
 
   pipe->receiver = ostask_from_handle( regs->r[1] );
@@ -606,7 +587,7 @@ error_block *PipeSetReceiver( svc_registers *regs, OSPipe *pipe )
   return 0;
 }
 
-error_block *PipeNotListening( svc_registers *regs, OSPipe *pipe )
+OSTask *PipeNotListening( svc_registers *regs, OSPipe *pipe )
 {
   // This should mark the pipe as uninteresting from the receiver's end
   // If it's also uninteresting from the sender's end, delete it

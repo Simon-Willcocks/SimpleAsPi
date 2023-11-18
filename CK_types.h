@@ -53,4 +53,14 @@ typedef const struct {
   char desc[];
 } error_block;
 
+#define DECLARE_ERROR( name ) OSTask *Error_##name( svc_registers *regs )
+#define DEFINE_ERROR( name, num, desc ) \
+OSTask *Error_##name( svc_registers *regs )\
+{ \
+  static error_block error = { num, desc }; \
+  regs->r[0] = (uint32_t) &error; \
+  regs->spsr |= VF; \
+  return 0; \
+}
+
 #endif

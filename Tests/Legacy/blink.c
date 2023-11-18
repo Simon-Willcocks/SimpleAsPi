@@ -175,11 +175,6 @@ void boot()
 {
   start_blink_some_leds( 0x3f200000 >> 12 );
 
-  static uint32_t const stack_size = 72;
-  uint8_t *stack = shared_heap_allocate( stack_size );
-
-  register uint8_t *stack_top asm ( "r0" ) = stack + stack_size;
-
   asm ( "mov sp, %[reset_sp]"
     "\n  cpsie aif, #0x10"
     "\n  mov sp, r0"
@@ -196,7 +191,8 @@ for (;;) {
 
   if (value != 23) PANIC;
 
-  Task_Sleep( 10 );
+  Task_Yield();
+  //Task_Sleep( 10 );
 }
 
   __builtin_unreachable();

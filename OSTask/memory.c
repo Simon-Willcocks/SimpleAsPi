@@ -161,7 +161,9 @@ void clear_app_virtual_memory_area( OSTaskSlot *old )
 void map_slot( OSTaskSlot *new )
 {
   OSTaskSlot *current = workspace.ostask.currently_mapped;
+#ifdef DEBUG__UDF_ON_MAP_SLOT
   asm( "udf 2" : : "r" (current) );
+#endif
 
   if (current != new) {
     if (0 == current) {

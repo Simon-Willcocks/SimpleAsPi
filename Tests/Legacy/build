@@ -25,8 +25,11 @@ SOURCES="$SYSTEM:$SUBSYSTEMS:"
 
 echo Sources: ${SOURCES//://*.c } &&
 
-# JTABLE can be found from your image's RiscOS/Sources/Kernel/bin/Kernel_gpa
 # legacy_zero_page must match ZeroPage in Sources/Kernel/hdr/KernelWS
+
+# This build expects a complete ROM image in RISCOS.IMG and Kernel_gpa
+# copied from RiscOS/Sources/Kernel/bin/Kernel_gpa or
+# /mnt/NoGit/RiscOS/Install/ROOL/BCM2835/RISC_OS/Kernel_gpa
 
 # 16MiB boot RAM
 # 256MiB minimum RAM
@@ -35,7 +38,7 @@ arm-none-eabi-gcc-9.2.1 \
         ${SOURCES//://*.c } \
         -o kernel7.elf \
         $CFLAGS \
-        -Wl,--defsym=JTABLE=0xfc0100b8 \
+        -Wl,--defsym=JTABLE=$( sed -n  's/^JTABLE *\(........\)\.\.FC.*$/0x\1/p' Kernel_gpa ) \
         -Wl,--defsym=legacy_svc_stack_top=0xff100000 \
         -Wl,--defsym=legacy_zero_page=0xfff40000 \
         \

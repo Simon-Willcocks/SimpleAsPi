@@ -42,12 +42,13 @@ typedef struct {
 } workspace_ostask;
 
 typedef struct {
-  uint32_t lock;
+  uint32_t lock;        // Used for boot and for when manipulating blocked
   uint32_t pipes_lock;
   OSPipe *pipes;
 
   OSTask *runnable;
   OSTask *sleeping;
+  OSTask *blocked;      // Claiming a lock
 
   OSTaskSlot *first;
 
