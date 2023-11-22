@@ -20,15 +20,16 @@
 static void __attribute__(( naked )) run_swi( uint32_t task, svc_registers *regs )
 {
   asm ( "svc %[swi]"
-    "\n  mov r12, r0"
-    "\n  mov r0, r11"
+    "\n  mov r12, r0    // Save value"
+    "\n  mov r0, r11    // Controller"
+    "\n  mrs r11, cpsr  // Save cpsr"
     "\n  svc %[finished]"
     :
     : [finished] "i" (OSTask_RelinquishControl)
     , [swi] "i" (OS_CallASWIR12 | Xbit) );
 
   // The above should never return.
-  asm ( "udf #0" );
+  for (;;) asm ( "udf #0" );
 }
 
 void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
@@ -39,6 +40,9 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     queued_task task = Task_QueueWait( pipe );
 
     Task_GetRegisters( task.task_handle, &regs );
+
+    bool module_run = task.swi == OS_Module &&
+                      (regs.r[0] == 0 || regs.r[0] == 2);
 
     uint32_t r11 = regs.r[11];
     uint32_t r12 = regs.r[12];
@@ -54,10 +58,23 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
 
     Task_GetRegisters( task.task_handle, &regs );
 
-    regs.r[0] = regs.r[12];
-    regs.r[11] = r11;
-    regs.r[12] = r12;
-    regs.lr = lr;
+    regs.r[0] = regs.r[12]; // R0 on exit from SWI
+    regs.spsr = regs.r[11]; // State on exit from SWI
+
+    if (module_run && 0 == (VF & regs.spsr)) {
+      // Special case: we just successfully ran an OS_Module call to
+      // enter a module.
+      // These register choices have to match do_OS_Module
+      // regs.r[0] is the command line (not so much, at the moment!)
+      // Oh, wait, this is an OS_ChangeEnvironment thing, isn't it?
+      regs.r[12] = regs.r[1];
+      regs.lr = regs.r[2];
+    }
+    else {
+      regs.r[11] = r11;
+      regs.r[12] = r12;
+      regs.lr = lr;
+    }
 
     Task_ReleaseTask( task.task_handle, &regs );
   }

@@ -21,6 +21,7 @@
 #include "heap.h"
 #include "raw_memory_manager.h"
 #include "legacy.h"
+#include "kernel_swis.h"
 
 // If you connect a LED and roughly 1kOhm resistor in series to
 // GPIO pins 22 and 27 (physical pins 15 and 13, respectively)
@@ -53,10 +54,6 @@ void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
   const int slower = 100;
   ticks_per_interval = ticks_per_interval * slower;
 #endif
-
-  Task_RegisterInterruptSources( 1 );
-
-  ensure_changes_observable(); // About to write to QA7
 
   qa7->GPU_interrupts_routing = core;
   qa7->Core_IRQ_Source[core] = 0xffd;
@@ -119,7 +116,7 @@ void start_ticker( uint32_t qa7_page )
 
 void svc_pre_boot_sequence()
 {
-  start_ticker( 0x40000000 >> 12 );
+  //start_ticker( 0x40000000 >> 12 );
 }
 
 void blink_some_leds( uint32_t handle, uint32_t gpio_page )
@@ -175,25 +172,21 @@ void boot()
 {
   start_blink_some_leds( 0x3f200000 >> 12 );
 
-  asm ( "mov sp, %[reset_sp]"
-    "\n  cpsie aif, #0x10"
-    "\n  mov sp, r0"
-    :
-    : [reset_sp] "r" ((&workspace.svc_stack)+1) );
-
-for (;;) {
-  register uint32_t base_and_flags asm ( "r0" ) = 10;
-  register char const *string asm ( "r1" ) = "23";
-  register char const *end asm ( "r1" );
+  if (0) {
+  register uint32_t base asm ( "r0" ) = 10;
+  register char const *string asm ( "r1" ) = "77";
   register uint32_t value asm ( "r2" );
+  asm ( "svc %[swi]" : "=r" (value) : [swi] "i" (OS_ReadUnsigned), "r" (base), "r" (string) );
+  if (value != 77) PANIC;
+  }
 
-  asm ( "svc 0x21" : "=r" (value), "=r" (end) : "r" (base_and_flags), "r" (string) : "lr" );
+  // RMRun HAL
+  register uint32_t run asm ( "r0" ) = 0; // RMRun
+  register char const *module asm ( "r1" ) = "System:Modules.HAL";
 
-  if (value != 23) PANIC;
+  asm ( "svc %[swi]" : : [swi] "i" (OS_Module), "r" (run), "r" (module) );
 
-  Task_Yield();
-  //Task_Sleep( 10 );
-}
+  PANIC;
 
   __builtin_unreachable();
 }
@@ -204,7 +197,6 @@ void __attribute__(( naked, noreturn )) boot_sequence()
   asm ( "mov r0, #0x9000"
     "\n  svc %[settop]"
     "\n  mov sp, r0"
-    "\n  sub sp, r0, #0x800"
     :
     : [settop] "i" (OSTask_AppMemoryTop)
     : "r0", "r1" );

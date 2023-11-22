@@ -107,9 +107,9 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   union {
     OSTask *controller;
     struct __attribute__(( packed )) {
-      uint32_t offset:6;
+      uint32_t offset:10; // Big enough for kernel SWIs
       uint32_t core:8;
-      uint32_t res:18;
+      uint32_t res:14;
     } swi;
     struct __attribute__(( packed )) {
       uint32_t swi_offset:6;
@@ -190,4 +190,3 @@ OSTask *PipeNotListening( svc_registers *regs, OSPipe *pipe );
 OSTask *QueueCreate( svc_registers *regs );
 OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
                    bool swi, bool core );
-

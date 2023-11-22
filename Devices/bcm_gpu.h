@@ -47,4 +47,3 @@ typedef struct __attribute__(( packed )) {
 
 } GPU;
 
-struct workspace {

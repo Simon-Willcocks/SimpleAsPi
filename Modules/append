@@ -1,0 +1,54 @@
+#! /bin/bash -
+
+function byte { echo -en $( printf '\\'x%02x $1 ) ; }
+function number {
+  byte $(( $1 & 0xff ))
+  byte $(( ($1 >> 8) & 0xff ))
+  byte $(( ($1 >> 16) & 0xff ))
+  byte $(( ($1 >> 24) & 0xff ))
+}
+
+GCC=arm-none-eabi-gcc-9.2.1
+OBJDUMP=arm-none-eabi-objdump
+OBJCOPY=arm-none-eabi-objcopy
+
+if [ $# -lt 2 ]
+then
+  echo Usage: $0 SRC_DIR MODULES_FILE [ gcc_flags ] >&2
+  exit 1
+fi
+
+MOD=$1
+shift
+FILE=$1
+shift ; # All other parameters are passed to gcc
+
+M=$( dirname $MOD ) &&
+if [ "$M" == "." ]
+then SRC=Modules/$MOD ; M=$MOD
+else SRC=$MOD
+fi
+echo Building shared module $MOD \($M\) &&
+
+if [ -d $SRC/Resources ]; then
+  build_resources_h $SRC
+fi &&
+
+$GCC $SRC/*.c -Wall -o /tmp/module$$.elf \
+      -Wl,--no-dynamic-linker -fpie -static-pie \
+      -nostartfiles -nostdlib -fno-zero-initialized-in-bss -O4 \
+      -g -march=armv8-a+nofp -T Modules/script \
+      -Wall \
+      -I . -I OSTask -I Modules -I Legacy -I Devices \
+      -fno-toplevel-reorder $* &&
+
+# Create soft-loadable module
+$OBJCOPY -R .ignoring -O binary /tmp/module$$.elf /tmp/module$$,ffa &&
+
+(
+  number $(( 4 + $( stat --format %s /tmp/module$$,ffa ) ))
+  cat /tmp/module$$,ffa 
+  rm /tmp/module$$* 
+) >> $FILE
+
+

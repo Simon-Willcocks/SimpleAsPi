@@ -191,7 +191,8 @@ static inline OSTask **irq_task_ptr( uint32_t number )
   uint32_t sources = shared.ostask.number_of_interrupt_sources;
   if (sources != 1) PANIC;
   if (number != 0) PANIC;
-  OSTask **core_interrupts = &shared.ostask.irq_tasks[sources * workspace.core];
+  int index = sources * workspace.core;
+  OSTask **core_interrupts = &shared.ostask.irq_tasks[index];
   return &core_interrupts[number];
 }
 
@@ -549,8 +550,12 @@ OSTask *TaskOpEndTask( svc_registers *regs )
   return resume;
 }
 
-OSTask *TaskOpRegisterInterruptSources( svc_registers *regs )
+OSTask *TaskOpRegisterInterrupts( svc_registers *regs )
 {
+  // This allows a HAL to tell the kernel how many interrupt sources
+  // it can recognise, provide a routine to return the next active IRQ,
+  // and request global privileged access to multiple device pages.
+
   if (shared.ostask.number_of_interrupt_sources != 0) PANIC;
   if (shared.ostask.number_of_cores == 0) PANIC;
 
@@ -565,8 +570,29 @@ OSTask *TaskOpRegisterInterruptSources( svc_registers *regs )
   if ((uint32_t) memory == 0xffffffff) PANIC;
 
   shared.ostask.irq_tasks = memory;
+  shared.ostask.next_irq = (void*) regs->r[1];
+  shared.ostask.hal_workspace = (void*) regs->r[2];
 
   memset( shared.ostask.irq_tasks, 0, array_size );
+
+  extern uint8_t global_devices_top;
+  uint32_t kernel_page = (&global_devices_top - (uint8_t*) 0) >> 12;
+
+  int i = 3;
+  while (regs->r[i] != 0xffffffff) {
+    kernel_page --;
+    memory_mapping map = {
+      .base_page = regs->r[i],
+      .pages = 1,
+      .va = kernel_page << 12,
+      .type = CK_Device,
+      .map_specific = 0,
+      .all_cores = 1,
+      .usr32_access = 0 };
+    map_memory( &map );
+    regs->r[i] = kernel_page << 12;
+    i++;
+  }
 
   return 0;
 }
@@ -607,6 +633,14 @@ OSTask *TaskOpInterruptIsOff( svc_registers *regs )
 {
   regs->spsr &= ~0x80;
   // move to tail of workspace.running
+  workspace.ostask.running = workspace.ostask.running->next;
+  // TODO: Check for more outstanding interrupts on this core
+  return workspace.ostask.running;
+}
+
+__attribute__(( weak ))
+OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )
+{
   PANIC;
   return 0;
 }
@@ -648,8 +682,8 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_EndTask:
     resume = TaskOpEndTask( regs );
     break;
-  case OSTask_RegisterInterruptSources:
-    resume = TaskOpRegisterInterruptSources( regs );
+  case OSTask_RegisterInterrupts:
+    resume = TaskOpRegisterInterrupts( regs );
     break;
   case OSTask_EnablingInterrupt:
     regs->spsr |= 0x80;
@@ -660,11 +694,14 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_InterruptIsOff:
     resume = TaskOpInterruptIsOff( regs );
     break;
+  case OSTask_RegisterSWIHandlers:
+    resume = TaskOpRegisterSWIHandlers( regs );
+    break;
   case OSTask_MapDevicePages:
     resume = TaskOpMapDevicePages( regs );
     break;
   case OSTask_AppMemoryTop:
-    regs->r[0] = app_memory_top( regs->r[0] );
+    resume = TaskOpAppMemoryTop( regs );
     break;
   case OSTask_RunThisForMe:
     resume = TaskOpRunThisForMe( regs );
@@ -691,9 +728,7 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     resume = TaskOpLockRelease( regs );
     break;
   case OSTask_Tick:
-    {
-      sleeping_tasks_tick();
-    }
+    sleeping_tasks_tick();
     break;
   case OSTask_PipeCreate ... OSTask_PipeCreate + 15:
     {
@@ -882,6 +917,7 @@ void __attribute__(( naked )) svc_handler()
 // In case not supplied by another subsystem...
 void __attribute__(( weak )) interrupting_privileged_code( OSTask *task )
 {
+  PANIC;
 }
 
 #define PROVE_OFFSET( o, t, n ) \

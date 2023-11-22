@@ -1,9 +1,16 @@
 #! /bin/bash -
 
 SYSTEM=$( dirname $0 )
-SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:Legacy
+SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:Legacy:Modules
 
 echo Building system $SYSTEM with ${SUBSYSTEMS//:/ }
+
+# Note trailing :
+SOURCES="$SYSTEM:$SUBSYSTEMS:"
+
+GCC=arm-none-eabi-gcc-9.2.1
+OBJDUMP=arm-none-eabi-objdump
+OBJCOPY=arm-none-eabi-objcopy
 
 MMU=Processor/VMSAv6
 
@@ -12,35 +19,89 @@ CFLAGS="$CFLAGS -I ${SUBSYSTEMS//:/ -I }"
 CFLAGS="$CFLAGS $*"
 echo $CFLAGS
 
-arm-none-eabi-gcc-9.2.1 \
-        -c \
-        Processor/CortexA53/processor.c \
+$GCC -c Processor/CortexA53/processor.c \
         $MMU/mmu.c \
         --no-toplevel-reorder \
         $CFLAGS &&
-arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init processor.o processor.boot &&
-arm-none-eabi-objcopy --rename-section .text=.init --rename-section .data=.init mmu.o mmu.boot &&
+$OBJCOPY --rename-section .text=.init --rename-section .data=.init processor.o processor.boot &&
+$OBJCOPY --rename-section .text=.init --rename-section .data=.init mmu.o mmu.boot || ( echo Failed >&2 ; exit 1 )
 
-SOURCES="$SYSTEM:$SUBSYSTEMS:"
-
-echo Sources: ${SOURCES//://*.c } &&
+echo Sources: ${SOURCES//://*.c }
 
 # legacy_zero_page must match ZeroPage in Sources/Kernel/hdr/KernelWS
 
-# This build expects a complete ROM image in RISCOS.IMG and Kernel_gpa
+# This script expects a complete ROM image in RISCOS.img and Kernel_gpa
 # copied from RiscOS/Sources/Kernel/bin/Kernel_gpa or
 # /mnt/NoGit/RiscOS/Install/ROOL/BCM2835/RISC_OS/Kernel_gpa
+# Changing the amount of RAM reserved for the HAL involves many changes in
+# the RISC OS source, and I can't work out what they all are!
+# So, for now, the CKernel modules can come after the rom image.
+#   RiscOS/Export/APCS-32/Hdr/Global/HALSize/?
+#   RiscOS/BuildSys/Components/ROOL/BCM2835
+
+# LegacyModulesList  = FC048A8C manually taken from RISC OS build log file
+# (first ROM module, well, FileSwitch, not PCI - 4).
+JTABLE=$( sed -n  's/^JTABLE *\(........\)\.\.FC.*$/0x\1/p' Kernel_gpa )
+LEGACIES=$( sed -n  's/^FileSwitch *\(FC......\) *00.*$/0x\1/p' RISCOS.log )
+KERNEL_START=$( sed -n  's/^Kernel *\(FC......\) *00.*$/0x\1/p' RISCOS.log )
+KERNEL_OFFSET=$( sed -n  's/^Kernel *FC0*\(.*\)  *00.*$/0x\1/p' RISCOS.log )
+
+# Position taken from RISCOS.log is the first word of the module, the
+# length is in the previous word
+LEGACIES=$( printf 0x%x $(( $LEGACIES - 4 )) )
+
+MODULES=HAL:BCM283XGPU
+
+echo Modules: ${MODULES//:/ }
+
+rm -f CKernelModules &&
+
+for i in ${MODULES//:/ }
+do
+  Modules/append Modules/$i CKernelModules
+done &&
+dd if=/dev/zero bs=4 count=1 2>/dev/null >> CKernelModules &&
+
+$OBJCOPY -I binary -O elf32-littlearm -B armv7 CKernelModules \
+         --redefine-sym _binary_CKernelModules_start=CKernelModulesList \
+         --redefine-sym _binary_CKernelModules_end=_romimage_end \
+         --rename-section .data=.romimage CKernelModules.o &&
+
+rm CKernelModules &&
+echo Modules built &&
+
+### IMPORTANT
+# The following dd, the location of .romimage in the linker parameters and
+# the line "Kernel -at 0x..." in RiscOS/BuildSys/Components/ROOL/* must
+# match up. This script takes its cue from the Kernel_gpa, so only the
+# RiscOS/BuildSys/Components/ROOL/ file needs to be changed.
+###
+
+dd if=RISCOS.img of=/tmp/RISCOS.used bs=$(( $KERNEL_OFFSET )) skip=1 &&
+$OBJCOPY -I binary -O elf32-littlearm -B armv7 \
+        --redefine-sym _binary__tmp_RISCOS_used_start=_romimage_start \
+        --redefine-sym _binary__tmp_RISCOS_used_size=_romimage_size \
+        --rename-section .data=.romimage \
+        /tmp/RISCOS.used RISCOS.o &&
+
+# Sanity check
+echo Running sanity check
+strings RISCOS.img -t x | grep OSIm | grep ${KERNEL_OFFSET/0x/} || exit 1
+echo Seems alright
 
 # 16MiB boot RAM
 # 256MiB minimum RAM
 arm-none-eabi-gcc-9.2.1 \
         processor.boot mmu.boot \
         ${SOURCES//://*.c } \
+        RISCOS.o CKernelModules.o \
         -o kernel7.elf \
         $CFLAGS \
-        -Wl,--defsym=JTABLE=$( sed -n  's/^JTABLE *\(........\)\.\.FC.*$/0x\1/p' Kernel_gpa ) \
+        -Wl,--defsym=JTABLE=$JTABLE \
+        -Wl,--defsym=LegacyModulesList=$LEGACIES \
         -Wl,--defsym=legacy_svc_stack_top=0xff100000 \
         -Wl,--defsym=legacy_zero_page=0xfff40000 \
+        -Wl,--defsym=global_devices_top=0xfff60000 \
         \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
         -Wl,--defsym=top_of_minimum_RAM=0x10000000 \
@@ -65,8 +126,9 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=workspace=0xfffd0000 \
         -Wl,--defsym=shared=0xfffe0000 \
         -Wl,--section-start=.init=0xfc000000 \
-        -Wl,--section-start=.text=0xfc002000 &&
-arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf ckernel.img &&
-cat ckernel.img /dev/zero | dd of=kernel7.img bs=1024 count=64 &&
-dd if=RISCOS.img bs=1024 skip=64 >> kernel7.img &&
-arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump
+        -Wl,--section-start=.text=0xfc002000 \
+        -Wl,--section-start=.romimage=$KERNEL_START \
+        &&
+arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&
+echo Image built, disassembling &&
+time arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump

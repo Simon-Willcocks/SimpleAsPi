@@ -61,5 +61,8 @@ typedef struct {
                         // number of cores x number of sources
 
   uint32_t queues_lock;
+
+  uint32_t (*next_irq)( void *workspace, uint32_t core );
+  void *hal_workspace;
 } shared_ostask;
 

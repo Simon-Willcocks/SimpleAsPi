@@ -598,10 +598,10 @@ void create_default_translation_tables( uint32_t memory )
 
   // Map the OS image at its virtual address
   {
-    extern uint8_t __end__;
+    extern uint8_t _romimage_end;
     extern uint8_t _start;
     arm32_ptr high_memory = { .rawp = &_start };
-    uint32_t img_size = &__end__ - &_start;
+    uint32_t img_size = &_romimage_end - &_start;
 
     uint32_t sections = (img_size + (mmu_section_size - 1)) >> 20;
 
@@ -667,8 +667,8 @@ void create_default_translation_tables( uint32_t memory )
 
   {
     extern uint8_t _start;
-    extern uint8_t __end__;
-    uint32_t free = &__end__ - &_start;
+    extern uint8_t _romimage_end;
+    uint32_t free = &_romimage_end - &_start;
     free = free + mmu_section_size;
     free = free & ~(mmu_section_size-1);
     arm32_ptr p = { .rawp = &shared };

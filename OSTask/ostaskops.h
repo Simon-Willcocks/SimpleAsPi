@@ -23,12 +23,13 @@ enum {
   , OSTask_Create                       // New OSTask
   , OSTask_Spawn                        // New OSTask in a new slot
   , OSTask_EndTask                      // Last one out ends the slot
-  , OSTask_RegisterInterruptSources     // Once only
+  , OSTask_RegisterInterrupts           // Once only
   , OSTask_EnablingInterrupt            // Disable IRQs while I get
   , OSTask_WaitForInterrupt             // ready to wait.
   , OSTask_InterruptIsOff               // Enable interrupts (I'm done,
                                         // but not yet waiting)
-  , OSTask_SwitchToCore                 // Use sparingly!
+  // , OSTask_SwitchToCore                 // Use sparingly!
+  , OSTask_RegisterSWIHandlers          // Code or queue
   , OSTask_MapDevicePages               // For device drivers
   , OSTask_AppMemoryTop                 // r0 = New value, or 0 to read
   , OSTask_RunThisForMe                 // Run code in the context of the task
@@ -89,15 +90,25 @@ void Task_EndTask()
     : "lr", "cc" );
 }
 
-static inline
-void Task_RegisterInterruptSources( uint32_t n )
-{
-  register uint32_t number asm ( "r0" ) = n;
+typedef union swi_action swi_action;
+union swi_action {
+  uint32_t code;
+  uint32_t queue;
+};
 
-  asm ( "svc %[swi]"
+typedef struct swi_handlers {
+  swi_action action[64];
+} swi_handlers;
+
+static inline
+void Task_RegisterSWIHandlers( swi_handlers const *h )
+{
+  register swi_handlers const *handlers asm ( "r0" ) = h;
+
+  asm volatile ( "svc %[swi]"
     :
-    : [swi] "i" (OSTask_RegisterInterruptSources)
-    , "r" (number)
+    : [swi] "i" (OSTask_RegisterSWIHandlers)
+    , "r" (handlers)
     : "lr", "cc" );
 }
 
@@ -506,9 +517,22 @@ typedef struct {
   error_block *error;
 } queued_task;
 
-#ifndef NOT_DEBUGGING
 static inline
-#endif
+uint32_t Task_QueueCreate()
+{
+  register uint32_t handle asm( "r0" );
+
+  // FIXME handle errors
+  // FIXME there should probably be a QueueDelete!
+  asm volatile ( "svc %[swi]"
+             : "=r" (handle)
+             : [swi] "i" (OSTask_QueueCreate)
+             : "lr", "cc" );
+
+  return handle;
+}
+
+static inline
 queued_task Task_QueueWait( uint32_t queue_handle )
 {
   queued_task result = { 0, 0 };

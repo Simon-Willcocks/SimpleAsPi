@@ -13,32 +13,21 @@
  * limitations under the License.
  */
 
-#include "workspace_ostask.h"
-#include "workspace_rawmemory.h"
-#include "workspace_mmu.h"
-#include "workspace_legacy.h"
-#include "workspace_modules.h"
+// Modern modules will use minimal svc stack and either return immediately
+// or delegate the work to a helper task. They are also multi-processor
+// aware (i.e. will lock out other cores in critical regions).
+
+// Legacy modules might enable interrupts while in SVC.
 
 typedef struct {
-  uint32_t boot_lock;
-  shared_ostask ostask;
-  shared_rawmemory rawmemory;
-  shared_mmu mmu;
-  shared_legacy legacy;
-  shared_module module;
-} shared_workspace;
+} workspace_module;
+
+typedef struct module module;
 
 typedef struct {
-  struct {
-    uint32_t s[100];
-  } svc_stack;
-  uint32_t core;
-  workspace_ostask ostask;
-  workspace_rawmemory rawmemory;
-  workspace_mmu mmu;
-  workspace_legacy legacy;
-  workspace_module module;
-} core_workspace;
+  module *modules;
+  module *last;
 
-extern shared_workspace shared;
-extern core_workspace workspace;
+  module *in_init;
+} shared_module;
+

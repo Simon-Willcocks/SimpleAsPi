@@ -62,8 +62,8 @@ uint32_t app_memory_top( uint32_t new )
   int i = 0;
   while (slot->app_mem[i].pages != 0
       && slot->app_mem[i].va_page <= (top >> 12)) {
-    i++;
     top = top_of( &slot->app_mem[i] );
+    i++;
   }
   if (new != 0) {
     if (new > top) {
@@ -77,7 +77,7 @@ uint32_t app_memory_top( uint32_t new )
 
       top = new;
     }
-    else {
+    else if (new < top) {
       PANIC; // Shrinking app area.
     }
   }

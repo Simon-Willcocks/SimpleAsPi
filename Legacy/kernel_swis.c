@@ -22,6 +22,7 @@
 #include "raw_memory_manager.h"
 #include "legacy.h"
 #include "kernel_swis.h"
+#include "ZeroPage.h"
 
 void setup_system_heap()
 {
@@ -91,12 +92,20 @@ void setup_legacy_svc_stack()
   map_memory( &map );
 }
 
-extern uint32_t legacy_zero_page[4096]; // 16 KiB
+extern LegacyZeroPage legacy_zero_page;
+
+static void __attribute__(( naked )) end_vector()
+{
+  asm ( "pop {pc}" );
+}
+
+static vector_entry const vector_end = { .workspace = 0, .code = (uint32_t) end_vector, .next = 0 };
 
 void setup_legacy_zero_page()
 {
+  // One block of memory shared by all cores. (At the moment.)
   uint32_t base = (uint32_t) &legacy_zero_page;
-  uint32_t pages = sizeof( legacy_zero_page ) >> 12;
+  uint32_t pages = (sizeof( legacy_zero_page ) + 0xfff) >> 12;
 
   memory_mapping map = {
     .base_page = claim_contiguous_memory( pages ),
@@ -110,13 +119,18 @@ void setup_legacy_zero_page()
   map_memory( &map );
 
   memset( &legacy_zero_page, 0, sizeof( legacy_zero_page ) );
+
+  for (int i = 0; i < number_of( legacy_zero_page.VecPtrTab ); i++) {
+    legacy_zero_page.VecPtrTab[i] = &vector_end;
+  }
+
 }
 
 // This routine is for SWIs implemented in the legacy kernel, 0-255, not in
 // modules, in ROM or elsewhere. (i.e. routines that return using SLVK.)
 void __attribute__(( noinline ))
 run_risos_code_implementing_swi( svc_registers *regs,
-                                      uint32_t svc, uint32_t code )
+                                 uint32_t svc, uint32_t code )
 {
   register uint32_t non_kernel_code asm( "r10" ) = code;
   register uint32_t swi asm( "r11" ) = svc;
@@ -192,12 +206,48 @@ bool swi_is_legacy()
   return true;
 }
 
-extern void run_module_swi( svc_registers *regs, int swi );
+// If no other subsystem wants to handle modules, use the legacy code
+__attribute__(( weak ))
+OSTask *do_OS_Module( svc_registers *regs )
+{
+  extern uint32_t JTABLE[128];
+
+  uint32_t entry = JTABLE[OS_Module];
+  run_risos_code_implementing_swi( regs, OS_Module, entry );
+  return 0;
+}
+
+__attribute__(( weak ))
+OSTask *run_module_swi( svc_registers *regs, int swi )
+{
+  PANIC;
+  return 0;
+}
+
+__attribute__(( weak ))
+bool needs_legacy_stack( uint32_t swi )
+{
+  return true;
+}
 
 OSTask *execute_swi( svc_registers *regs, int number )
 {
   int swi = number & ~Xbit;
   bool generate_error = (number == swi);
+
+  // TODO: XOS_CallASWI( Xwhatever ) is clear, but
+  // OS_CallASWI( Xwhatever ) or XOS_CallASWI( whatever ) is less so.
+
+  if (swi == OS_CallASWIR12) {
+    swi = regs->r[12];
+  }
+  else if (swi == OS_CallASWI) {
+    swi = regs->r[10];
+  }
+  if (swi == OS_CallASWIR12
+   || swi == OS_CallASWI) {
+    PANIC; // I think the legacy implementation loops forever...
+  }
 
   uint32_t legacy_top = (uint32_t) &legacy_svc_stack_top;
   uint32_t std_top = (uint32_t) (&workspace.svc_stack+1);
@@ -224,31 +274,27 @@ OSTask *execute_swi( svc_registers *regs, int number )
       if ((uint32_t)(legacy_regs + 1) != legacy_top) PANIC;
     }
 
-    if (swi == OS_CallASWIR12) {
-      swi = regs->r[12];
-    }
-    else if (swi == OS_CallASWI) {
-      swi = regs->r[10];
-    }
-    if (swi == OS_CallASWIR12
-     || swi == OS_CallASWI) {
-      PANIC; // I think the legacy implementation loops forever...
-    }
-
     switch (swi) {
-    case 0 ... 127:
+    case OS_Module:
       {
-        uint32_t entry = shared.legacy.jtable[swi];
-        if ((entry & 3) == 0) {
-          run_risos_code_implementing_swi( legacy_regs, swi, entry );
-        }
-        else PANIC; // Queue
+      bool module_run = (legacy_regs->r[0] == 0 || legacy_regs->r[0] == 2);
+      if (module_run && !new_owner) PANIC;
+      do_OS_Module( legacy_regs );
       }
       break;
-    default: PANIC;
+    default:
+      if (swi < 128) {
+        extern uint32_t JTABLE[128];
+        uint32_t entry = JTABLE[swi];
+        asm ( "b 1f\n1:" : : "r" (entry) );
+        run_risos_code_implementing_swi( legacy_regs, swi, entry );
+      }
+      else run_module_swi( legacy_regs, swi );
     }
 
-    *regs = *legacy_regs;
+    if (regs != legacy_regs) {
+      *regs = *legacy_regs;
+    }
 
     if (generate_error && (regs->spsr & VF) != 0) {
       PANIC; // Call OS_GenerateError!
@@ -294,26 +340,13 @@ void __attribute__(( noreturn )) startup()
 
   enable_page_level_mapping();
 
-  // Illicit knowlege of mmu implementation
-  if (shared.mmu.free == 0) PANIC;
-
   setup_system_heap(); // System heap
   setup_shared_heap(); // "RMA" heap
 
   setup_legacy_svc_stack();
   setup_legacy_zero_page(); // FIXME: universal, or per task or slot?
 
-  extern uint32_t JTABLE[128];
-
-  for (int i = 0; i < number_of( shared.legacy.jtable ); i++) {
-    shared.legacy.jtable[i] = JTABLE[i];
-  }
-
-  register uint32_t handle asm( "r0" );
-  asm ( "svc %[swi]"
-    : "=r" (handle)
-    : [swi] "i" (OSTask_QueueCreate)
-    : "lr" );
+  uint32_t handle = Task_QueueCreate();
 
   shared.legacy.queue = handle;
   shared.legacy.owner = shared_heap_allocate( 4 );
@@ -326,6 +359,16 @@ void __attribute__(( noreturn )) startup()
     "\n  cpsie aif, #0x10"
     :
     : [reset_sp] "r" ((&workspace.svc_stack)+1) );
+
+  for (register int i asm ( "r0" ) = 0; i <= 16; i++) {
+    asm ( "svc %[def]"
+      "\n  svc %[set]"
+      :
+      : [def] "i" (OS_ReadDefaultHandler)
+      , [set] "i" (OS_ChangeEnvironment)
+      , "r" (i)
+      : "r1", "r2", "r3" );
+  }
 
   boot_sequence();
 }
