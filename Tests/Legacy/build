@@ -1,7 +1,7 @@
 #! /bin/bash -
 
 SYSTEM=$( dirname $0 )
-SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:Legacy:Modules
+SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
 
 echo Building system $SYSTEM with ${SUBSYSTEMS//:/ }
 
@@ -108,6 +108,10 @@ arm-none-eabi-gcc-9.2.1 \
         \
         -Wl,--defsym=OSTask_free_pool=0xff100000 \
         -Wl,--defsym=OSTaskSlot_free_pool=0xff200000 \
+        \
+        -Wl,--defsym=OSQueue_free_pool=0xfff90000 \
+        -Wl,--defsym=OSPipe_free_pool=0xfffa0000 \
+        \
         -Wl,--defsym=VMSAv6_Level2_Tables=0xff300000 \
         -Wl,--defsym=system_heap_base=0xff400000 \
         -Wl,--defsym=system_heap_top=0xff500000 \
