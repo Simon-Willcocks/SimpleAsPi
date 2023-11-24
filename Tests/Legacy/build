@@ -119,7 +119,7 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=shared_heap_top=0xff600000 \
         \
         -Wl,--defsym=debug_pipe=0xfff00000 \
-        -Wl,--defsym=app_memory_limit=0x40000000 \
+        -Wl,--defsym=app_memory_limit=0x30000000 \
         -Wl,--defsym=pipes_base=0x80000000 \
         -Wl,--defsym=pipes_top=0xc0000000 \
         \
