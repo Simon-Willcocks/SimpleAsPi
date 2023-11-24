@@ -113,8 +113,8 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=OSPipe_free_pool=0xfffa0000 \
         \
         -Wl,--defsym=VMSAv6_Level2_Tables=0xff300000 \
-        -Wl,--defsym=system_heap_base=0xff400000 \
-        -Wl,--defsym=system_heap_top=0xff500000 \
+        -Wl,--defsym=system_heap_base=0x30000000 \
+        -Wl,--defsym=system_heap_top=0x30100000 \
         -Wl,--defsym=shared_heap_base=0xff500000 \
         -Wl,--defsym=shared_heap_top=0xff600000 \
         \
