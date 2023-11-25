@@ -1,0 +1,37 @@
+#! /bin/bash -
+
+GCC=arm-none-eabi-gcc-9.2.1
+OBJDUMP=arm-none-eabi-objdump
+OBJCOPY=arm-none-eabi-objcopy
+
+MOD=$1
+shift ; # All other parameters are passed to gcc
+
+ROOT=$( dirname $( pwd ) )
+
+M=$( dirname $MOD ) &&
+if [ "$M" == "." ]
+then SRC=$ROOT/Modules/$MOD ; M=$MOD
+else SRC=$ROOT/$MOD
+fi
+
+if [ -d $SRC/Resources ]; then
+  build_resources_h $SRC
+fi &&
+
+MODNAME=$( basename ${MOD} )
+
+mkdir -p Generated/${MODNAME}
+pushd Generated/${MODNAME}
+
+$GCC -c $SRC/*.c -Wall \
+      -Wl,--no-dynamic-linker \
+      -nostartfiles -nostdlib -fno-zero-initialized-in-bss -O4 \
+      -g -march=armv8-a+nofp -T Modules/script \
+      -Wall \
+      -I $ROOT -I OSTask -I Modules -I Legacy -I Devices \
+      -fno-toplevel-reorder $* &&
+
+$OBJCOPY /tmp/module$$.elf Generated/${MODNAME}.o --prefix-symbols=${MODNAME}_ \
+        --rename-section .text=.text.rom --rename-section .data=.shouldnotbehere 
+
