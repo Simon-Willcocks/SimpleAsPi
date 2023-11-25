@@ -176,6 +176,8 @@ static inline uint32_t pipe_handle( OSPipe *pipe )
   return 0x45504950 ^ (uint32_t) pipe;
 }
 
+extern void setup_pipe_pool();
+
 OSTask *PipeCreate( svc_registers *regs );
 OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe );
@@ -186,6 +188,8 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeSetReceiver( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeNotListening( svc_registers *regs, OSPipe *pipe );
+
+extern void setup_queue_pool();
 
 OSTask *QueueCreate( svc_registers *regs );
 OSTask *QueueWait( svc_registers *regs, OSQueue *queue,

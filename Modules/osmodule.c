@@ -14,11 +14,24 @@
  */
 
 #include "ostask.h"
+#include "kernel_swis.h"
 
-extern uint32_t CKernelModulesList;
-extern uint32_t LegacyModulesList;
+typedef struct module_header module_header;
 
 typedef struct {
+  char const *name;
+  module_header *start;
+} rom_module;
+
+#include "rom_modules.h"
+
+DEFINE_ERROR( ModuleNotFound, 0x888, "Module not found" );
+DEFINE_ERROR( NoRoomInRMA, 0x888, "No room in RMA" );
+DECLARE_ERROR( UnknownSWI );
+
+extern uint32_t LegacyModulesList;
+
+struct module_header {
   uint32_t offset_to_start;
   uint32_t offset_to_initialisation;
   uint32_t offset_to_finalisation;
@@ -32,13 +45,13 @@ typedef struct {
   uint32_t offset_to_swi_decoding_code;
   uint32_t offset_to_messages_file_name;
   uint32_t offset_to_flags;
-} module_header;
+};
 
 typedef struct module module;
 
-static bool is_queue( uint32_t code )
+static inline bool is_queue( swi_action action )
 {
-  return (code & 3) == 1;
+  return (action.code & 3) == 1;
 }
 
 struct module {
@@ -168,21 +181,56 @@ module_header *find_module_in_list( char const *name, uint32_t *list )
   return 0;
 }
 
-static void pre_init_service( module_header *module, uint32_t size )
+module_header *find_module_in_rom( char const *name )
 {
-  // FIXME TODO
+  for (int i = 0; rom_modules[i].name != 0; i++) {
+    if (module_name_match( name, rom_modules[i].name )) {
+      return rom_modules[i].start;
+    }
+  }
+  return 0;
+}
 
-  return;
-#if 0
+static inline uint32_t bcd( char c )
+{
+  if (c < '0' || c > '9') c = '0';
+  return c - '0';
+}
+
+static void Service_ModulePostInit( module *module )
+{
   // Service_ModulePreInit
-  register module_header* header asm( "r0" ) = module;
-  register uint32_t code asm( "r1" ) = 0xb9;
-  register uint32_t length_plus_four asm( "r2" ) = size;
+
+  char const *postfix = module->postfix[0] == 0 ? 0 : module->postfix;
+  char const *title = title_string( module->header );
+  uint32_t bcd_version = 0;
+  char const *help = help_string( module->header );
+  while (*help != '\t' && *help != '\0') help++;
+  while (*help == '\t') help++;
+  while (*help == ' ' && *help != '\0') help++;
+  while (*help == ' ' && *help != '\0') help++;
+  while (*help != '\0' && *help != '.') {
+    bcd_version = (bcd_version << 4) + bcd( *help++ );
+  }
+  if (*help == '.') {
+    bcd_version = (bcd_version << 4) + bcd( help[1] );
+    bcd_version = (bcd_version << 4) + bcd( help[2] );
+  }
+  else {
+    bcd_version = (bcd_version << 8);
+  }
+
+  register module_header* header asm( "r0" ) = module->header;
+  register uint32_t code asm( "r1" ) = 0xda;
+  register char const *t asm( "r2" ) = title;
+  register char const *p asm( "r3" ) = postfix;
+  register uint32_t vers asm( "r4" ) = bcd_version;
+
   asm ( "svc %[swi]"
       :
       : [swi] "i" (OS_ServiceCall | Xbit)
-      , "r" (code), "r" (header), "r" (length_plus_four)
-#endif
+      , "r" (code), "r" (header), "r" (t), "r" (p), "r" (vers)
+      : "lr", "cc" );
 }
 
 static inline 
@@ -220,9 +268,12 @@ error_block *run_initialisation_code( const char *env, module *m,
   // so avoid corrupting any by simply not storing them
   shared.module.in_init = old_in_init;
 
+  if (error == 0) {
+    Service_ModulePostInit( m );
+  }
+
   return error;
 }
-
 
 bool needs_legacy_stack( uint32_t swi )
 {
@@ -242,8 +293,73 @@ OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )
   return 0;
 }
 
+module *find_module_by_chunk( uint32_t swi )
+{
+  // TODO: have a lookup table for up to 8192 modules (bits 6-16, 18, 19)?
+  // (Include a bit to indicate modernity.)
+  uint32_t chunk = swi & ~0xff00003f;
+
+  module *instance = shared.module.modules;
+  while (instance != 0 && instance->header->swi_chunk != chunk) {
+    instance = instance->next;
+  }
+
+  return instance;
+}
+
+void run_action( svc_registers *regs, uint32_t code, module *m )
+{
+  // CKernel SWI handlers take:
+  //   r0-r9 from the caller
+  //   r12   pointer to private word
+  //   r11   undefined (no longer the SWI number; each one has its own code)
+  //   r13   svc stack
+  //   r14   return address
+  //
+  // May change r0-r9, flags, for the caller, corrupt r10-r12, r14.
+  // New rule: condition flags are never inputs to (new) SWIs
+  // (Honestly, I don't think there are SWIs that use them as inputs.)
+  register uint32_t *private asm( "r12" ) = &m->private_word;
+  register uint32_t c asm ( "r12" ) = code;
+  register svc_registers *r asm ( "r11" ) = regs;
+  asm volatile (
+    "\n  push {r11}"
+    "\n  ldmia r11, {r0-r9}"
+    "\n  blx r12"
+    "\n  pop {r11}"
+    "\n  stmia r11, {r0-r9}"
+    "\n  mrs r0, cpsr"
+    "\n  str r0, [r11, %[psr]]"
+    :
+    : "r" (r)
+    , "r" (c)
+    , "r" (private)
+    , [psr] "i" (offset_of( svc_registers, spsr ))
+    : "lr", "cc", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"
+  );
+}
+
 OSTask *run_module_swi( svc_registers *regs, int swi )
 {
+  module *m = find_module_by_chunk( swi );
+
+  if (m == 0) return Error_UnknownSWI( regs );
+
+  if (m->handlers != 0) { // MP-aware
+    uint32_t swi_offset = swi & 0x3f;
+    swi_action action = m->handlers->action[swi_offset];
+    if (is_queue( action ))
+      return queue_running_OSTask( regs, action.queue, swi_offset );
+    else if (action.code != 0) {
+      run_action( regs, action.code, m );
+    }
+    else
+      return Error_UnknownSWI( regs );
+  }
+  else {
+    PANIC; // Legacy module
+  }
+
   return 0;
 }
 
@@ -253,13 +369,13 @@ module_header *find_named_module( char const *name )
 
   while (*name == ' ') name++;
 
-  char const *rom_module = "System:Modules.";
+  char const *rom_path = "System:Modules.";
   char const *mod_name = name;
-  while (*mod_name == *rom_module) { mod_name++; rom_module++; }
-  bool search_rom = (*rom_module == '\0');
+  while (*mod_name == *rom_path) { mod_name++; rom_path++; }
+  bool search_rom = (*rom_path == '\0');
 
   if (search_rom) {
-    header = find_module_in_list( mod_name, &CKernelModulesList );
+    header = find_module_in_rom( mod_name );
     if (header == 0) {
       header = find_module_in_list( mod_name, &LegacyModulesList );
     }
@@ -284,9 +400,6 @@ module_header *load_named_module( char const *name )
 
   return header;
 }
-
-DEFINE_ERROR( ModuleNotFound, 0x888, "Module not found" );
-DEFINE_ERROR( NoRoomInRMA, 0x888, "No room in RMA" );
 
 module *find_initialised_module( char const *name )
 {

@@ -1,5 +1,8 @@
 #! /bin/bash -
 
+rm -rf Generated
+mkdir Generated
+
 SYSTEM=$( dirname $0 )
 SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
 
@@ -32,42 +35,59 @@ echo Sources: ${SOURCES//://*.c }
 
 # This script expects a complete ROM image in RISCOS.img and Kernel_gpa
 # copied from RiscOS/Sources/Kernel/bin/Kernel_gpa or
-# /mnt/NoGit/RiscOS/Install/ROOL/BCM2835/RISC_OS/Kernel_gpa
+# RiscOS/Install/ROOL/BCM2835/RISC_OS/Kernel_gpa
 # Changing the amount of RAM reserved for the HAL involves many changes in
 # the RISC OS source, and I can't work out what they all are!
 # So, for now, the CKernel modules can come after the rom image.
 #   RiscOS/Export/APCS-32/Hdr/Global/HALSize/?
 #   RiscOS/BuildSys/Components/ROOL/BCM2835
 
-# LegacyModulesList  = FC048A8C manually taken from RISC OS build log file
-# (first ROM module, well, FileSwitch, not PCI - 4).
-JTABLE=$( sed -n  's/^JTABLE *\(........\)\.\.FC.*$/0x\1/p' Kernel_gpa )
-LEGACIES=$( sed -n  's/^FileSwitch *\(FC......\) *00.*$/0x\1/p' RISCOS.log )
-KERNEL_START=$( sed -n  's/^Kernel *\(FC......\) *00.*$/0x\1/p' RISCOS.log )
-KERNEL_OFFSET=$( sed -n  's/^Kernel *FC0*\(.*\)  *00.*$/0x\1/p' RISCOS.log )
-
 # Position taken from RISCOS.log is the first word of the module, the
 # length is in the previous word
-LEGACIES=$( printf 0x%x $(( $LEGACIES - 4 )) )
 
-MODULES=HAL:BCM283XGPU
+function rom_module {
+  sed -n  's/^\<'$1'\> *\(FC......\) *00.*$/0x\1/p' RISCOS.log
+}
+
+function rom_object {
+  sed -n  's/^\<'$1'\> *\(........\)\.\.FC.*$/0x\1/p' Kernel_gpa
+}
+
+KERNEL_START=$( rom_module Kernel )
+KERNEL_OFFSET=$( echo $KERNEL_START | sed -n 's/^0xFC0*//p' )
+
+function symbol {
+  echo -Wl,--defsym=$1=$( rom_object $1 ) 
+}
+
+FIRST=$( printf 0x%x $(( $( rom_module FileSwitch ) - 4 )) )
+
+LEGACIES="-Wl,--defsym=LegacyModulesList=$FIRST"
+LEGACIES+=" "$( symbol JTABLE )
+LEGACIES+=" "$( symbol defaultvectab )
+echo $LEGACIES
+echo $KERNEL_START, $KERNEL_OFFSET
+
+MODULES=HAL:BCM283XGPIO
 
 echo Modules: ${MODULES//:/ }
 
-rm -f CKernelModules &&
-
+(
 for i in ${MODULES//:/ }
 do
-  Modules/append Modules/$i CKernelModules
+  MODNAME=$( basename ${i} )
+  echo extern module_header ${MODNAME}_header\;
 done &&
-dd if=/dev/zero bs=4 count=1 2>/dev/null >> CKernelModules &&
+echo static rom_module const rom_modules[] = {  &&
+for i in ${MODULES//:/ }
+do
+  Modules/build_for_rom Modules/$i
+  MODNAME=$( basename ${i} )
+  echo { \"$MODNAME\", \&${MODNAME}_header },
+done &&
+echo '{ 0, 0 } };'
+) > Generated/rom_modules.h &&
 
-$OBJCOPY -I binary -O elf32-littlearm -B armv7 CKernelModules \
-         --redefine-sym _binary_CKernelModules_start=CKernelModulesList \
-         --redefine-sym _binary_CKernelModules_end=_romimage_end \
-         --rename-section .data=.romimage CKernelModules.o &&
-
-rm CKernelModules &&
 echo Modules built &&
 
 ### IMPORTANT
@@ -77,16 +97,15 @@ echo Modules built &&
 # RiscOS/BuildSys/Components/ROOL/ file needs to be changed.
 ###
 
-dd if=RISCOS.img of=/tmp/RISCOS.used bs=$(( $KERNEL_OFFSET )) skip=1 &&
+dd if=RISCOS.img of=/tmp/RISCOS.used bs=$(( 0x$KERNEL_OFFSET )) skip=1 &&
 $OBJCOPY -I binary -O elf32-littlearm -B armv7 \
         --redefine-sym _binary__tmp_RISCOS_used_start=_romimage_start \
         --redefine-sym _binary__tmp_RISCOS_used_size=_romimage_size \
         --rename-section .data=.romimage \
         /tmp/RISCOS.used RISCOS.o &&
 
-# Sanity check
 echo Running sanity check
-strings RISCOS.img -t x | grep OSIm | grep ${KERNEL_OFFSET/0x/} || exit 1
+strings RISCOS.img -t x | grep OSIm | grep $KERNEL_OFFSET || exit 1
 echo Seems alright
 
 # 16MiB boot RAM
@@ -94,11 +113,11 @@ echo Seems alright
 arm-none-eabi-gcc-9.2.1 \
         processor.boot mmu.boot \
         ${SOURCES//://*.c } \
-        RISCOS.o CKernelModules.o \
+        RISCOS.o Generated/*.o -I Generated \
         -o kernel7.elf \
         $CFLAGS \
-        -Wl,--defsym=JTABLE=$JTABLE \
-        -Wl,--defsym=LegacyModulesList=$LEGACIES \
+        -Wl,--defsym=_romimage_end=0xfc510000 \
+        $LEGACIES \
         -Wl,--defsym=legacy_svc_stack_top=0xff100000 \
         -Wl,--defsym=legacy_zero_page=0xfff40000 \
         -Wl,--defsym=global_devices_top=0xfff60000 \
@@ -134,5 +153,9 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--section-start=.romimage=$KERNEL_START \
         &&
 arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&
+echo Running sanity check 2 &&
+strings kernel7.img -t x | grep OSIm | grep $KERNEL_OFFSET &&
+echo Seems alright &&
+
 echo Image built, disassembling &&
 time arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump

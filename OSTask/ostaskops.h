@@ -29,6 +29,9 @@ enum {
   , OSTask_InterruptIsOff               // Enable interrupts (I'm done,
                                         // but not yet waiting)
   // , OSTask_SwitchToCore                 // Use sparingly!
+  , OSTask_CurrentCore                  // Use sparingly! (More or less
+                                        // useless outside interrupt tasks,
+                                        // I think.
   , OSTask_RegisterSWIHandlers          // Code or queue
   , OSTask_MapDevicePages               // For device drivers
   , OSTask_AppMemoryTop                 // r0 = New value, or 0 to read
@@ -99,6 +102,20 @@ union swi_action {
 typedef struct swi_handlers {
   swi_action action[64];
 } swi_handlers;
+
+// The returned core number will remain the same until the task
+// calls any variation on Sleep, ClaimLock, etc. The interrupt task
+// SWIs will not change the core.
+static inline
+uint32_t Task_CurrentCore()
+{
+  register uint32_t core asm ( "r0" );
+  asm volatile ( "svc %[swi]"
+    : "=r" (core)
+    : [swi] "i" (OSTask_CurrentCore)
+    : "lr", "cc" );
+  return core;
+}
 
 static inline
 void Task_RegisterSWIHandlers( swi_handlers const *h )

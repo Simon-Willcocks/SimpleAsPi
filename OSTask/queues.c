@@ -16,16 +16,52 @@
 #include "ostask.h"
 #include "raw_memory_manager.h"
 
-struct __attribute__(( packed, aligned( 4 ) )) OSQueue {
-  OSTask *queue;
-  OSTask *handlers;
+typedef union OSQueue OSQueue;
+
+union __attribute__(( packed, aligned( 4 ) )) OSQueue {
+  struct {
+    OSTask *queue;
+    OSTask *handlers;
+  };
+  struct {
+    OSQueue *next;
+    OSQueue *prev;
+  };
 };
+
+// Only queue items while in the free pool; remember to do new_OSQueue
+// before returning to the pool.
+MPSAFE_DLL_TYPE( OSQueue );
 
 DEFINE_ERROR( QueueCreationProblem, 0x888, "OSTask Queue creation problem" );
 
+extern OSQueue OSQueue_free_pool[];
+
+void setup_queue_pool()
+{
+  // FIXME: free the size from the 64KiB limit
+  memory_mapping queues = {
+    .base_page = claim_contiguous_memory( 0x10 ), // 64 KiB
+    .pages = 0x10,
+    .vap = &OSQueue_free_pool,
+    .type = CK_MemoryRW,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+  if (queues.base_page == 0xffffffff) PANIC;
+  map_memory( &queues );
+  for (int i = 0; i < 0x10000 / sizeof( OSQueue ); i++) {
+    OSQueue *q = &OSQueue_free_pool[i];
+    memset( q, 0, sizeof( OSQueue ) );
+    dll_new_OSQueue( q );
+    dll_attach_OSQueue( q, &shared.ostask.queue_pool );
+    shared.ostask.queue_pool = shared.ostask.queue_pool->next;
+  }
+}
+
 uint32_t new_queue()
 {
-  OSQueue *queue = system_heap_allocate( sizeof( OSQueue ) );
+  OSQueue *queue = mpsafe_detach_OSQueue_at_head( &shared.ostask.queue_pool );
 
   if (queue == 0) {
     return 0;

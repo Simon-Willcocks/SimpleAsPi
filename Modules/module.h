@@ -172,6 +172,11 @@ void *memset(void *s, int c, size_t n)
 
 #include "kernel_swis.h"
 
+static inline void ensure_changes_observable()
+{
+  asm ( "dsb sy" );
+}
+
 static inline void memory_write_barrier()
 {
   asm ( "dsb sy" );

@@ -28,17 +28,21 @@
 //              RiscOS/Sources/Kernel/hdr/KernelWS
 
 /* Note that offsets will change if the structure is compiled in 64-bit. */
-#if 4 == __SIZEOF_POINTER__
+#if 4 != __SIZEOF_POINTER__
+#error "Use -m32 and multilib to test this file"
+#endif
+
 typedef struct EcfOraEor EcfOraEor;
 typedef EcfOraEor *EcfOraEorPtr;
 typedef void *VoidPtr;
-#else
-#warning "Being compiled in an 64-bit mode"
-typedef uint32_t EcfOraEorPtr;
-typedef uint32_t VoidPtr;
-#endif
 
 #define PAD( n ) uint8_t pad##__LINE__[n];
+
+typedef struct {
+  uint32_t total;
+  uint32_t container_size;
+  uint32_t *first_free;
+} cba_head;
 
 struct DANode {
   uint32_t DANode_Link; //  points to next node (in address order)
@@ -442,11 +446,11 @@ typedef struct {
   uint32_t BorderT;
 
   union {
-    // Starts at ffff1244
+    // Starts at +1244
     struct {
       uint32_t RetnReg[10];
       uint32_t RetnLink;
-      // ffff1270
+      // +1270
       uint32_t SprReadNColour;      //Vdu vars for the mode the     --
       uint32_t SprWriteNColour;     // the sprite is in               |
       uint32_t SprBytesPerChar;     //                                |
@@ -458,7 +462,7 @@ typedef struct {
 
       uint8_t NameBuf[16];
 
-      // ffff12a0:
+      // +12a0:
       uint32_t SPltWidth;
       uint32_t SPltHeight;
       uint32_t SPltScrOff;
@@ -661,7 +665,7 @@ typedef struct {
   uint8_t LargeCommon[2048 + 16 + 44]; // the largest area
 
   uint32_t AlignSpace64;
-  // 0x1f00 (0xffff2f00)
+  // 0x1f00 (+2f00)
   uint8_t Font[0x700]; // 7 pages of (soft) font
 
   uint32_t VduSaveArea; // Rest of raw
@@ -672,6 +676,14 @@ struct vector_entry {
   vector_entry *next;
   uint32_t workspace;
   uint32_t code;
+};
+
+// Would you believe this?
+typedef struct callback_entry callback_entry;
+struct callback_entry {
+  callback_entry *next;
+  uint32_t code;
+  uint32_t workspace;
 };
 
 typedef struct {
@@ -813,11 +825,11 @@ typedef struct {
   PAD( 12 );
   // SkippedTablesEnd #      0
   // NVRAM support
-  uint8_t  NVRamSize; //  Size of NVRam (E2ROM & CMOS) fitted in 256byte units  ffff0350
+  uint8_t  NVRamSize; //  Size of NVRam (E2ROM & CMOS) fitted in 256byte units  +0350
   uint8_t  NVRamBase; //  Base of NVRam
   uint8_t  NVRamSpeed; //  Clock hold time in 0.5us units
   uint8_t  NVRamPageSize; //  Page size for writing (log2)
-  uint8_t  NVRamWriteSize; //  Size of writable region (256byte units)          ffff0354
+  uint8_t  NVRamWriteSize; //  Size of writable region (256byte units)          +0354
                      // AlignSpace
   struct DANode AppSpaceDANode; // Dummy area node for application space (not on list)
   struct DANode FreePoolDANode; // Area node for free pool
@@ -829,7 +841,7 @@ typedef struct {
   uint32_t DeviceTable; //  pointer to table
 
   // Unused
-  uint32_t ProcVec_Branch0; //  Branch through zero     ffff0420
+  uint32_t ProcVec_Branch0; //  Branch through zero     +0420
   uint32_t ProcVec_UndInst; //  Undefined instruction vector
   uint32_t ProcVec_SWI; //  SWI vector
   uint32_t ProcVec_PrefAb; //  Prefetch abort vector
@@ -839,11 +851,11 @@ typedef struct {
   uint32_t ProcVecPreVeneers[4];
 
   uint32_t ExtendedROMFooter; //  Pointer to the extended ROM footer structure. 0 if not initialised, -1 if not found.
-  uint32_t CPUFeatures[2];      // ffff0450
+  uint32_t CPUFeatures[2];      // +0450
 
   uint8_t pad1[0xa8];
 
-  uint32_t CamMapCorruptDebugBlock[16]; // somewhere to dump registers in case of emergency   ffff0500
+  uint32_t CamMapCorruptDebugBlock[16]; // somewhere to dump registers in case of emergency   +0500
   uint32_t MaxCamEntry32; //  maximum index into the cam map which has a
                                   // 32bit physical address, for easy detection by
                                   // page number (all RAM banks with 32bit
@@ -851,39 +863,40 @@ typedef struct {
   uint8_t padding[0x20]; // Kernel/hdr/ExportVals/values
 
   uint32_t CamEntriesPointer; //  points to where CAM soft copy is
-  uint32_t MaxCamEntry; //  maximum index into the cam map, ie                          ffff0568
+  uint32_t MaxCamEntry; //  maximum index into the cam map, ie                          +0568
                                   // 511 for 16MByte machines, 383 for 12MBytes
                                   // 255 for 8MBytes, otherwise 127
   uint32_t RAMLIMIT; //  Number of pages of RAM
   uint32_t ROMPhysAddr;
   uint32_t HiServ_ws;
   uint32_t HiServ;
-  uint32_t SExitA;      // ffff057c
-  uint32_t SExitA_ws;   // ffff0580
+  uint32_t SExitA;      // +057c
+  uint32_t SExitA_ws;   // +0580
   uint32_t UpCallHan_ws;
   uint32_t UpCallHan;
   uint32_t ROMModuleChain; //  pointer to head of ROM module chain
-  uint8_t KeyWorkSpace[0x200];          // ffff0590
+  uint8_t KeyWorkSpace[0x200];          // +0590
 
-  uint32_t ChocolateCBBlocks; //  -> array of quick access blocks for Callback          ffff0790
-  uint32_t ChocolateSVBlocks; //  -> array of quick access blocks for software vectors
-  uint32_t ChocolateTKBlocks; //  -> array of quick access blocks for tickers
-  uint32_t ChocolateMRBlocks; //  -> array of blocks for ROM module nodes (reduces no. of individual blocks in heap)
-  uint32_t ChocolateMABlocks; //  -> array of blocks for active module nodes (reduces no. of individual blocks in heap)
-  uint32_t ChocolateMSBlocks; //  -> array of blocks for module SWI hash nodes (reduces no. of individual blocks in heap)
+  cba_head *ChocolateCBBlocks; //  -> quick access blocks for Callback          +0790
+  cba_head *ChocolateSVBlocks; //  -> quick access blocks for software vectors
+  cba_head *ChocolateTKBlocks; //  -> quick access blocks for tickers
+  cba_head *ChocolateMRBlocks; //  -> blocks for ROM module nodes (reduces no. of individual blocks in heap)
+  cba_head *ChocolateMABlocks; //  -> blocks for active module nodes (reduces no. of individual blocks in heap)
+  cba_head *ChocolateMSBlocks; //  -> blocks for module SWI hash nodes (reduces no. of individual blocks in heap)
+
   // !!!! Free Space (40 bytes)
   uint32_t OldSWIHashspace[10];
   uint32_t Module_List;
   uint32_t Curr_Active_Object;          // Should be 7d4
   // Vector Claim & Release tables etc
   vector_entry *VecPtrTab[96];               // Should be 7d8
-  uint32_t ExceptionDump;               // ffff0958
+  uint32_t ExceptionDump;               // +0958
   uint8_t spare[52];
   struct OsbyteVars OsbyteVars;
                               // (and stored in) OS_Bytes &A6,&A7. SKS
 
-  uint32_t BuffInPtrs[10];      // ffff0a64
-  uint32_t BuffOutPtrs[10];     // ffff0a8c
+  uint32_t BuffInPtrs[10];      // +0a64
+  uint32_t BuffOutPtrs[10];     // +0a8c
 
   uint32_t VariableList;
   // Oscli stuff
@@ -912,7 +925,7 @@ typedef struct {
 
   uint32_t Page_Size;
 
-  uint8_t CMOSRAMCache[256];    // ffff0b34
+  uint8_t CMOSRAMCache[256];    // +0b34
 
   uint8_t ModuleSHT_Padding0[12];
   uint32_t ModuleSWI_HashTab[128];
@@ -932,7 +945,7 @@ typedef struct {
 
   //was:
   //OldIRQ1Vspace       # 752
-  uint32_t CallBack_Vector;
+  callback_entry *CallBack_Vector;
   // interruptible heap manager workspace  (a) Yuk. (b) 0xf28
   uint32_t HeapSavedReg_R0;
   uint32_t HeapSavedReg_R1;
@@ -979,7 +992,7 @@ typedef struct {
   uint32_t FPEAnchor;
   uint32_t DomainId; //  SKS added for domain identification
   uint32_t Modula2_Private; //  MICK has FFC and uses it it in USR mode
-  // 0xffff1000:
+  // +1000:
   union {
     VduDriversWorkspace ws;
     uint32_t raw[0x3000/4];

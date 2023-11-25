@@ -150,3 +150,116 @@ N 	-1 (terminator)
     "\n  bkpt %[line]" : : [line] "i" (__LINE__) );
 }
 
+typedef enum { HANDLER_PASS_ON, HANDLER_INTERCEPTED, HANDLER_FAILED } handled;
+
+static void GraphicsV_ReadItems( uint32_t item, uint32_t *buffer, uint32_t len )
+{
+  switch (item) {
+  case 4:
+    {
+    asm ( "bkpt %[line]" : : [line] "i" (__LINE__) );
+    }
+    break;
+  default:
+    asm ( "bkpt %[line]" : : [line] "i" (__LINE__) );
+  };
+}
+
+handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct workspace *workspace )
+{
+  union {
+    struct {
+      uint32_t code:16;
+      uint32_t head:8;
+      uint32_t driver:8;
+    };
+    uint32_t raw;
+  } command = { .raw = regs[4] };
+
+  if (command.driver != workspace->graphics_driver_id) {
+    clear_VF();
+    return HANDLER_PASS_ON;
+  }
+
+  switch (command.code) {
+  case 0:
+    break; // Null reason code for when vector has been claimed
+  case 1:
+    break; // VSync interrupt occurred 	BG 	SVC/IRQ
+  case 2:
+    break; // Set mode 	FG2 	SVC
+  case 3:
+    break; // Obsolete3 (was Set interlace) 	FG 	SVC
+  case 4:
+    break; // Set blank 	FG/BG 	SVC
+  case 5:
+    break; // Update pointer 	FG/BG 	SVC/IRQ
+  case 6:
+    break; // Set DAG 	FG/BG 	SVC/IRQ
+  case 7:
+    break; // Vet mode 	FG 	SVC
+  case 8:  // Features 	FG 	SVC
+    {
+      regs[0] = 0x18; // No VSyncs, separate frame store, not variable frame store
+      regs[1] = 0x20;
+      regs[2] = 0;
+      regs[4] = 0;
+    }
+    break;
+  case 9:
+    {
+      regs[0] = workspace->fb_physical_address;
+      regs[1] = 8 << 20; // FIXME
+    }
+    break;
+  case 10:
+    break; // Write palette entry 	FG/BG 	SVC/IRQ
+  case 11:
+    break; // Write palette entries 	FG/BG 	SVC/IRQ
+  case 12:
+    break; // Read palette entry 	FG 	SVC
+  case 13:
+    break; // Render 	FG 	SVC
+  case 14:
+    break; // IIC op 	FG 	SVC
+  case 15:
+    break; // Select head 	FG 	SVC
+  case 16:
+    break; // Select startup mode 	FG 	SVC
+  case 17:
+    break; // List pixel formats 	FG 	SVC
+  case 18:
+    GraphicsV_ReadItems( regs[0], (void*) regs[1], regs[2] );
+    break; // Read info 	FG 	SVC
+  case 19:
+    break; // Vet mode 2 	FG 	SVC
+  }
+
+  regs[4] = 0; // Indicate to caller that call was intercepted
+
+  return HANDLER_INTERCEPTED;
+}
+
+static void __attribute__(( naked )) GraphicsV_handler( char c )
+{
+  uint32_t *regs;
+  asm ( "push { r0-r9, r12 }\n  mov %[regs], sp" : [regs] "=r" (regs) );
+  asm ( "push {lr}" ); // Normal return address, to continue down the list
+
+  register struct workspace *workspace asm( "r12" );
+  handled result = C_GraphicsV_handler( regs, workspace );
+  switch (result) {
+  case HANDLER_FAILED: // Intercepted, but failed
+  case HANDLER_INTERCEPTED:
+    if (result == HANDLER_FAILED)
+      set_VF();
+    else
+      clear_VF();
+    asm ( "pop {lr}\n  pop { r0-r9, r12, pc }" );
+    break;
+  case HANDLER_PASS_ON:
+    asm ( "pop {lr}\n  pop { r0-r9, r12 }\n  mov pc, lr" );
+    break;
+  }
+}
+

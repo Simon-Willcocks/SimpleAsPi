@@ -22,6 +22,7 @@ typedef struct workspace workspace;
 struct workspace {
   uint32_t task;
   uint32_t queue;
+  uint32_t graphics_driver_id;
 };
 
 void __attribute__(( naked, noreturn )) gpu_task( uint32_t handle,

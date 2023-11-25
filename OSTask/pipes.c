@@ -42,7 +42,32 @@ struct OSPipe {
   uint32_t read_index;
 };
 
-DLL_TYPE( OSPipe );
+MPSAFE_DLL_TYPE( OSPipe );
+
+extern OSPipe OSPipe_free_pool[];
+
+void setup_pipe_pool()
+{
+  // FIXME: free the size from the 64KiB limit
+  memory_mapping pipes = {
+    .base_page = claim_contiguous_memory( 0x10 ), // 64 KiB
+    .pages = 0x10,
+    .vap = &OSPipe_free_pool,
+    .type = CK_MemoryRW,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+  if (pipes.base_page == 0xffffffff) PANIC;
+  map_memory( &pipes );
+  for (int i = 0; i < 0x10000 / sizeof( OSPipe ); i++) {
+    OSPipe *p = &OSPipe_free_pool[i];
+    memset( p, 0, sizeof( OSPipe ) );
+    dll_new_OSPipe( p );
+    dll_attach_OSPipe( p, &shared.ostask.pipe_pool );
+    shared.ostask.pipe_pool = shared.ostask.pipe_pool->next;
+  }
+
+}
 
 static inline void mark_pipe_sender_finished( OSPipe *pipe )
 {
@@ -71,8 +96,7 @@ static inline void free_pipe( OSPipe* pipe )
   if (shared.ostask.pipes == pipe) PANIC;
 
   dll_detach_OSPipe( pipe );
-
-  system_heap_free( pipe );
+  mpsafe_insert_OSPipe_at_tail( &shared.ostask.pipe_pool, pipe );
 }
 
 bool this_is_debug_receiver()
@@ -136,13 +160,11 @@ OSTask *PipeCreate( svc_registers *regs )
     return Error_PipeCreationError( regs );
   }
 
-  OSPipe *pipe = system_heap_allocate( sizeof( OSPipe ) );
+  OSPipe *pipe = mpsafe_detach_OSPipe_at_head( &shared.ostask.pipe_pool );
 
   if (pipe == 0) {
     return Error_PipeCreationProblem( regs );
   }
-
-  dll_new_OSPipe( pipe );
 
   // At this point, the running task is the only one that knows about it.
   // If it goes away, the resource should be cleaned up.

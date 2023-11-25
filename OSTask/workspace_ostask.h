@@ -16,7 +16,7 @@
 typedef struct OSTask OSTask;
 typedef struct OSTaskSlot OSTaskSlot;
 typedef struct OSPipe OSPipe;
-typedef struct OSQueue OSQueue;
+typedef union OSQueue OSQueue;
 
 typedef struct {
   OSTask *running;
@@ -54,6 +54,8 @@ typedef struct {
 
   OSTask *task_pool;
   OSTaskSlot *slot_pool;
+  OSQueue *queue_pool;
+  OSPipe *pipe_pool;
 
   uint32_t number_of_interrupt_sources;
   uint32_t number_of_cores;

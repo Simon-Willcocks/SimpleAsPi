@@ -37,11 +37,11 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
   svc_registers regs;
 
   for (;;) {
-    queued_task task = Task_QueueWait( pipe );
+    queued_task client = Task_QueueWait( pipe );
 
-    Task_GetRegisters( task.task_handle, &regs );
+    Task_GetRegisters( client.task_handle, &regs );
 
-    bool module_run = task.swi == OS_Module &&
+    bool module_run = client.swi == OS_Module &&
                       (regs.r[0] == 0 || regs.r[0] == 2);
 
     uint32_t r11 = regs.r[11];
@@ -49,14 +49,14 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     uint32_t lr = regs.lr;
 
     regs.r[11] = handle;
-    regs.r[12] = task.swi;
+    regs.r[12] = client.swi;
     regs.lr = (uint32_t) run_swi;
 
-    *owner = task.task_handle;
-    Task_RunThisForMe( task.task_handle, &regs );
+    *owner = client.task_handle;
+    Task_RunThisForMe( client.task_handle, &regs );
     *owner = 0;
 
-    Task_GetRegisters( task.task_handle, &regs );
+    Task_GetRegisters( client.task_handle, &regs );
 
     regs.r[0] = regs.r[12]; // R0 on exit from SWI
     regs.spsr = regs.r[11]; // State on exit from SWI
@@ -76,7 +76,7 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
       regs.lr = lr;
     }
 
-    Task_ReleaseTask( task.task_handle, &regs );
+    Task_ReleaseTask( client.task_handle, &regs );
   }
 }
 

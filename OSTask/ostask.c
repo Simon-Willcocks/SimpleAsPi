@@ -33,7 +33,6 @@ void setup_pools()
     .usr32_access = 0 };
   if (tasks.base_page == 0xffffffff) PANIC;
   map_memory( &tasks );
-  // memset( &OSTask_free_pool, 0, 0x100000 );
   for (int i = 0; i < 100; i++) { // FIXME How many in a MiB?
     OSTask *t = &OSTask_free_pool[i];
     memset( t, 0, sizeof( OSTask ) );
@@ -52,7 +51,6 @@ void setup_pools()
     .usr32_access = 0 };
   if (slots.base_page == 0xffffffff) PANIC;
   map_memory( &slots );
-  // memset( &OSTaskSlot_free_pool, 0, 0x100000 );
   for (int i = 0; i < 100; i++) { // FIXME How many in a MiB?
     OSTaskSlot *s = &OSTaskSlot_free_pool[i];
     memset( s, 0, sizeof( OSTaskSlot ) );
@@ -61,6 +59,9 @@ void setup_pools()
     dll_attach_OSTaskSlot( s, &shared.ostask.slot_pool );
     shared.ostask.slot_pool = shared.ostask.slot_pool->next;
   }
+
+  setup_pipe_pool();
+  setup_queue_pool();
 }
 
 static void setup_processor_vectors();
@@ -189,8 +190,6 @@ void unexpected_task_return()
 static inline OSTask **irq_task_ptr( uint32_t number )
 {
   uint32_t sources = shared.ostask.number_of_interrupt_sources;
-  if (sources != 1) PANIC;
-  if (number != 0) PANIC;
   int index = sources * workspace.core;
   OSTask **core_interrupts = &shared.ostask.irq_tasks[index];
   return &core_interrupts[number];
@@ -720,6 +719,9 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     break;
   case OSTask_GetTaskHandle:
     regs->r[0] = ostask_handle( running );
+    break;
+  case OSTask_CurrentCore:
+    regs->r[0] = workspace.core;
     break;
   case OSTask_LockClaim:
     resume = TaskOpLockClaim( regs );

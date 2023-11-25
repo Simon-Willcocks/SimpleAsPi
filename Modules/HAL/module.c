@@ -36,7 +36,7 @@ const unsigned module_flags = 1;
 //NO_start;
 //NO_init;
 NO_finalise;
-//NO_service_call;
+NO_service_call;
 //NO_title;
 //NO_help;
 NO_keywords;
@@ -243,6 +243,14 @@ void __attribute__(( noinline )) c_init( workspace **private )
   ws->gpu = (void*) dev2;
 
   ws->last_reported_irq = 0;
+
+  const uint32_t clock_frequency = 1000000;
+
+  // For information only. CNTFRQ
+  asm volatile ( "mcr p15, 0, %[clk], c14, c0, 0" : : [clk] "r" (clock_frequency) );
+
+  // No event stream, EL0 accesses not trapped to undefined: CNTHCTL
+  asm volatile ( "mcr p15, 0, %[config], c14, c1, 0" : : [config] "r" (0x303) );
 }
 
 void __attribute__(( naked )) init()
@@ -258,9 +266,69 @@ void __attribute__(( naked )) init()
   asm ( "pop { pc }" );
 }
 
+void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
+{
+  handle = handle; // Task handle not used
+
+  QA7 volatile *qa7 = Task_MapDevicePages( 0x7000, qa7_page, 1 );
+
+  qa7->timer_prescaler = 0x06AAAAAB;
+
+  uint32_t clock_frequency;
+
+  asm volatile ( "mrc p15, 0, %[clk], c14, c0, 0" : [clk] "=r" (clock_frequency) );
+
+  uint32_t ticks_per_interval = clock_frequency / 1000; // milliseconds, honest!
+
+#ifdef QEMU
+  const int slower = 100;
+  ticks_per_interval = ticks_per_interval * slower;
+#endif
+
+  qa7->GPU_interrupts_routing = core;
+  qa7->Core_IRQ_Source[core] = 0xffd;
+
+  qa7->Core_timers_Interrupt_control[core] = 1;
+
+  ensure_changes_observable(); // Wrote to QA7
+
+  Task_EnablingIntterupt();
+
+  timer_set_countdown( ticks_per_interval );
+
+  for (;;) {
+    Task_WaitForInterrupt( 0 );
+
+    timer_set_countdown( ticks_per_interval );
+
+    // There's only one place in each system that calls this,
+    // so there's no point in putting it into ostaskops.h
+    asm ( "svc %[swi]"
+      :
+      : [swi] "i" (OSTask_Tick)
+      : "lr", "cc" );
+  }
+}
 
 void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 {
+  static uint32_t const stack_size = 72;
+  uint8_t *stack = rma_claim( stack_size );
+  uint32_t core = Task_CurrentCore();
+
+  register void *start asm( "r0" ) = ticker;
+  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t r1 asm( "r2" ) = core;
+  register uint32_t r2 asm( "r3" ) = 0x40000000 >> 12;
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_Spawn)
+    , "r" (start)
+    , "r" (sp)
+    , "r" (r1)
+    , "r" (r2)
+    : "lr", "cc" );
+
   char command[64];
   char *mod;
   // -fPIE does insane stuff with strings, copying the rodata string
@@ -268,6 +336,8 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
   // address...
   // I think the offset tables are supposed to be fixed up by the standard
   // library (which isn't going to work in ROM modules, is it?).
+  // Compile ROM modules as fixed location, but check there's no .data segment
+  // TODO
   asm ( "mov %[m], #0"
     "\n0:"
     "\n  ldrb lr, [%[s], %[m]]"
@@ -282,6 +352,8 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     : "lr" );
 
   char const *s = 
+    "BCM283XGPIO\0"
+/*
     "BCM283XGPU\0"
     "FileSwitch\0"
     "ResourceFS\0"
@@ -299,7 +371,9 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     "BlendTable\0"
     "BufferManager\0"
     "ColourTrans\0"
-    "DeviceFS\0";
+    "DeviceFS\0"
+*/
+; // End of string!
 
   while (*s != '\0') {
     char *p = mod;
@@ -311,8 +385,15 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 
     register uint32_t load asm ( "r0" ) = 1; // RMLoad
     register char const *module asm ( "r1" ) = command;
+    register error_block *error asm ( "r0" );
 
-    asm ( "svc %[swi]" : : [swi] "i" (OS_Module), "r" (load), "r" (module) );
+    asm ( "svc %[swi]"
+      "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OS_Module), "r" (load), "r" (module) );
+    if (error != 0) {
+      asm ( "udf 7" );
+    }
   }
 
   for (;;) asm ( "udf 8" );
@@ -345,67 +426,5 @@ void __attribute__(( naked )) start( char const *command )
   boot( command, ws );
 
   __builtin_unreachable();
-}
-
-void __attribute__(( naked )) service_call()
-{
-  asm ( "teq r1, #0x77"
-    "\n  teqne r1, #0x50"
-    "\n  teqne r1, #0x60"
-    "\n  movne pc, lr" );
-
-
-  // This is extremely minimal, and not all that efficient!
-  // Object to mode changes. All of them.
-  asm ( "teq r1, #0x77"
-    "\n  moveq r1, #0"
-    "\n  moveq r2, #0"
-    "\n  moveq pc, lr" );
-
-  asm ( "teq r1, #0x50"
-    "\n  bne 0f"
-    "\n  ldr r12, [r12]"
-    "\n  mov r1, #0"
-    "\n  adr r3, vidc_list"
-/* VIDC List:
-https://www.riscosopen.org/wiki/documentation/show/Service_ModeExtension
-0 	3 (list format)
-1 	Log2BPP mode variable
-2 	Horizontal sync width (pixels)
-3 	Horizontal back porch (pixels)
-4 	Horizontal left border (pixels)
-5 	Horizontal display size (pixels)
-6 	Horizontal right border (pixels)
-7 	Horizontal front porch (pixels)
-8 	Vertical sync width (rasters)
-9 	Vertical back porch (rasters)
-10 	Vertical top border (rasters)
-11 	Vertical display size (rasters)
-12 	Vertical bottom border (rasters)
-13 	Vertical front porch (rasters)
-14 	Pixel rate (kHz)
-15 	Sync/polarity flags:
-Bit 0: Invert H sync
-Bit 1: Invert V sync
-Bit 2: Interlace flags (bits 3 and 4) specified, else kernel decides interlacing1
-Bit 3: Interlace sync1
-Bit 4: Interlace fields1
-16+ 	Optional list of VIDC control list items (2 words each)
-N 	-1 (terminator) 
- */
-    "\nvidc_list: .word 3, 5, 0, 0, 0, 1920, 0, 0, 0, 0, 0, 1080, 0, 0, 8000, 0, -1"
-    "\n  0:" );
-
-/*
-  asm ( "teq r1, #0x60" // Service_ResourceFSStarting
-    "\n  bne 0f"
-    "\n  push { "C_CLOBBERED", lr }"
-    "\n  mov r0, sp"
-    "\n  bl register_files"
-    "\n  pop { "C_CLOBBERED", pc }"
-    "\n  0:" );
-*/
-    asm (
-    "\n  bkpt %[line]" : : [line] "i" (__LINE__) );
 }
 
