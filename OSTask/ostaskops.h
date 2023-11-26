@@ -40,6 +40,7 @@ enum {
   , OSTask_SetRegisters                 // Set registers of controlled task
   , OSTask_RelinquishControl            // Resume controlling task
   , OSTask_ReleaseTask                  // Resume controlled task
+  , OSTask_ChangeController             // Pass the controlled task to another
 
   , OSTask_GetTaskHandle                // Current task - also passed to code
   , OSTask_LockClaim
@@ -486,6 +487,24 @@ error_block *Task_ReleaseTask( uint32_t client, svc_registers const *regs )
       : [swi] "i" (OSTask_ReleaseTask)
       , "r" (h)
       , "r" (r)
+      : "lr", "cc", "memory" );
+
+  return error;
+}
+
+static inline
+error_block *Task_ChangeController( uint32_t client, uint32_t controller )
+{
+  register uint32_t h asm ( "r0" ) = client;
+  register replacement asm ( "r1" ) = controller;
+  register error_block *error asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OSTask_ChangeController)
+      , "r" (h)
+      , "r" (replacement)
       : "lr", "cc", "memory" );
 
   return error;

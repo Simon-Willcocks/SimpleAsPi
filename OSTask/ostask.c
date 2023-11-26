@@ -340,6 +340,24 @@ OSTask *TaskOpReleaseTask( svc_registers *regs )
   return RunInControlledTask( regs, false );
 }
 
+OSTask *TaskOpChangeController( svc_registers *regs )
+{
+  OSTask *running = workspace.ostask.running;
+  OSTask *release = ostask_from_handle( regs->r[0] );
+  if (release == 0) {
+    PANIC;
+  }
+  else {
+    if (release->controller != running) {
+      PANIC;
+    }
+    OSTask *new_controller = ostask_from_handle( regs->r[1] );
+    if (new_controller == 0) PANIC;
+    release->controller = new_controller;
+  }
+  return 0;
+}
+
 OSTask *TaskOpLockClaim( svc_registers *regs );
 OSTask *TaskOpLockRelease( svc_registers *regs );
 
@@ -716,6 +734,9 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     break;
   case OSTask_ReleaseTask:
     resume = TaskOpReleaseTask( regs );
+    break;
+  case OSTask_ChangeController:
+    resume = TaskOpChangeController( regs );
     break;
   case OSTask_GetTaskHandle:
     regs->r[0] = ostask_handle( running );
