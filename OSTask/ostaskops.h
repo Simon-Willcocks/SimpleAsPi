@@ -23,15 +23,9 @@ enum {
   , OSTask_Create                       // New OSTask
   , OSTask_Spawn                        // New OSTask in a new slot
   , OSTask_EndTask                      // Last one out ends the slot
-  , OSTask_RegisterInterrupts           // Once only
-  , OSTask_EnablingInterrupt            // Disable IRQs while I get
-  , OSTask_WaitForInterrupt             // ready to wait.
-  , OSTask_InterruptIsOff               // Enable interrupts (I'm done,
-                                        // but not yet waiting)
-  // , OSTask_SwitchToCore                 // Use sparingly!
-  , OSTask_CurrentCore                  // Use sparingly! (More or less
+  , OSTask_Cores                        // Use sparingly! (More or less
                                         // useless outside interrupt tasks,
-                                        // I think.
+                                        // I think).
   , OSTask_RegisterSWIHandlers          // Code or queue
   , OSTask_MapDevicePages               // For device drivers
   , OSTask_AppMemoryTop                 // r0 = New value, or 0 to read
@@ -46,6 +40,12 @@ enum {
   , OSTask_LockClaim
   , OSTask_LockRelease
 
+  // For the HAL module only
+  , OSTask_MapDeviceGlobal              // Map a device page for global access
+  , OSTask_EnablingInterrupts           // Disable IRQs while I get
+  , OSTask_WaitForInterrupt             // ready to wait.
+
+  , OSTask_SwitchToCore                 // Use sparingly!
   , OSTask_Tick                         // For HAL module use only
 
   , OSTask_PipeCreate = OSTask_Yield + 32
@@ -104,18 +104,26 @@ typedef struct swi_handlers {
   swi_action action[64];
 } swi_handlers;
 
+typedef union core_info {
+  struct {
+    uint32_t current:16;
+    uint32_t total:16;
+  };
+  uint32_t raw;
+} core_info;
+
 // The returned core number will remain the same until the task
 // calls any variation on Sleep, ClaimLock, etc. The interrupt task
 // SWIs will not change the core.
 static inline
-uint32_t Task_CurrentCore()
+core_info Task_Cores()
 {
-  register uint32_t core asm ( "r0" );
+  register core_info cores asm ( "r0" );
   asm volatile ( "svc %[swi]"
-    : "=r" (core)
-    : [swi] "i" (OSTask_CurrentCore)
+    : "=r" (cores.raw)
+    : [swi] "i" (OSTask_Cores)
     : "lr", "cc" );
-  return core;
+  return cores;
 }
 
 static inline
@@ -150,23 +158,47 @@ void *Task_MapDevicePages( uint32_t va, uint32_t base_page, uint32_t pages )
 }
 
 static inline
-void Task_EnablingIntterupt()
+void *Task_MapDeviceGlobal( uint32_t base_page )
+{
+  register uint32_t page asm ( "r0" ) = base_page;
+  register void *va asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+    : "=r" (va)
+    : [swi] "i" (OSTask_MapDeviceGlobal)
+    , "r" (page)
+    : "lr", "cc" );
+
+  return va;
+}
+
+static inline
+void Task_EnablingInterrupts()
 {
   asm ( "svc %[swi]"
     :
-    : [swi] "i" (OSTask_EnablingInterrupt)
+    : [swi] "i" (OSTask_EnablingInterrupts)
     : "lr", "cc" );
 }
 
 static inline
-void Task_WaitForInterrupt( uint32_t n )
+void Task_WaitForInterrupt()
 {
-  register uint32_t number asm ( "r0" ) = n;
-
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_WaitForInterrupt)
-    , "r" (number)
+    : "lr", "cc" );
+}
+
+static inline
+void Task_SwitchToCore( uint32_t core )
+{
+  register uint32_t c asm ( "r0" ) = core;
+
+  asm volatile ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_MapDeviceGlobal)
+    , "r" (c)
     : "lr", "cc" );
 }
 
@@ -496,7 +528,7 @@ static inline
 error_block *Task_ChangeController( uint32_t client, uint32_t controller )
 {
   register uint32_t h asm ( "r0" ) = client;
-  register replacement asm ( "r1" ) = controller;
+  register uint32_t replacement asm ( "r1" ) = controller;
   register error_block *error asm ( "r0" );
 
   asm volatile ( "svc %[swi]"

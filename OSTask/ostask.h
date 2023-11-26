@@ -32,6 +32,18 @@ void __attribute__(( noreturn )) startup();
 // Return 0 to continue the current task, an OSTask to run otherwise
 OSTask *execute_swi( svc_registers *regs, int number );
 
+static inline
+bool lock_ostask()
+{
+  return core_claim_lock( &shared.ostask.lock, workspace.core+1 );
+}
+
+static inline
+void release_ostask()
+{
+  core_release_lock( &shared.ostask.lock );
+}
+
 OSTask *queue_running_OSTask( svc_registers *regs,
                               uint32_t queue_handle,
                               uint32_t SWI );

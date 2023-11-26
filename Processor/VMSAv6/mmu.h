@@ -50,7 +50,11 @@ typedef struct __attribute__(( packed )) {
 // 1MiB for short descriptors,
 // 2MiB for long
 
-#define mmu_page_size (1 << 12)
+typedef struct mmu_page mmu_page;
+struct mmu_page {
+  uint32_t words[1024];
+};
+#define mmu_page_size sizeof( mmu_page )
 
 // For shared_workspace and core_workspace:
 #include "system_workspaces.h"

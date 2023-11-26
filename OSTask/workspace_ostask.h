@@ -23,6 +23,7 @@ typedef struct {
   OSTask *idle;
   OSPipe *debug_pipe;
   OSTaskSlot *currently_mapped;
+  OSTask *irq_task;
 
   struct {
     uint32_t stack[64];
@@ -57,14 +58,10 @@ typedef struct {
   OSQueue *queue_pool;
   OSPipe *pipe_pool;
 
-  uint32_t number_of_interrupt_sources;
   uint32_t number_of_cores;
-  OSTask **irq_tasks;   // 2-D array of tasks handling interrupts,
-                        // number of cores x number of sources
+  OSTask **for_core;
+  mmu_page *last_global_device;
 
   uint32_t queues_lock;
-
-  uint32_t (*next_irq)( void *workspace, uint32_t core );
-  void *hal_workspace;
 } shared_ostask;
 

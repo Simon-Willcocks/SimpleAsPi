@@ -7,12 +7,10 @@ OBJCOPY=arm-none-eabi-objcopy
 MOD=$1
 shift ; # All other parameters are passed to gcc
 
-ROOT=$( dirname $( pwd ) )
-
 M=$( dirname $MOD ) &&
 if [ "$M" == "." ]
-then SRC=$ROOT/Modules/$MOD ; M=$MOD
-else SRC=$ROOT/$MOD
+then SRC=Modules/$MOD ; M=$MOD
+else SRC=$MOD
 fi
 
 if [ -d $SRC/Resources ]; then
@@ -21,17 +19,24 @@ fi &&
 
 MODNAME=$( basename ${MOD} )
 
-mkdir -p Generated/${MODNAME}
-pushd Generated/${MODNAME}
+# New modules often have a user mode component; they can
+# locate whatever workspace they like at usrbase (but they
+# have to allocate the memory first).
 
-$GCC -c $SRC/*.c -Wall \
+$GCC  $SRC/*.c -o Generated/${MODNAME}.elf -Wall \
       -Wl,--no-dynamic-linker \
       -nostartfiles -nostdlib -fno-zero-initialized-in-bss -O4 \
       -g -march=armv8-a+nofp -T Modules/script \
-      -Wall \
-      -I $ROOT -I OSTask -I Modules -I Legacy -I Devices \
+      -Wall -static -fpie -static-pie \
+      -I . -I OSTask -I Modules -I Legacy -I Devices \
+      -Wl,--defsym=usrbase=0x8000 \
       -fno-toplevel-reorder $* &&
 
-$OBJCOPY /tmp/module$$.elf Generated/${MODNAME}.o --prefix-symbols=${MODNAME}_ \
-        --rename-section .text=.text.rom --rename-section .data=.shouldnotbehere 
+$OBJCOPY -R .ignoring -O binary Generated/${MODNAME}.elf Generated/${MODNAME},ffa &&
 
+$OBJCOPY -I binary -O elf32-littlearm -B armv7 \
+        --redefine-sym _binary_Generated_${MODNAME}_ffa_start=${MODNAME}_header \
+        --rename-section .data=.romimage \
+        Generated/${MODNAME},ffa Generated/${MODNAME}.o &&
+
+$OBJDUMP -x --disassemble-all Generated/${MODNAME}.elf > Generated/${MODNAME}.dump

@@ -91,11 +91,16 @@ void __attribute__(( naked, section( ".text.init" ) )) file_start()
 
 #define assert( c ) while (!(c)) { }
 
-void *adr( void *fn )
+static inline
+void *__attribute__(( section( ".text.init" ) )) adr( void *fn )
 {
-  uint32_t result;
-  asm volatile ( "adr %[result], adr" : [result] "=r" (result) );
-  return (void*) (result - (uint32_t) adr + (uint32_t) fn);
+  register void *in asm ( "r0" ) = fn;
+  register void *in2 asm ( "r1" ) = adr;
+  register void *out asm ( "r0" );
+  asm ( "add r0, r0, r1"
+    "\n  sub r0, r0, #adr-header"
+    : "=r" (out) : "r" (in), "r" (in2) );
+  return out;
 }
 
 /* How to declare commands. FIXME: needs a few macros.

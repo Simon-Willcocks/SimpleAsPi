@@ -15,6 +15,8 @@
 
 #include "ostask.h"
 
+#define assert( x ) do { if (!(x)) PANIC; } while (false)
+
 // OK, to start with, temporarily, 1MiB sections
 extern OSTask OSTask_free_pool[];
 extern OSTaskSlot OSTaskSlot_free_pool[];
@@ -83,6 +85,9 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   {
     shared.ostask.number_of_cores = number_of_cores();
 
+    extern mmu_page global_devices_top;
+    shared.ostask.last_global_device = &global_devices_top;
+
     extern uint8_t top_of_boot_RAM;
     extern uint8_t top_of_minimum_RAM;
 
@@ -97,7 +102,7 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 
   setup_processor_vectors();
 
-  core_release_lock( &shared.ostask.lock );
+  release_ostask();
 
   // Make this running code into an OSTask
   workspace.ostask.running = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
@@ -185,14 +190,6 @@ void __attribute__(( noinline )) save_task_state( svc_registers *regs )
 void unexpected_task_return()
 {
   PANIC;
-}
-
-static inline OSTask **irq_task_ptr( uint32_t number )
-{
-  uint32_t sources = shared.ostask.number_of_interrupt_sources;
-  int index = sources * workspace.core;
-  OSTask **core_interrupts = &shared.ostask.irq_tasks[index];
-  return &core_interrupts[number];
 }
 
 static inline void *put_to_sleep( OSTask **head, void *p )
@@ -312,7 +309,7 @@ static OSTask *RunInControlledTask( svc_registers *regs, bool wait )
   if (wait) {
     save_task_state( regs );
     workspace.ostask.running = running->next;
-    if (running == running->next) PANIC;
+    assert( running != running->next );
     dll_detach_OSTask( running );
     running->controller = release;
     // Might as well run it on this core, the running task just unlinked
@@ -387,8 +384,8 @@ OSTask *TaskOpRelinquishControl( svc_registers *regs )
     // Place at head of this core's running list (replacing
     // running).
 
-    if (resume->next != resume) PANIC;
-    if (resume->prev != resume) PANIC;
+    assert( resume->next == resume );
+    assert( resume->prev == resume );
 
     resume->controller = 0;
 
@@ -567,49 +564,28 @@ OSTask *TaskOpEndTask( svc_registers *regs )
   return resume;
 }
 
-OSTask *TaskOpRegisterInterrupts( svc_registers *regs )
+DEFINE_ERROR( NotHAL, 0, "Only the HAL is entitled to map global devices" );
+
+OSTask *TaskOpMapDeviceGlobal( svc_registers *regs )
 {
-  // This allows a HAL to tell the kernel how many interrupt sources
-  // it can recognise, provide a routine to return the next active IRQ,
-  // and request global privileged access to multiple device pages.
+  // Request global privileged access to a device page.
 
-  if (shared.ostask.number_of_interrupt_sources != 0) PANIC;
-  if (shared.ostask.number_of_cores == 0) PANIC;
+  workspace.ostask.irq_task = workspace.ostask.running;
 
-  shared.ostask.number_of_interrupt_sources = regs->r[0];
-
-  uint32_t array_size = shared.ostask.number_of_interrupt_sources
-                      * shared.ostask.number_of_cores
-                      * sizeof( OSTask * );
-
-  void *memory = system_heap_allocate( array_size );
-
-  if ((uint32_t) memory == 0xffffffff) PANIC;
-
-  shared.ostask.irq_tasks = memory;
-  shared.ostask.next_irq = (void*) regs->r[1];
-  shared.ostask.hal_workspace = (void*) regs->r[2];
-
-  memset( shared.ostask.irq_tasks, 0, array_size );
-
-  extern uint8_t global_devices_top;
-  uint32_t kernel_page = (&global_devices_top - (uint8_t*) 0) >> 12;
-
-  int i = 3;
-  while (regs->r[i] != 0xffffffff) {
-    kernel_page --;
-    memory_mapping map = {
-      .base_page = regs->r[i],
-      .pages = 1,
-      .va = kernel_page << 12,
-      .type = CK_Device,
-      .map_specific = 0,
-      .all_cores = 1,
-      .usr32_access = 0 };
-    map_memory( &map );
-    regs->r[i] = kernel_page << 12;
-    i++;
+  if (shared.ostask.last_global_device == 0) {
+    return Error_NotHAL( regs );
   }
+
+  memory_mapping map = {
+    .base_page = regs->r[0],
+    .pages = 1,
+    .vap = --shared.ostask.last_global_device,
+    .type = CK_Device,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+  map_memory( &map );
+  regs->r[0] = map.va;
 
   return 0;
 }
@@ -619,40 +595,74 @@ OSTask *TaskOpWaitForInterrupt( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
 
   if (0 == (regs->spsr & 0x80)) PANIC; // Must always have interrupts disabled
-
-  uint32_t interrupt_number = regs->r[0];
-  OSTask **irq_task_slot = irq_task_ptr( interrupt_number );
-  if (*irq_task_slot != 0) PANIC;
-  *irq_task_slot = running;
+  if (workspace.ostask.irq_task != 0) PANIC;
 
   save_task_state( regs );
+
+  workspace.ostask.irq_task = running;
 
   OSTask *resume = running->next;
 
   workspace.ostask.running = resume;
 
   // It can't be the only task in the list, there's always idle
-  if (running->next == running || running->prev == running) PANIC;
+  assert( running->next != running && running->prev != running );
 
   dll_detach_OSTask( running );
 
   // Removed properly from list
-  if (running->next != running || running->prev != running) PANIC;
-  if (workspace.ostask.running == running) PANIC;
+  assert( running->next == running && running->prev == running );
+  assert( workspace.ostask.running != running );
 
   // Removing the head leaves the old next at the head
-  if (workspace.ostask.running != resume) PANIC;
+  assert( workspace.ostask.running == resume );
 
   return resume;
 }
 
-OSTask *TaskOpInterruptIsOff( svc_registers *regs )
+OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
-  regs->spsr &= ~0x80;
-  // move to tail of workspace.running
-  workspace.ostask.running = workspace.ostask.running->next;
-  // TODO: Check for more outstanding interrupts on this core
-  return workspace.ostask.running;
+  uint32_t core = regs->r[0];
+
+  if (core > shared.ostask.number_of_cores) PANIC;
+
+  OSTask *running = workspace.ostask.running;
+
+  save_task_state( regs );
+
+  if (shared.ostask.for_core == 0) {
+    bool reclaimed = lock_ostask();
+    assert ( !reclaimed );
+
+    if (shared.ostask.for_core == 0) {
+      uint32_t size = shared.ostask.number_of_cores * sizeof( OSTask * );
+      OSTask **mem = shared_heap_allocate( size );
+      shared.ostask.for_core = mem;
+      memset( mem, 0, size );
+    }
+
+    release_ostask();
+  }
+
+  OSTask *resume = running->next;
+
+  workspace.ostask.running = resume;
+
+  // It can't be the only task in the list, there's always idle
+  assert( running->next != running && running->prev != running );
+
+  dll_detach_OSTask( running );
+
+  // Removed properly from list
+  assert( running->next == running && running->prev == running );
+  assert( workspace.ostask.running != running );
+
+  // Removing the head leaves the old next at the head
+  assert( workspace.ostask.running == resume );
+
+  mpsafe_insert_OSTask_at_tail( &shared.ostask.for_core[core], running );
+
+  return resume;
 }
 
 __attribute__(( weak ))
@@ -699,18 +709,6 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_EndTask:
     resume = TaskOpEndTask( regs );
     break;
-  case OSTask_RegisterInterrupts:
-    resume = TaskOpRegisterInterrupts( regs );
-    break;
-  case OSTask_EnablingInterrupt:
-    regs->spsr |= 0x80;
-    break;
-  case OSTask_WaitForInterrupt:
-    resume = TaskOpWaitForInterrupt( regs );
-    break;
-  case OSTask_InterruptIsOff:
-    resume = TaskOpInterruptIsOff( regs );
-    break;
   case OSTask_RegisterSWIHandlers:
     resume = TaskOpRegisterSWIHandlers( regs );
     break;
@@ -741,8 +739,12 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_GetTaskHandle:
     regs->r[0] = ostask_handle( running );
     break;
-  case OSTask_CurrentCore:
-    regs->r[0] = workspace.core;
+  case OSTask_Cores:
+    {
+    core_info result = { .current = workspace.core,
+                         .total = shared.ostask.number_of_cores };
+    regs->r[0] = result.raw;
+    }
     break;
   case OSTask_LockClaim:
     resume = TaskOpLockClaim( regs );
@@ -750,12 +752,25 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_LockRelease:
     resume = TaskOpLockRelease( regs );
     break;
+  case OSTask_MapDeviceGlobal:
+    resume = TaskOpMapDeviceGlobal( regs );
+    break;
+  case OSTask_EnablingInterrupts:
+    regs->spsr |= 0x80;
+    break;
+  case OSTask_WaitForInterrupt:
+    resume = TaskOpWaitForInterrupt( regs );
+    break;
+  case OSTask_SwitchToCore:
+    resume = TaskOpSwitchToCore( regs );
+    break;
   case OSTask_Tick:
     sleeping_tasks_tick();
     break;
   case OSTask_PipeCreate ... OSTask_PipeCreate + 15:
     {
-      bool reclaimed = core_claim_lock( &shared.ostask.pipes_lock, workspace.core + 1 );
+      bool reclaimed = core_claim_lock( &shared.ostask.pipes_lock,
+                                        workspace.core+1 );
       if (reclaimed) PANIC; // I can't imagine a recursion situation
 
       if (number == OSTask_PipeCreate) {
@@ -949,8 +964,6 @@ void __attribute__(( weak )) interrupting_privileged_code( OSTask *task )
 
 void __attribute__(( naked, noreturn )) irq_handler()
 {
-  // One interrupt only...
-
   asm volatile (
         "sub lr, lr, #4"
     "\n  srsdb sp!, #0x12 // Store return address and SPSR (IRQ mode)" );
@@ -991,11 +1004,8 @@ void __attribute__(( naked, noreturn )) irq_handler()
   // Legacy RISC OS code allows for SWIs to be interrupted, this is
   // a Bad Thing.
 
-  uint32_t interrupt_number = 0;
-
-  OSTask **irq_task_slot = irq_task_ptr( interrupt_number );
-  OSTask *irq_task = *irq_task_slot;
-  *irq_task_slot = 0;
+  OSTask *irq_task = workspace.ostask.irq_task;
+  workspace.ostask.irq_task = 0;
 
   // The interrupted task stays on this core, this shouldn't take long!
 

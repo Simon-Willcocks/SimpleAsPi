@@ -20,10 +20,17 @@
 
 typedef struct workspace workspace;
 
+typedef struct qa7_irq_sources qa7_irq_sources;
+
+struct qa7_irq_sources {
+  uint32_t *tasks[12];
+};
+
 struct workspace {
   GPU *gpu;
   QA7 *qa7;
-  uint32_t last_reported_irq;
+  uint32_t lock;
+  struct qa7_irq_sources tasks[]; // One set per core
 };
 
 const unsigned module_flags = 1;
@@ -114,105 +121,43 @@ bool timer_interrupt_active()
   return (timer_status() & 4) != 0;
 }
 
-int next_active( struct workspace *workspace, uint32_t core )
+void setup_clock_svc()
 {
-  // This is where we will use the hardware to identify which devices have
-  // tried to interrupt the processor.
-  QA7 volatile *qa7 = workspace->qa7;
+  const uint32_t clock_frequency = 1000000;
 
-  memory_read_barrier();
+  // For information only. CNTFRQ
+  asm volatile ( "mcr p15, 0, %[clk], c14, c0, 0"
+                 :
+                 : [clk] "r" (clock_frequency) );
 
-  // Source is: QA7 core interrupt source; bit 8 is GPU interrupt, bit 0 is physical timer
+  // No event stream, EL0 accesses not trapped to undefined: CNTHCTL
+  asm volatile ( "mcr p15, 0, %[config], c14, c1, 0"
+                 :
+                 : [config] "r" (0x303) );
+}
 
-  uint32_t source = qa7->Core_IRQ_Source[core];
-  bool found = false;
-  GPU *gpu = workspace->gpu;
-
-  // TODO is the basic_pending register still a thing?
-  // TODO ignore interrupts that come from the GPU! They may be masked, but do they still show as pending?
-
-  memory_read_barrier();
-
-  // There are a few speedups possible
-  //  e.g. test bits by seeing if (int32_t) (source << (32-irq)) is -ve, or zero (skip the rest of the bits)
-  //  count leading zeros instruction...
-
-  int last_reported_irq = workspace->last_reported_irq;
-  int irq = last_reported_irq;
-  bool last_possibility = false;
-
-  do {
-    irq++;
-    last_possibility = (irq == last_reported_irq);
-    // WriteNum( irq ); Space;
-    if (irq >= 0 && irq < 64) {
-      if (0 == (source & (1 << 8))) {
-        // Nothing from GPU, don't need to check anything under 64
-        irq = 63;
-      }
-      else {
-        uint32_t pending;
-        if (irq < 32) {
-          pending = gpu->pending1;
-        }
-        else {
-          pending = gpu->pending2;
-        }
-        // We only get here with irq & 0x1f non-zero if the previous reported was in this range
-        assert( (0 != (irq & 0x1f)) == (irq == last_reported_irq+1) );
-        pending = pending >> (irq & 0x1f);
-        while (pending != 0 && 0 == (pending & 1)) {
-          irq++;
-          pending = pending >> 1;
-        }
-        found = pending != 0;
-        if (!found) {
-          irq = irq | 0x1f;
-        }
-        // Next time round will be in next 32-bit chunk
-        assert( found || 0x1f == (irq & 0x1f) );
-      }
-    }
-    else if (irq == 72) {
-      // Covered by 0..63
-    }
-    else if (irq < 76) {
-      // 64 CNTPSIRQ
-      // 65 CNTPNSIRQ
-      // 66 CNTHPIRQ
-      // 67 CNTVIRQ
-      // 68 Mailbox 0
-      // 69 Mailbox 1
-      // 70 Mailbox 2
-      // 71 Mailbox 3
-      // 72 (GPU, be more specific, see above)
-      // 73 PMU 
-      // 74 AXI outstanding (core 0 only)
-      // 75 Local timer 
-      found = (0 != (source & (1 << (irq & 0x1f))));
-    }
-    else
-      irq = -1; // Wrap around to 0 on the next loop
-
-    // Check each possible source once, but stop if found
-  } while (!found && !last_possibility);
-
-  if (found) {
-    workspace->last_reported_irq = irq;
-
-    return irq;
-  }
-  else {
-    return -1;
+void irq_task( uint32_t handle, uint32_t core, workspace *ws )
+{
+  Task_LockClaim( &ws->lock, handle );
+  Task_EnablingInterrupts();
+  //ws->qa7->
+  Task_LockRelease( &ws->lock );
+  for (;;) {
+    Task_WaitForInterrupt();
   }
 }
 
-static const int board_interrupt_sources = 64 + 12; // 64 GPU, 12 ARM peripherals (BCM2835-ARM-Peripherals.pdf, QA7)
-
-void __attribute__(( noinline )) c_init( workspace **private )
+void __attribute__(( noinline )) c_init( uint32_t core,
+                                         workspace **private,
+                                         char const *env,
+                                         uint32_t instantiation )
 {
+  core_info cores = Task_Cores();
+
   if (*private == 0) {
-    *private = rma_claim( sizeof( workspace ) );
+    int size = sizeof( workspace ) + cores.total * sizeof( qa7_irq_sources );
+    *private = rma_claim( size );
+    memset( *private, 0, size );
   }
   else {
     asm ( "udf 1" );
@@ -220,49 +165,43 @@ void __attribute__(( noinline )) c_init( workspace **private )
 
   workspace *ws = *private;
 
-  register uint32_t number asm ( "r0" ) = board_interrupt_sources;
-  register int (*next)( workspace *, uint32_t ) asm ( "r1" ) = next_active;
-  register workspace *wkspce asm ( "r2" ) = ws;
-  register uint32_t dev1 asm ( "r3" ) = 0x40000000 >> 12;
-  register uint32_t dev2 asm ( "r4" ) = 0x3f00b000 >> 12;
-  register uint32_t devstop asm ( "r5" ) = 0xffffffff;
+  ws->qa7 = Task_MapDeviceGlobal( 0x40000000 >> 12 );
+  ws->gpu = Task_MapDeviceGlobal( 0x3f00b000 >> 12 );
 
-  asm ( "svc %[swi]"
-    : "=r" (dev1)
-    , "=r" (dev2)
-    : [swi] "i" (OSTask_RegisterInterrupts)
-    , "r" (number)
-    , "r" (next)
-    , "r" (wkspce)
-    , "r" (dev1)
-    , "r" (dev2)
-    , "r" (devstop)
-    : "lr", "cc" );
+  for (int i = 0; i < cores.total; i++) {
+    Task_SwitchToCore( i );
 
-  ws->qa7 = (void*) dev1;
-  ws->gpu = (void*) dev2;
+    setup_clock_svc();
 
-  ws->last_reported_irq = 0;
+    uint32_t const stack_size = 256;
+    uint8_t *stack = rma_claim( stack_size );
 
-  const uint32_t clock_frequency = 1000000;
-
-  // For information only. CNTFRQ
-  asm volatile ( "mcr p15, 0, %[clk], c14, c0, 0" : : [clk] "r" (clock_frequency) );
-
-  // No event stream, EL0 accesses not trapped to undefined: CNTHCTL
-  asm volatile ( "mcr p15, 0, %[config], c14, c1, 0" : : [config] "r" (0x303) );
+    register void *start asm( "r0" ) = irq_task;
+    register void *sp asm( "r1" ) = stack + stack_size;
+    register uint32_t r1 asm( "r2" ) = i;
+    register workspace *r2 asm( "r3" ) = ws;
+    asm ( "svc %[swi]"
+      :
+      : [swi] "i" (OSTask_Create)
+      , "r" (start)
+      , "r" (sp)
+      , "r" (r1)
+      , "r" (r2)
+      : "lr", "cc" );
+  }
 }
 
-void __attribute__(( naked )) init()
+void __attribute__(( naked )) init( uint32_t core )
 {
-  struct workspace **private;
+  register struct workspace **private asm ( "r12" );
+  register char const *env asm ( "r10" );
+  register uint32_t instantiation asm ( "r11" );
 
   // Move r12 into argument register
-  asm volatile (
-          "push { lr }"
-      "\n  mov %[private_word], r12" : [private_word] "=r" (private) );
+  asm volatile ( "push { lr }" );
 
-  c_init( private );
+  c_init( core, private, env, instantiation );
+
   asm ( "pop { pc }" );
 }
 
@@ -292,12 +231,10 @@ void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
 
   ensure_changes_observable(); // Wrote to QA7
 
-  Task_EnablingIntterupt();
 
   timer_set_countdown( ticks_per_interval );
 
   for (;;) {
-    Task_WaitForInterrupt( 0 );
 
     timer_set_countdown( ticks_per_interval );
 
@@ -314,7 +251,8 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 {
   static uint32_t const stack_size = 72;
   uint8_t *stack = rma_claim( stack_size );
-  uint32_t core = Task_CurrentCore();
+  core_info cores = Task_Cores();
+  uint32_t core = cores.current;
 
   register void *start asm( "r0" ) = ticker;
   register void *sp asm( "r1" ) = stack + stack_size;
@@ -351,7 +289,7 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     , [d] "r" (command)
     : "lr" );
 
-  char const *s = 
+  char const *s =
     "BCM283XGPIO\0"
 /*
     "BCM283XGPU\0"
@@ -396,7 +334,7 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     }
   }
 
-  for (;;) asm ( "udf 8" );
+  for (;;) { Task_Sleep( 100000 ); asm ( "udf 8" ); }
 
   __builtin_unreachable();
 }

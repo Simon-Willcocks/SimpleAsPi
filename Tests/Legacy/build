@@ -75,18 +75,18 @@ echo Modules: ${MODULES//:/ }
 (
 for i in ${MODULES//:/ }
 do
-  MODNAME=$( basename ${i} )
+  MODNAME=$( basename ${i} ) &&
   echo extern module_header ${MODNAME}_header\;
 done &&
 echo static rom_module const rom_modules[] = {  &&
 for i in ${MODULES//:/ }
 do
-  Modules/build_for_rom Modules/$i
-  MODNAME=$( basename ${i} )
+  Modules/build_for_rom Modules/$i &&
+  MODNAME=$( basename ${i} ) &&
   echo { \"$MODNAME\", \&${MODNAME}_header },
 done &&
 echo '{ 0, 0 } };'
-) > Generated/rom_modules.h &&
+) > Generated/rom_modules.h || ( echo Modules failed >&2 ; exit 1 )
 
 echo Modules built &&
 
@@ -113,11 +113,12 @@ echo Seems alright
 arm-none-eabi-gcc-9.2.1 \
         processor.boot mmu.boot \
         ${SOURCES//://*.c } \
-        RISCOS.o Generated/*.o -I Generated \
+        RISCOS.o \
         -o kernel7.elf \
         $CFLAGS \
-        -Wl,--defsym=_romimage_end=0xfc510000 \
         $LEGACIES \
+        -I Generated Generated/*.o \
+        romimage_end.c \
         -Wl,--defsym=legacy_svc_stack_top=0xff100000 \
         -Wl,--defsym=legacy_zero_page=0xfff40000 \
         -Wl,--defsym=global_devices_top=0xfff60000 \

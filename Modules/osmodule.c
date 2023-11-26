@@ -423,6 +423,10 @@ error_block *load_and_initialise( char const *name )
   while (*name > ' ' && *name != '%') name++;
   module *m = new_module( header, (*name == '%') ? name + 1 : 0 );
 
+  // Skip to start of any parameters
+  while (*name > ' ') name++;
+  while (*name == ' ') name++;
+
   uint32_t number = 0;
   if (0 != m->base) {
     module *instance = m->base->instances;
@@ -431,6 +435,7 @@ error_block *load_and_initialise( char const *name )
       number++;
     }
   }
+
   return run_initialisation_code( name, m, number );
 }
 
@@ -458,7 +463,7 @@ OSTask *do_OS_Module( svc_registers *regs )
       // Not sure how long the command should exist for; until the
       // application is replaced, presumably. Put a copy in RMA and
       // associate it with the slot? TODO
-      regs->r[0] = (uint32_t) "There should be a command line here!";
+      regs->r[0] = (uint32_t) name;
       regs->r[1] = (uint32_t) &m->private_word;
       regs->r[2] = (uint32_t) start;
     }

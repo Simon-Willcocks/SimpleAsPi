@@ -39,7 +39,7 @@ const char help[] = "RasPi graphics\t0.01";
 
 void spawn_gpio_manager( workspace *ws )
 {
-  register void *start asm( "r0" ) = gpio_task;
+  register void *start asm( "r0" ) = adr( gpio_task );
   register void *sp asm( "r1" ) = 0;
   register workspace *r1 asm( "r2" ) = ws;
   asm ( "svc %[swi]"

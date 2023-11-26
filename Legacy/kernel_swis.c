@@ -551,8 +551,6 @@ void __attribute__(( noreturn )) startup()
 
   spawn_legacy_manager( handle, shared.legacy.owner );
 
-  svc_pre_boot_sequence();
-
   asm ( "mov sp, %[reset_sp]"
     "\n  cpsie aif, #0x10"
     :
@@ -568,7 +566,15 @@ void __attribute__(( noreturn )) startup()
       : "r1", "r2", "r3" );
   }
 
-  boot_sequence();
+  // RMRun HAL
+  register uint32_t run asm ( "r0" ) = 0; // RMRun
+  register char const *module asm ( "r1" ) = "System:Modules.HAL";
+
+  asm ( "svc %[swi]" : : [swi] "i" (OS_Module), "r" (run), "r" (module) );
+
+  PANIC;
+
+  __builtin_unreachable();
 }
 
 void __attribute__(( naked, noreturn )) ResumeLegacy()

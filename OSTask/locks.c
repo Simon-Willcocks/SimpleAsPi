@@ -74,7 +74,7 @@ error_block *TaskOpLockClaim( svc_registers *regs )
   workspace.ostask.running = next;
   dll_detach_OSTask( running );
 
-  bool reclaimed = core_claim_lock( &shared.ostask.lock, workspace.core + 1 );
+  bool reclaimed = lock_ostask();
   if (reclaimed) PANIC;
 
   // There are three (logical) places the value at lock may be changed.
@@ -119,7 +119,7 @@ error_block *TaskOpLockClaim( svc_registers *regs )
     shared.ostask.blocked = shared.ostask.blocked->next;
   }
 
-  core_release_lock( &shared.ostask.lock );
+  release_ostask();
 
   return error;
 }
@@ -137,7 +137,7 @@ error_block *TaskOpLockRelease( svc_registers *regs )
 
   if ((~1 & *lock) != ostask_handle( running )) PANIC; // Sin bin!
 
-  bool reclaimed = core_claim_lock( &shared.ostask.lock, workspace.core + 1 );
+  bool reclaimed = lock_ostask();
   if (reclaimed) PANIC;
 
   // The only code that's allowed to set the low bit in the lock is
@@ -190,7 +190,7 @@ error_block *TaskOpLockRelease( svc_registers *regs )
     mpsafe_insert_OSTask_at_head( &shared.ostask.runnable, resume );
   }
 
-  core_release_lock( &shared.ostask.lock );
+  release_ostask();
 
   return error;
 }

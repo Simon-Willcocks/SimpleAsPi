@@ -11,7 +11,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
  */
 
-// Nothing to do, the Legacy code simply RMRuns System:Modules.HAL
+#include "CK_types.h"
 
+// Initialise a heap at the given virtual address and size
+void heap_initialise( void *base, uint32_t size );
+
+// Allocate a block of memory of at least size bytes from
+// the given heap. Returned address will be on an 8-byte
+// (64-bit) boundary.
+void *heap_allocate( void *heap, uint32_t size );
+
+// Free a block allocated by heap_allocate
+void heap_free( void *base, void *mem );
