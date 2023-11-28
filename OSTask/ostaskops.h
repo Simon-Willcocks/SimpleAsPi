@@ -37,11 +37,9 @@ enum {
   , OSTask_ChangeController             // Pass the controlled task to another
 
   , OSTask_GetTaskHandle                // Current task - also passed to code
-  , OSTask_LockClaim
+  , OSTask_LockClaim            // 0x310
   , OSTask_LockRelease
 
-  // For the HAL module only
-  , OSTask_MapDeviceGlobal              // Map a device page for global access
   , OSTask_EnablingInterrupts           // Disable IRQs while I get
   , OSTask_WaitForInterrupt             // ready to wait.
 
@@ -76,13 +74,16 @@ void Task_Sleep( uint32_t ms )
   register uint32_t t asm( "r0" ) = ms;
   // sets r0 to 0. volatile is needed, since the optimiser ignores
   // asm statements with an output which is ignored.
-  asm volatile ( "svc %[swi]" : "=r" (t) : [swi] "i" (OSTask_Sleep), "r" (t) );
+  asm volatile ( "svc %[swi]"
+    : "=r" (t)
+    : [swi] "i" (OSTask_Sleep), "r" (t)
+    : "lr", "cc" );
 }
 
 static inline
 void Task_Yield()
 {
-  asm volatile ( "svc %[swi]" : : [swi] "i" (OSTask_Yield) );
+  asm volatile ( "svc %[swi]" : : [swi] "i" (OSTask_Yield) : "lr", "cc" );
 }
 
 static inline
@@ -104,13 +105,14 @@ typedef struct swi_handlers {
   swi_action action[64];
 } swi_handlers;
 
-typedef union core_info {
+typedef union core_info core_info;
+union core_info {
   struct {
     uint32_t current:16;
     uint32_t total:16;
   };
   uint32_t raw;
-} core_info;
+};
 
 // The returned core number will remain the same until the task
 // calls any variation on Sleep, ClaimLock, etc. The interrupt task
@@ -118,11 +120,12 @@ typedef union core_info {
 static inline
 core_info Task_Cores()
 {
-  register core_info cores asm ( "r0" );
+  register uint32_t raw asm ( "r0" );
   asm volatile ( "svc %[swi]"
-    : "=r" (cores.raw)
+    : "=r" (raw)
     : [swi] "i" (OSTask_Cores)
     : "lr", "cc" );
+  core_info cores = { .raw = raw };
   return cores;
 }
 
@@ -158,21 +161,6 @@ void *Task_MapDevicePages( uint32_t va, uint32_t base_page, uint32_t pages )
 }
 
 static inline
-void *Task_MapDeviceGlobal( uint32_t base_page )
-{
-  register uint32_t page asm ( "r0" ) = base_page;
-  register void *va asm ( "r0" );
-
-  asm volatile ( "svc %[swi]"
-    : "=r" (va)
-    : [swi] "i" (OSTask_MapDeviceGlobal)
-    , "r" (page)
-    : "lr", "cc" );
-
-  return va;
-}
-
-static inline
 void Task_EnablingInterrupts()
 {
   asm ( "svc %[swi]"
@@ -197,9 +185,9 @@ void Task_SwitchToCore( uint32_t core )
 
   asm volatile ( "svc %[swi]"
     :
-    : [swi] "i" (OSTask_MapDeviceGlobal)
+    : [swi] "i" (OSTask_SwitchToCore)
     , "r" (c)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 }
 
 typedef struct {
@@ -224,8 +212,7 @@ uint32_t PipeOp_CreateForTransfer( uint32_t max_block )
         , "r" (max_block_size)
         , "r" (max_data)
         , "r" (allocated_mem)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   return pipe;
 }
@@ -247,8 +234,7 @@ uint32_t PipeOp_CreateOnBuffer( void *buffer, uint32_t len )
         , "r" (max_block_size)
         , "r" (max_data)
         , "r" (allocated_mem)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   return pipe;
 }
@@ -282,8 +268,7 @@ PipeSpace PipeOp_WaitForSpace( uint32_t write_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeWaitForSpace)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -318,8 +303,7 @@ PipeSpace PipeOp_SpaceFilled( uint32_t write_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeSpaceFilled)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -349,8 +333,7 @@ PipeSpace PipeOp_WaitForData( uint32_t read_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeWaitForData)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -362,9 +345,10 @@ PipeSpace PipeOp_DataConsumed( uint32_t read_pipe, uint32_t bytes )
 {
   // IN
   // In this case, the bytes are the number of bytes no longer of interest.
-  // The returned information is the same as from WaitForData and indicates the remaining
-  // data after the consumed bytes have been removed. The virtual address of the remaining
-  // data may not be the same as the address of the byte after the last consumed byte.
+  // The returned information is the same as from WaitForData and indicates
+  // the remaining data after the consumed bytes have been removed. The
+  // virtual address of the remaining data may not be the same as the
+  // address of the byte after the last consumed byte.
   register uint32_t pipe asm ( "r0" ) = read_pipe;
   register uint32_t amount asm ( "r1" ) = bytes;
 
@@ -384,8 +368,7 @@ PipeSpace PipeOp_DataConsumed( uint32_t read_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeDataConsumed)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -411,8 +394,7 @@ error_block *PipeOp_SetReceiver( uint32_t read_pipe, uint32_t new_receiver )
         : [swi] "i" (OSTask_PipeSetReceiver)
         , "r" (pipe)
         , "r" (task)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   return error;
 }
@@ -437,8 +419,7 @@ error_block *PipeOp_SetSender( uint32_t write_pipe, uint32_t new_sender )
         : [swi] "i" (OSTask_PipeSetSender)
         , "r" (pipe)
         , "r" (task)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   return error;
 }
@@ -459,8 +440,7 @@ error_block *PipeOp_NotListening( uint32_t read_pipe )
         : "=r" (error)
         : [swi] "i" (OSTask_PipeNotListening)
         , "r" (pipe)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   return error;
 }
@@ -482,8 +462,7 @@ error_block *PipeOp_NoMoreData( uint32_t send_pipe )
         : "=r" (error)
         : [swi] "i" (OSTask_PipeNoMoreData)
         , "r" (pipe)
-        : "lr", "cc", "memory"
-        );
+        : "lr", "cc" );
 
   return error;
 }
@@ -519,7 +498,7 @@ error_block *Task_ReleaseTask( uint32_t client, svc_registers const *regs )
       : [swi] "i" (OSTask_ReleaseTask)
       , "r" (h)
       , "r" (r)
-      : "lr", "cc", "memory" );
+      : "lr", "cc" );
 
   return error;
 }
@@ -537,7 +516,7 @@ error_block *Task_ChangeController( uint32_t client, uint32_t controller )
       : [swi] "i" (OSTask_ChangeController)
       , "r" (h)
       , "r" (replacement)
-      : "lr", "cc", "memory" );
+      : "lr", "cc" );
 
   return error;
 }
@@ -555,7 +534,7 @@ error_block *Task_GetRegisters( uint32_t controlled, svc_registers *regs )
       : [swi] "i" (OSTask_GetRegisters)
       , "r" (h)
       , "r" (r)
-      : "lr" );
+      : "lr", "cc", "memory" );
 
   return error;
 }
@@ -573,7 +552,7 @@ error_block *Task_SetRegisters( uint32_t controlled, svc_registers *regs )
       : [swi] "i" (OSTask_SetRegisters)
       , "r" (h)
       , "r" (r)
-      : "lr" );
+      : "lr", "cc" );
 
   return error;
 }
@@ -645,6 +624,9 @@ bool tasks_waiting_for( uint32_t *lock )
   return (1 & *lock) != 0;
 }
 
+// These two can probably have the "lr" clobber removed; they're only
+// called from usr32 mode.
+
 // Returns true if lock has been reclaimed by the same task (in
 // which case you don't want to release it this time).
 // If your code doesn't expect to re-claim the lock, a true result
@@ -659,12 +641,13 @@ bool Task_LockClaim( uint32_t *lock, uint32_t handle )
 */
     register uint32_t *p asm( "r0" ) = lock;
     register uint32_t h asm( "r1" ) = handle;
-    bool reclaimed;
+    register bool reclaimed asm( "r0" );
     asm volatile ( "svc %[swi]"
-        : [reclaimed] "=r" (reclaimed)
+        : "=r" (reclaimed)
         : [swi] "i" (OSTask_LockClaim)
         , "r" (p)
-        , "r" (h) );
+        , "r" (h)
+        : "lr", "cc", "memory" );
   return reclaimed;
 /*
   }
@@ -680,6 +663,7 @@ void Task_LockRelease( uint32_t *lock )
   asm volatile ( "svc %[swi]"
       :
       : [swi] "i" (OSTask_LockRelease)
-      , "r" (p) );
+      , "r" (p)
+      : "lr", "cc", "memory" );
 }
 
