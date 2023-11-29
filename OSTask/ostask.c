@@ -15,7 +15,7 @@
 
 #include "ostask.h"
 
-#define assert( x ) do { if (!(x)) PANIC; } while (false)
+#define assert( x ) do { if (!(x)) asm ( "bkpt %[line]" : : [line] "i" (__LINE__) ); } while (false)
 
 // OK, to start with, temporarily, 1MiB sections
 extern OSTask OSTask_free_pool[];
@@ -305,6 +305,8 @@ static OSTask *RunInControlledTask( svc_registers *regs, bool wait )
 
   release->controller = 0;
 
+  bool lock_to_core = 0 != (release->regs.spsr & 0x80);
+
   // This must be done before the release Task is known to be runnable
   if (wait) {
     save_task_state( regs );
@@ -318,13 +320,17 @@ static OSTask *RunInControlledTask( svc_registers *regs, bool wait )
 
     return release;
   }
+  else if (lock_to_core) {
+    OSTask *next = running->next;
+    dll_attach_OSTask( release, &next );
+  }
   else {
     // The caller's going to keep running, let one of the other cores
     // pick up the resumed task.
     mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, release );
-
-    return 0;
   }
+
+  return 0;
 }
 
 OSTask *TaskOpRunThisForMe( svc_registers *regs )
@@ -434,20 +440,65 @@ OSTask *TaskOpSetRegisters( svc_registers *regs )
   return 0;
 }
 
+static inline OSTask *for_core( OSTask **head, void *p )
+{
+  OSTask *first = *head;
+  OSTask *t = first;
+  uint32_t core = *(uint32_t*) p;
+
+  if (t == 0) return 0;
+
+  do {
+    if (t->regs.r[0] == core) {
+      if (t == t->next) {
+        *head = 0;
+      }
+      else if (t == first) {
+        *head = first->next;
+        dll_detach_OSTask( t );
+      }
+      return t;
+    }
+
+    t = t->next;
+  } while (t != first);
+
+  return 0;
+}
+
+OSTask *find_task_for_this_core()
+{
+  OSTask **head = &shared.ostask.moving;
+
+  // Single word reads are atomic
+  if (*head == 0) return 0; // 99.999% of the time
+
+  return mpsafe_manipulate_OSTask_list_returning_item( head,
+                                                       for_core,
+                                                       &workspace.core );
+}
+
 OSTask *TaskOpSleep( svc_registers *regs, uint32_t ticks )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
 
-  if (resume == running
-   && running != workspace.ostask.idle) PANIC;
+  assert( resume != running || running == workspace.ostask.idle );
 
   if (resume == running) {
-    if (ticks != 0) PANIC; // idle task never sleeps, only yields
+    // Only one task in the list (idle)
+    assert( ticks == 0 ); // idle task never sleeps, only yields
 
-    if (running != workspace.ostask.idle) PANIC;
+    assert( running == workspace.ostask.idle );
 
-    resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
+    resume = find_task_for_this_core();
+
+    if (resume == 0) {
+      resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
+    }
+    else {
+      assert( resume->regs.r[0] == workspace.core );
+    }
 
     if (resume != 0) {
       save_task_state( regs );
@@ -518,7 +569,7 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
 
   // Keep the new task on the current core, in case it's a device
   // driver than needs it. Any Sleep or Yield indicates that the
-  // task doesn't care what core it runs on.
+  // task doesn't care what core it runs on. (Except for idle_task.)
   // TODO: decide whether blocking on a lock should maintain core
   // or not.
   OSTask *next = running->next;
@@ -564,32 +615,6 @@ OSTask *TaskOpEndTask( svc_registers *regs )
   return resume;
 }
 
-DEFINE_ERROR( NotHAL, 0, "Only the HAL is entitled to map global devices" );
-
-OSTask *TaskOpMapDeviceGlobal( svc_registers *regs )
-{
-  // Request global privileged access to a device page.
-
-  workspace.ostask.irq_task = workspace.ostask.running;
-
-  if (shared.ostask.last_global_device == 0) {
-    return Error_NotHAL( regs );
-  }
-
-  memory_mapping map = {
-    .base_page = regs->r[0],
-    .pages = 1,
-    .vap = --shared.ostask.last_global_device,
-    .type = CK_Device,
-    .map_specific = 0,
-    .all_cores = 1,
-    .usr32_access = 0 };
-  map_memory( &map );
-  regs->r[0] = map.va;
-
-  return 0;
-}
-
 OSTask *TaskOpWaitForInterrupt( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
@@ -620,29 +645,40 @@ OSTask *TaskOpWaitForInterrupt( svc_registers *regs )
   return resume;
 }
 
+// This is a horrible, horrible security hole, but no worse than OS_EnterOS
+// or code variables, or Wimp_TransferBlock. I need it to initialise some
+// timers using system registers on every core in QEMU. (SwitchToCore can't
+// work in svc32 mode.
+// The code can take one parameter (in r1, passed to the code in r0), may
+// return one value (in r0), and has no way of reporting errors. It will 
+// have a (limited) stack and interrupts will be disabled.
+// It may corrupt any register except r13.
+// The code may be in an application's memory, but must never do anything
+// to switch tasks (including future virtual memory misses).
+OSTask *TaskOpRunPrivileged( svc_registers *regs )
+{
+  uint32_t (*code)( uint32_t r0 ) = (void*)regs->r[0];
+
+  regs->r[0] = code( regs->r[1] );
+
+  return 0;
+}
+
 OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
   uint32_t core = regs->r[0];
 
+  if (core == workspace.core) return 0; // Optimisation!
+
   if (core > shared.ostask.number_of_cores) PANIC;
+
+  // Calling this from a protected mode would move the task onto
+  // a totally different stack. FIXME: Put the task in a "sin bin".
+  if ((regs->spsr & 0x1f) != 0x10) PANIC;
 
   OSTask *running = workspace.ostask.running;
 
   save_task_state( regs );
-
-  if (shared.ostask.for_core == 0) {
-    bool reclaimed = lock_ostask();
-    assert ( !reclaimed );
-
-    if (shared.ostask.for_core == 0) {
-      uint32_t size = shared.ostask.number_of_cores * sizeof( OSTask * );
-      OSTask **mem = shared_heap_allocate( size );
-      shared.ostask.for_core = mem;
-      memset( mem, 0, size );
-    }
-
-    release_ostask();
-  }
 
   OSTask *resume = running->next;
 
@@ -660,7 +696,8 @@ OSTask *TaskOpSwitchToCore( svc_registers *regs )
   // Removing the head leaves the old next at the head
   assert( workspace.ostask.running == resume );
 
-  mpsafe_insert_OSTask_at_tail( &shared.ostask.for_core[core], running );
+  // First come, first served (by each core)
+  mpsafe_insert_OSTask_at_tail( &shared.ostask.moving, running );
 
   return resume;
 }
@@ -752,14 +789,14 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_LockRelease:
     resume = TaskOpLockRelease( regs );
     break;
-  case OSTask_MapDeviceGlobal:
-    resume = TaskOpMapDeviceGlobal( regs );
-    break;
   case OSTask_EnablingInterrupts:
     regs->spsr |= 0x80;
     break;
   case OSTask_WaitForInterrupt:
     resume = TaskOpWaitForInterrupt( regs );
+    break;
+  case OSTask_RunPrivileged:
+    resume = TaskOpRunPrivileged( regs );
     break;
   case OSTask_SwitchToCore:
     resume = TaskOpSwitchToCore( regs );
@@ -854,11 +891,6 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   }
 
   if (resume != 0 && resume != workspace.ostask.running) PANIC;
-
-// REMOVE!!! (Up to 3 tasks, one must be idle)
-if (workspace.ostask.running != workspace.ostask.idle
- && workspace.ostask.running->next != workspace.ostask.idle
- && workspace.ostask.running->prev != workspace.ostask.idle) asm( "wfe" );
 
   // If running has been put into some shared queue by the SWI, it may already
   // have been picked up by another core. DO NOT make any more changes to it!

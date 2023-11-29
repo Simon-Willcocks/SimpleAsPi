@@ -13,11 +13,9 @@ then SRC=Modules/$MOD ; M=$MOD
 else SRC=$MOD
 fi
 
-if [ -d $SRC/Resources ]; then
-  build_resources_h $SRC
-fi &&
-
 MODNAME=$( basename ${MOD} )
+
+echo Building module $MODNAME in $MOD
 
 # New modules often have a user mode component; they can
 # locate whatever workspace they like at usrbase (but they
@@ -39,4 +37,4 @@ $OBJCOPY -I binary -O elf32-littlearm -B armv7 \
         --rename-section .data=.romimage \
         Generated/${MODNAME},ffa Generated/${MODNAME}.o &&
 
-$OBJDUMP -x --disassemble-all Generated/${MODNAME}.elf > Generated/${MODNAME}.dump
+$OBJDUMP -x --disassemble-all Generated/${MODNAME}.elf > Generated/${MODNAME}.dump || exit 1

@@ -147,7 +147,7 @@ error_block *TaskOpLockRelease( svc_registers *regs )
   if ((~1 & *lock) != 0) {
     OSTask *resume = 0;
     OSTask *t = shared.ostask.blocked;
-    if (resume == 0) PANIC;
+
     extern uint8_t app_memory_limit;
 
     // TODO: have slot-based blocked lists as well as the shared one,

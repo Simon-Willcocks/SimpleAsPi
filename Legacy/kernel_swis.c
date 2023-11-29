@@ -391,18 +391,19 @@ void do_OS_ValidateAddress( svc_registers *regs )
 
 OSTask *execute_swi( svc_registers *regs, int number )
 {
-  int swi = number & ~Xbit;
-  bool generate_error = (number == swi);
-
   // TODO: XOS_CallASWI( Xwhatever ) is clear, but
   // OS_CallASWI( Xwhatever ) or XOS_CallASWI( whatever ) is less so.
 
-  if (swi == OS_CallASWIR12) {
-    swi = regs->r[12];
+  if ((number & ~Xbit) == OS_CallASWIR12) {
+    number = regs->r[12];
   }
-  else if (swi == OS_CallASWI) {
-    swi = regs->r[10];
+  else if ((number & ~Xbit) == OS_CallASWI) {
+    number = regs->r[10];
   }
+
+  int swi = number & ~Xbit;
+  bool generate_error = (number == swi);
+
   if (swi == OS_CallASWIR12
    || swi == OS_CallASWI) {
     PANIC; // I think the legacy implementation loops forever...
@@ -424,11 +425,12 @@ OSTask *execute_swi( svc_registers *regs, int number )
 
   // Special case for allocations made before shared.legacy.owner has been
   // set - does not need the legacy stack, nor the support task.
-  if (shared.legacy.owner == 0
   // This comparison is mp-safe because a word access is atomic and
   // no other core will ever set it to this task's handle because they're
   // not running this task.
-   || *shared.legacy.owner == handle) {
+  if (shared.legacy.owner == 0 // Note: the pointer to a word in RMA
+   || *shared.legacy.owner == handle) { // The word, itself
+
     if (new_owner) {
       // Duplicate the core's stack onto it so we can return safely
 
@@ -445,6 +447,9 @@ OSTask *execute_swi( svc_registers *regs, int number )
       bool module_run = (legacy_regs->r[0] == 0 || legacy_regs->r[0] == 2);
       if (module_run && !new_owner) PANIC;
       do_OS_Module( legacy_regs );
+      // If this call was successful, the serve_legacy_swis function in
+      // Legacy/user.c will cause the module to start using the changed
+      // register values.
       }
       break;
     case OS_ReadDynamicArea: do_OS_ReadDynamicArea( legacy_regs ); break;
@@ -512,7 +517,7 @@ OSTask *execute_swi( svc_registers *regs, int number )
   return 0;
 }
 
-void spawn_legacy_manager( uint32_t queue, uint32_t *owner )
+static void spawn_legacy_manager( uint32_t queue, uint32_t *owner )
 {
   register void *start asm( "r0" ) = serve_legacy_swis;
   register void *sp asm( "r1" ) = 0;
@@ -544,6 +549,7 @@ void __attribute__(( noreturn )) startup()
   fill_legacy_zero_page(); // Before shared.legacy.owner set
 
   shared.legacy.owner = shared_heap_allocate( 4 );
+  *shared.legacy.owner = 0; // No owner, to start with.
 
   uint32_t handle = Task_QueueCreate();
 
@@ -556,13 +562,14 @@ void __attribute__(( noreturn )) startup()
     :
     : [reset_sp] "r" ((&workspace.svc_stack)+1) );
 
-  for (register int i asm ( "r0" ) = 0; i <= 16; i++) {
+  for (int i = 0; i <= 16; i++) {
+    register int handler asm ( "r0" ) = i;
     asm ( "svc %[def]"
       "\n  svc %[set]"
       :
       : [def] "i" (OS_ReadDefaultHandler)
       , [set] "i" (OS_ChangeEnvironment)
-      , "r" (i)
+      , "r" (handler)
       : "r1", "r2", "r3" );
   }
 

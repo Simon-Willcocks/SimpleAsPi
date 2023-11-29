@@ -44,6 +44,7 @@ enum {
   , OSTask_WaitForInterrupt             // ready to wait.
 
   , OSTask_SwitchToCore                 // Use sparingly!
+  , OSTask_RunPrivileged                // Don't use at all!
   , OSTask_Tick                         // For HAL module use only
 
   , OSTask_PipeCreate = OSTask_Yield + 32

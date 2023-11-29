@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+#define assert( x ) 
 #include "common.h"
 #include "gpio.h"
 
@@ -67,24 +68,132 @@ void ReleaseGroup( struct group *group )
   
 }
 
-void SetFunction( struct group *group, uint32_t pins, regs.r[2] )
+static inline leading_zeros( uint32_t v )
 {
-  
+  uint32_t leading_zeros;
+  asm ( "clz %[lz], %[mask]"
+    : [lz] "=r" (leading_zeros)
+    : [mask] "r" (v) );
+  return leading_zeros;
 }
 
-void SetAlternate( struct group *group, uint32_t altfn )
+int mask_to_number( uint64_t mask )
 {
-  
+  if (mask > 0x80000000)
+    return 64 - leading_zeros( mask >> 32 );
+  else
+    return 64 - leading_zeros( mask & 0xffffffff );
+}
+
+uint64_t combined_mask( struct group *group, uint32_t pins )
+{
+  uint64_t mask = 0;
+  uint64_t *p = &usrbase.masks[group.masks_index];
+  while (pins != 0) {
+    if (pins & 1) {
+      mask |= *p;
+    }
+    p++;
+    pins = pins >> 1;
+  }
+  return mask;
+}
+
+void SetAlternate( struct group *group, uint32_t pins, uint32_t altfn );
+
+void SetFunction( struct group *group, uint32_t pins, GPIO_Function fn )
+{
+  SetAlternate( group, pins, 6+fn.input );
+
+  if (in) {
+     // TODO 
+     // interrupt types. (Pi has 3: low/high, rising/falling & sampled/real
+     // rising/falling can (in other systems) be approximated by switching 
+     // between low/high interrupts.
+  }
+}
+
+void SetAlternate( struct group *group, uint32_t pins, uint32_t altfn )
+{
+  int fn = (altfn < 4) ? (altfn + 4) : (7 - altfn);
+  uint64_t mask = combined_mask( group, pins );
+  // 6 registers covering 10 pins each
+  uint32_t *gpfsel = &usrbase.gpfsel[0];
+  while (mask != 0) {
+    uint32_t sel = (mask & 0x3ff);
+    if (0 != sel) {
+      uint32_t reg_mask = 0;
+      uint32_t reg_val = 0;
+      for (int i = 0; i < 10; i++) {
+        if (0 != (sel & (1 << i))) {
+          reg_mask |= (7 < i);
+          reg_val |= (fn << i);
+        }
+      }
+      *gpfsel = (*gpfsel & ~reg_mask) | reg_val;
+    }
+    mask = mask >> 10;
+    gpfsel++;
+  }
 }
 
 uint32_t GetState( struct group *group )
 {
-  
+  uint32_t pin_bit = 1;
+  uint32_t result = 0;
+  uint32_t lower;
+  uint32_t upper;
+  bool l = false;
+  bool u = false;
+  uint64_t *masks = &usrbase.masks[group->masks_index];
+  for (int i = 0; i < group->number_of_pins; i++) {
+    uint64_t bit = *masks++;
+    assert( bit != 0 );
+    if (bit > 0x80000000ULL) {
+      if (!u) {
+        upper = gpio->gplev[1];
+        u = true;
+      }
+      if (upper & (bit >> 32)) result |= pin_bit;
+    }
+    else {
+      if (!l) {
+        lower = gpio->gplev[0];
+        l = true;
+      }
+      if (lower & bit) result |= pin_bit;
+    }
+    pin_bit = pin_bit << 1;
+  }
 }
 
 void SetState( struct group *group, uint32_t to_set, uint32_t new )
 {
-  
+  uint64_t set = 0;
+  uint64_t clr = 0;
+  int count = group->number_of_pins;
+  uint64_t *masks = &usrbase.masks[group->masks_index];
+  while (to_set != 0) {
+    if ((to_set & 1) != 0) {
+      if ((new & 1) != 0) {
+        set |= *masks;
+      }
+      else {
+        clr |= *masks;
+      }
+    }
+    to_set = to_set >> 1;
+    new = new >> 1;
+    masks++;
+  }
+  uint32_t upper_set = (set >> 32);
+  uint32_t lower_set = set & 0xffffffff;
+  uint32_t upper_clr = (clr >> 32);
+  uint32_t lower_clr = clr & 0xffffffff;
+  if (upper_set) gpio->gp_set[1] = upper_set;
+  if (upper_clr) gpio->gp_clr[1] = upper_clr;
+  if (lower_set) gpio->gp_set[0] = lower_set;
+  if (lower_clr) gpio->gp_clr[0] = lower_clr;
 }
 
 #define OP( n ) (n & 0x3f)
@@ -93,7 +202,8 @@ void irq_task()
 {
   Task_EnablingInterrupt(); // Needed before first call to Wait
   for (;;) {
-    GPIO_WaitForInterrupt( n );
+    register num asm ( "r0" ) = 0;
+    asm ( "svc 0x1000" : : "r" (num) );
   }
 }
 
@@ -194,7 +304,7 @@ void manage_gpio( uint32_t handle, workspace *ws )
           SetFunction( group, regs.r[1], regs.r[2] );
           break;
         case OP( gpio_SetAlternate ):
-          SetAlternate( group, regs.r[1] );
+          SetAlternate( group, regs.r[1], regs.r[2] );
           break;
         case OP( gpio_GetState ):
           GetState( group );

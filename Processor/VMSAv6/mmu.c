@@ -755,8 +755,8 @@ static memory_fault_handler find_handler( uint32_t fa )
 
 void __attribute__(( naked )) prefetch_handler()
 {
+  // Also includes Breakpoints.
   PANIC;
-  
 }
 
 static bool __attribute__(( noinline )) handle_data_abort()
@@ -782,7 +782,6 @@ static bool __attribute__(( noinline )) handle_data_abort()
 
   return handler( fa, ft );
 }
-
 
 void __attribute__(( naked )) data_abort_handler()
 {

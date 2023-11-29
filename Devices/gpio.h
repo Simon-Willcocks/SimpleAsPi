@@ -71,13 +71,13 @@ uint32_t GPIO_ClaimPinGroup( int32_t *pins, error_block **error )
   return handle;
 }
 
-struct GPIO_Function {
+typedef struct GPIO_Function {
   uint32_t input:1;
   uint32_t interrupt_on_rising_edge:1;
   uint32_t interrupt_on_falling_edge:1;
   uint32_t interrupt_on_high:1;
   uint32_t interrupt_on_low:1;
-};
+} GPIO_Function;
 
 // For normal, software controlled GPIO pins, set as output or input with
 // optional interrupt signalling.
