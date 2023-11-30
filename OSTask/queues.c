@@ -211,6 +211,8 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
 
   core_release_lock( &shared.ostask.queues_lock );
 
+  if (result == 0) PANIC;
+
   return result;
 }
 

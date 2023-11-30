@@ -275,9 +275,35 @@ error_block *run_initialisation_code( const char *env, module *m,
   return error;
 }
 
+static module *find_module_by_chunk( uint32_t swi )
+{
+  // TODO: have a lookup table for up to 8192 modules (bits 6-16, 18, 19)?
+  // (Include a bit to indicate modernity?)
+
+  // TODO: Optimise: store the found module in workspace, but check
+  // the swi is in that chunk each time find_module_by_chunk is
+  // called. (This can all be done internal to find_module_by_chunk.)
+
+  uint32_t chunk = swi & ~0xff00003f;
+
+  module *instance = shared.module.modules;
+  while (instance != 0 && instance->header->swi_chunk != chunk) {
+    instance = instance->next;
+  }
+
+  return instance;
+}
+
 bool needs_legacy_stack( uint32_t swi )
 {
-  return true;
+  if (swi < 0x200) return true; // kernel SWIs, currently all legacy
+
+  module *m = find_module_by_chunk( swi );
+
+  // We don't need a legacy stack to return unknown SWI, or if
+  // the module has registered handlers.
+
+  return (m != 0) && (m->handlers == 0);
 }
 
 OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )
@@ -290,21 +316,11 @@ OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )
   if (m->handlers == (void*) 0xffffffff) PANIC;
   *m->handlers = *handlers;
 
+  // Not, strictly speaking, a requirement, but having SWIs but not starting
+  // at the first one is suspect.
+  if (m->handlers->action[0].code == 0) PANIC;
+
   return 0;
-}
-
-module *find_module_by_chunk( uint32_t swi )
-{
-  // TODO: have a lookup table for up to 8192 modules (bits 6-16, 18, 19)?
-  // (Include a bit to indicate modernity.)
-  uint32_t chunk = swi & ~0xff00003f;
-
-  module *instance = shared.module.modules;
-  while (instance != 0 && instance->header->swi_chunk != chunk) {
-    instance = instance->next;
-  }
-
-  return instance;
 }
 
 void run_action( svc_registers *regs, uint32_t code, module *m )
@@ -343,18 +359,23 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
 {
   module *m = find_module_by_chunk( swi );
 
-  if (m == 0) return Error_UnknownSWI( regs );
+  if (m == 0) {
+    asm ( "udf 85" );
+    return Error_UnknownSWI( regs );
+  }
 
   if (m->handlers != 0) { // MP-aware
     uint32_t swi_offset = swi & 0x3f;
     swi_action action = m->handlers->action[swi_offset];
     if (is_queue( action ))
       return queue_running_OSTask( regs, action.queue, swi_offset );
-    else if (action.code != 0) {
+    else if (action.code == 0) {
+      asm ( "udf 86" );
+      return Error_UnknownSWI( regs );
+    }
+    else {
       run_action( regs, action.code, m );
     }
-    else
-      return Error_UnknownSWI( regs );
   }
   else {
     PANIC; // Legacy module

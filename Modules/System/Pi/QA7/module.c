@@ -24,7 +24,7 @@ typedef struct workspace workspace;
 typedef struct qa7_irq_sources qa7_irq_sources;
 
 struct qa7_irq_sources {
-  uint32_t irq_task;
+  uint32_t core_irq_task;
   uint32_t task[12];
 };
 
@@ -38,7 +38,7 @@ struct workspace {
   struct qa7_irq_sources tasks[]; // One set per core
 };
 
-#define SWI_CHUNK 0x1000
+#define MODULE_CHUNK "0x1000"
 
 const unsigned module_flags = 1;
 // Bit 0: 32-bit compatible
@@ -80,14 +80,20 @@ void setup_clock_svc()
                  : [config] "r" (0x303) );
 }
 
-void irq_task( uint32_t handle, uint32_t core, workspace *ws )
+void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 {
-  if (ws->tasks[core].irq_task != 0)
-    asm ( "bkpt %[line]" : : [line] "i" (__LINE__) );
+  core_info cores = Task_Cores();
+  if (core != cores.current) asm ( "bkpt 11" );
 
-  ws->tasks[core].irq_task = handle;
   uint32_t *core_irq_tasks = &ws->tasks[core].task[0];
+
   Task_EnablingInterrupts();
+
+  // Release the creating task to start generating interrupts on this
+  // core. Even if that task is running on a different core, this core
+  // is running with interrupts disabled, so there's no race condition.
+  ws->tasks[core].core_irq_task = handle;
+
   for (;;) {
     Task_WaitForInterrupt();
 
@@ -131,7 +137,10 @@ void timer_set_countdown( int32_t timer )
 
 void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
 {
-  qa7->timer_prescaler = 0x06AAAAAB;
+  core_info cores = Task_Cores();
+  if (core != cores.current) asm ( "bkpt 11" );
+
+  qa7->timer_prescaler = 0x06aaaaab;
 
   uint32_t clock_frequency;
 
@@ -170,7 +179,7 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
   }
 }
 
-void start_ticker( )
+void start_ticker()
 {
   static uint32_t const stack_size = 72;
   uint8_t *stack = rma_claim( stack_size );
@@ -204,8 +213,18 @@ void irq_manager( uint32_t handle, workspace *ws )
     int i = 0;
 #else
   for (int i = 0; i < ws->cores.total; i++) {
-    Task_SwitchToCore( i );
 #endif
+
+    uint32_t const stack_size = 256;
+    uint8_t *stack = rma_claim( stack_size );
+
+    // Note: The above rma_claim may (probably will) result on the core
+    // we're running on to change.
+    // Therefore we have to run it before switching (or switch more than
+    // once).
+
+    Task_SwitchToCore( i );
+
     register void (*code)() asm ( "r0" ) = setup_clock_svc;
     register uint32_t out asm ( "r0" );
 
@@ -215,29 +234,44 @@ void irq_manager( uint32_t handle, workspace *ws )
       : [swi] "i" (OSTask_RunPrivileged)
       , "r" (code) );
 
-    uint32_t const stack_size = 256;
-    uint8_t *stack = rma_claim( stack_size );
-
-    register void *start asm( "r0" ) = irq_task;
+    register void *start asm( "r0" ) = core_irq_task;
     register void *sp asm( "r1" ) = stack + stack_size;
     register uint32_t r1 asm( "r2" ) = i;
     register workspace *r2 asm( "r3" ) = ws;
-    asm ( "svc %[swi]"
-      :
+
+    register uint32_t handle asm( "r0" );
+
+    asm volatile ( "svc %[swi]" // volatile in case we ignore output
+      : "=r" (handle)
       : [swi] "i" (OSTask_Create)
       , "r" (start)
       , "r" (sp)
       , "r" (r1)
       , "r" (r2)
       : "lr", "cc" );
+
+    // Wait for the task to be ready to accept interrupts
+    // Without the volatile keyword this loop gets optimised to
+    // if (0 == ws->tasks[i].core_irq_task)
+    //   for (;;) Task_Yield();
+    // It's not worth defining the whole worspace as volatile as
+    // very little shared stuff gets changed.
+    uint32_t volatile *h = &ws->tasks[i].core_irq_task;
+    while (0 == *h) {
+      Task_Yield();
+    }
+
+    if (handle != ws->tasks[i].core_irq_task) asm ( "bkpt 10" );
   }
+
+  Task_EnablingInterrupts();
 
   start_ticker();
 
-  svc_registers regs;
-
   for (;;) {
     queued_task client = Task_QueueWait( ws->queue );
+
+    svc_registers regs;
 
     Task_GetRegisters( client.task_handle, &regs );
 
@@ -255,15 +289,17 @@ void irq_manager( uint32_t handle, workspace *ws )
 
     // Ensure the irq task has the right to release the client
     // before telling it about the client.
-    uint32_t handler = ws->tasks[client.core].irq_task;
+    uint32_t handler = ws->tasks[client.core].core_irq_task;
+
+    if (handler == 0) asm ( "bkpt 7" : : "r" (client.core | 0x44440000) );
+
     Task_ChangeController( client.task_handle, handler );
 
     ws->tasks[client.core].task[req] = client.task_handle;
   }
 }
 
-void __attribute__(( noinline )) c_init( uint32_t core,
-                                         workspace **private,
+void __attribute__(( noinline )) c_init( workspace **private,
                                          char const *env,
                                          uint32_t instantiation )
 {
@@ -303,7 +339,7 @@ void __attribute__(( noinline )) c_init( uint32_t core,
     : "lr", "cc" );
 }
 
-void __attribute__(( naked )) init( uint32_t core )
+void __attribute__(( naked )) init()
 {
   register struct workspace **private asm ( "r12" );
   register char const *env asm ( "r10" );
@@ -312,7 +348,7 @@ void __attribute__(( naked )) init( uint32_t core )
   // Move r12 into argument register
   asm volatile ( "push { lr }" );
 
-  c_init( core, private, env, instantiation );
+  c_init( private, env, instantiation );
 
   asm ( "pop { pc }" );
 }

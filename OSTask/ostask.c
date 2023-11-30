@@ -560,7 +560,6 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   task->regs.spsr = 0x10;
   task->banked_sp_usr = regs->r[1];
   task->banked_lr_usr = (uint32_t) unexpected_task_return;
-  task->regs.spsr = 0x10;
   task->regs.r[0] = ostask_handle( task );
   task->regs.r[1] = regs->r[2];
   task->regs.r[2] = regs->r[3];
@@ -574,6 +573,8 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   // or not.
   OSTask *next = running->next;
   dll_attach_OSTask( task, &next );
+
+  regs->r[0] = ostask_handle( task );
 
   return 0;
 }

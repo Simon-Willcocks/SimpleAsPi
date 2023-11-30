@@ -139,7 +139,7 @@ void Task_RegisterSWIHandlers( swi_handlers const *h )
     :
     : [swi] "i" (OSTask_RegisterSWIHandlers)
     , "r" (handlers)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 }
 
 // Note: base page is physical address >> 12
@@ -235,7 +235,7 @@ uint32_t PipeOp_CreateOnBuffer( void *buffer, uint32_t len )
         , "r" (max_block_size)
         , "r" (max_data)
         , "r" (allocated_mem)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   return pipe;
 }

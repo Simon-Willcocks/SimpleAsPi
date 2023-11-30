@@ -409,6 +409,11 @@ OSTask *execute_swi( svc_registers *regs, int number )
     PANIC; // I think the legacy implementation loops forever...
   }
 
+  // Assumes all kernel SWIs need the legacy stack FIXME
+  if (!needs_legacy_stack( swi )) {
+    return run_module_swi( regs, swi );
+  }
+
   uint32_t legacy_top = (uint32_t) &legacy_svc_stack_top;
   uint32_t std_top = (uint32_t) (&workspace.svc_stack+1);
   svc_registers *legacy_regs = regs;
