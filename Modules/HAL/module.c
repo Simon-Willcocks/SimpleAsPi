@@ -41,7 +41,7 @@ NO_swi_decoder;
 NO_messages_file;
 
 const char title[] = "HAL";
-const char help[] = "RasPi3 HAL\t0.01";
+const char help[] = "RasPi3 HAL\t0.01 (" CREATION_DATE ")";
 
 void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 {
@@ -69,6 +69,7 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 
   char const *s =
     "QA7\0"
+    "LEDBlink\0"
 /*
     "BCM283XGPIO\0"
     "BCM283XGPU\0"
@@ -108,14 +109,31 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
       "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OS_Module), "r" (load), "r" (module)
-      : "lr", "cc" ); // This shouldn't be necessary! Bug in OS_Module code?
+      : "cc", "memory" );
+    // "memory" is required because the SWI accesses memory
+    // (the module name). Without it, the final *p = '\0'; may
+    // be delayed until after the SWI is called.
 
     if (error != 0) {
       asm ( "udf 7" );
     }
   }
 
-  for (;;) { Task_Sleep( 100000 ); asm ( "udf 8" ); }
+  { // Yellow
+  register uint32_t pin asm( "r0" ) = 27;
+  register uint32_t on asm( "r1" ) = 1000;
+  register uint32_t off asm( "r2" ) = 2000;
+  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
+  }
+  { // Green
+  register uint32_t pin asm( "r0" ) = 22;
+  register uint32_t on asm( "r1" ) = 500;
+  register uint32_t off asm( "r2" ) = 1000;
+  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
+  }
+
+  // TODO Enter default language
+  for (;;) { Task_Sleep( 1000 ); asm ( "udf 8" ); }
 
   __builtin_unreachable();
 }
