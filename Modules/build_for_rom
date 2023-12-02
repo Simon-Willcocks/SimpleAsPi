@@ -17,6 +17,8 @@ MODNAME=$( basename ${MOD} )
 
 echo Building module $MODNAME in $MOD
 
+LAST="$( date -r $( ls -tr $SRC/*.c | tail -n 1 ) +'%d %b %Y' )" &&
+
 # New modules often have a user mode component; they can
 # locate whatever workspace they like at usrbase (but they
 # have to allocate the memory first).
@@ -28,7 +30,7 @@ $GCC  $SRC/*.c -o Generated/${MODNAME}.elf -Wall \
       -Wall -static -fpie -static-pie \
       -I . -I OSTask -I Modules -I Legacy -I Devices \
       -Wl,--defsym=usrbase=0x8000 \
-      -fno-toplevel-reorder $* &&
+      -fno-toplevel-reorder $* -DCREATION_DATE="\"$LAST\"" &&
 
 $OBJCOPY -R .ignoring -O binary Generated/${MODNAME}.elf Generated/${MODNAME},ffa &&
 

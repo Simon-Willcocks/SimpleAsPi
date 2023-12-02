@@ -51,8 +51,6 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
     .usr32_access = 0 };
   map_memory( &map_gpio );
 
-  map_memory( &map_gpio );
-
   set_state( gpio, 27, GPIO_Output );
   set_state( gpio, 22, GPIO_Output );
 

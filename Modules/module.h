@@ -56,6 +56,9 @@ void __attribute__(( naked, section( ".text.init" ) )) file_start()
 #ifndef MODULE_CHUNK
 #define MODULE_CHUNK "0"
 #endif
+#ifndef CREATION_DATE
+#define CREATION_DATE __DATE__
+#endif
   asm volatile ( 
   "\nheader:"
   "\n  .word start-header"

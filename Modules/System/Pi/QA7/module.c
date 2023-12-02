@@ -58,7 +58,7 @@ NO_swi_decoder;
 NO_messages_file;
 
 const char title[] = "QA7";
-const char help[] = "BCM QA7\t0.01";
+const char help[] = "BCM QA7\t\t0.01 (" CREATION_DATE ")";
 
 QA7 volatile *const qa7 = (void*) 0x7000;
 

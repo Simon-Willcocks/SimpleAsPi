@@ -27,6 +27,7 @@ typedef struct {
 
 DEFINE_ERROR( ModuleNotFound, 0x888, "Module not found" );
 DEFINE_ERROR( NoRoomInRMA, 0x888, "No room in RMA" );
+DEFINE_ERROR( NoStart, 0x888, "Module not startable" );
 DECLARE_ERROR( UnknownSWI );
 
 extern uint32_t LegacyModulesList;
@@ -473,13 +474,11 @@ OSTask *do_OS_Module( svc_registers *regs )
         error = load_and_initialise( name );
         if (error != 0) break;
         m = find_initialised_module( name );
-        if (m == 0) PANIC;
+        if (m == 0) PANIC; // Any error already reported
       }
       void *start = start_code( m->header );
       if (start == 0) {
-        static error_block err = { 0x888, "Module not startable" };
-        error = &err;
-        break;
+        return Error_NoStart( regs );
       }
       // Not sure how long the command should exist for; until the
       // application is replaced, presumably. Put a copy in RMA and

@@ -306,17 +306,6 @@ static bool in_legacy_stack()
   return sp_section == (legacy_base >> 20);
 }
 
-// SWIs from usr32 mode all go through the queue and the server task.
-// Any SWIs they call will be run directly, on the legacy stack.
-// On return from the initial SWI, it will run any callbacks and then
-// release the legacy stack.
-// Returning from that SWI will return to the run_swi routine which
-// resumes the server task.
-bool swi_is_legacy()
-{
-  return true;
-}
-
 // If no other subsystem wants to handle modules, use the legacy code
 __attribute__(( weak ))
 OSTask *do_OS_Module( svc_registers *regs )
