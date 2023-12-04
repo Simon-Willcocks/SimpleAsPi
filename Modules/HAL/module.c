@@ -67,40 +67,21 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     , [d] "r" (command)
     : "lr" );
 
-  char const *s =
-    "QA7\0"
-    "LEDBlink\0"
-/*
-    "BCM283XGPIO\0"
-    "BCM283XGPU\0"
-    "FileSwitch\0"
-    "ResourceFS\0"
-    "TerritoryManager\0"
-    "Messages\0"
-    "MessageTrans\0"
-    "UK\0"
-    "WindowManager\0"
-    "TaskManager\0"
-    "Desktop\0"
-    "SharedRISC_OSLib\0"
-    "BASIC105\0"
-    "BASIC64\0"
-    "BASICVFP\0"
-    "BlendTable\0"
-    "BufferManager\0"
-    "ColourTrans\0"
-    "DeviceFS\0"
-*/
-; // End of string!
+  // INITIAL_MODULES provided by build script.
+  // Must be a single string consiting of nul-terminated module
+  // names, e.g. "QA7\0BCM_GPIO\0". (That final null is important,
+  // it ensures the string is double-nul-terminated.)
+  char const *s = INITIAL_MODULES;
 
   while (*s != '\0') {
     char *p = mod;
     do {
       *p++ = *s++;
     } while (*s != '\0');
-    *p = '\0';
+    *p++ = '\n'; // Terminator
     s++;
 
+    Task_LogString( command, p - command );
     register uint32_t load asm ( "r0" ) = 1; // RMLoad
     register char const *module asm ( "r1" ) = command;
     register error_block *error asm ( "r0" );
@@ -119,21 +100,19 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     }
   }
 
-  { // Yellow
-  register uint32_t pin asm( "r0" ) = 27;
-  register uint32_t on asm( "r1" ) = 1000;
-  register uint32_t off asm( "r2" ) = 2000;
-  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
-  }
-  { // Green
-  register uint32_t pin asm( "r0" ) = 22;
-  register uint32_t on asm( "r1" ) = 500;
-  register uint32_t off asm( "r2" ) = 1000;
-  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
-  }
+  char const entering[] = "Entering default language: " DEFAULT_LANGUAGE "\n";
+  Task_LogString( entering, sizeof( entering ) - 1 );
+  register uint32_t load asm ( "r0" ) = 0; // RMRun
+  register char const *module asm ( "r1" ) = DEFAULT_LANGUAGE;
+  register error_block *error asm ( "r0" );
 
-  // TODO Enter default language
-  for (;;) { Task_Sleep( 1000 ); asm ( "udf 8" ); }
+  asm ( "svc %[swi]"
+    "\n  movvc r0, #0"
+    : "=r" (error)
+    : [swi] "i" (OS_Module), "r" (load), "r" (module)
+    : "cc", "memory" );
+
+  for (;;) { asm ( "udf 8" ); Task_Sleep( 1000000 ); }
 
   __builtin_unreachable();
 }

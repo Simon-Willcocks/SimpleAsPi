@@ -33,7 +33,7 @@ extern uint8_t shared_heap_base;
 extern uint8_t shared_heap_top;
 
 // No legacy modules.
-uint32_t LegacyModulesList = 0;
+uint32_t const LegacyModulesList = 0;
 
 void setup_system_heap()
 {

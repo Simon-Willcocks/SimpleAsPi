@@ -102,7 +102,7 @@ static inline void free_pipe( OSPipe* pipe )
 bool this_is_debug_receiver()
 {
   OSTask *running = workspace.ostask.running;
-  OSPipe *pipe = workspace.ostask.debug_pipe;
+  OSPipe *pipe = workspace.ostask.log_pipe;
   return running == pipe->receiver;
 }
 
@@ -112,38 +112,7 @@ bool in_range( uint32_t value, uint32_t base, uint32_t size )
   return (value >= base && value < (base + size));
 }
 
-// The debug pipe sender side gets mapped into core-specific memory
-// on startup. All others get mapped into slot-specific virtual
-// memory and inserted into the translation tables on data aborts.
-void *set_and_map_debug_pipe()
-{
-  extern uint32_t debug_pipe; // Ensure the size and the linker script match
-  OSPipe *pipe = workspace.ostask.debug_pipe;
-  uint32_t va = (uint32_t) &debug_pipe;
-
-  if (pipe->sender_va == 0) {
-    // This is the core's debug pipe, and it hasn't been mapped yet.
-    pipe->sender_va = va;
-
-    memory_mapping map = {
-      .base_page = pipe->physical >> 12,
-      .pages = pipe->max_block_size >> 12,
-      .va = va,
-      .type = CK_MemoryRW,
-      .map_specific = 0,
-      .all_cores = 0,
-      .usr32_access = 0 };
-    map_memory( &map );
-    map.va += pipe->max_block_size;
-    map_memory( &map );
-  }
-
-  if (pipe->sender_va != va) PANIC;
-  if (pipe->sender_va == 0) PANIC;
-
-  return (void*) va;
-}
-
+DECLARE_ERROR( NotATask );
 DEFINE_ERROR( NotYourPipe, 0x888, "Pipe not owned by this task" );
 DEFINE_ERROR( PipeCreationError, 0x888, "Pipe creation error" );
 DEFINE_ERROR( PipeCreationProblem, 0x888, "Pipe creation problem" );
@@ -217,6 +186,60 @@ OSTask *PipeCreate( svc_registers *regs )
   regs->r[0] = pipe_handle( pipe );
 
   return 0;
+}
+
+void create_log_pipe()
+{
+  // The debug pipe sender side gets mapped into core-specific memory
+  // on startup. All others get mapped into slot-specific virtual
+  // memory and inserted into the translation tables on data aborts.
+  extern uint8_t log_pipe; // Ensure the size and the linker script match
+  extern uint8_t log_pipe_top; // Ensure the size and the linker script match
+
+  if (&log_pipe_top == &log_pipe) return; // No log pipe
+
+  OSPipe *pipe = mpsafe_detach_OSPipe_at_head( &shared.ostask.pipe_pool );
+
+  if (pipe == 0) PANIC;
+
+  uint32_t size = (&log_pipe_top - &log_pipe);
+  if (0 != (size & 0x1fff)) PANIC;
+
+  pipe->sender = 0;
+  pipe->receiver = 0;
+  pipe->sender_va = pipe->receiver_va = 0;
+
+  pipe->max_block_size = size / 2;
+  pipe->max_data = pipe->max_block_size;
+  pipe->allocated_mem = 0;
+  pipe->physical = claim_contiguous_memory( pipe->max_block_size >> 12 );
+  if (pipe->physical == 0 || pipe->physical == 0xffffffff) PANIC;
+
+  pipe->physical = pipe->physical << 12;
+
+  pipe->sender_waiting_for = 0;
+  pipe->receiver_waiting_for = 0;
+
+  pipe->write_index = 0;
+  pipe->read_index = 0;
+
+  pipe->sender_va = &log_pipe - (uint8_t*) 0;
+
+  memory_mapping map = {
+    .base_page = pipe->physical >> 12,
+    .pages = pipe->max_block_size >> 12,
+    .va = pipe->sender_va,
+    .type = CK_MemoryRW,
+    .map_specific = 0,
+    .all_cores = 0,
+    .usr32_access = 0 };
+  map_memory( &map );
+  map.va += pipe->max_block_size;
+  map_memory( &map );
+
+  dll_attach_OSPipe( pipe, &shared.ostask.pipes );
+
+  workspace.ostask.log_pipe = pipe;
 }
 
 static uint32_t __attribute__(( noinline )) pipe_map_size( OSPipe *pipe )
@@ -296,13 +319,9 @@ bool insert_pipe_in_gap( OSTaskSlot *slot, OSPipe *pipe, bool sender )
   }
 
   if (sender) {
-    *((uint32_t*) potential_va) = 0x74747474;
-
     pipe->sender_va = potential_va;
   }
   else {
-    asm ( "" : : "r" (*((uint32_t*) potential_va)) );
-
     pipe->receiver_va = potential_va;
   }
 
@@ -313,7 +332,7 @@ static void set_sender_va( OSTaskSlot *slot, OSPipe *pipe )
 {
   if (pipe->physical == 0) PANIC;
 
-  if (workspace.ostask.debug_pipe == pipe) PANIC;
+  if (workspace.ostask.log_pipe == pipe) PANIC;
 
   if (!insert_pipe_in_gap( slot, pipe, true )) {
     // FIXME report error!
@@ -341,7 +360,7 @@ static uint32_t space_in_pipe( OSPipe *pipe )
   return pipe->max_block_size - data_in_pipe( pipe );
 }
 
-static uint32_t read_location( OSPipe *pipe, OSTaskSlot *slot )
+static uint32_t read_location( OSPipe *pipe )
 {
   bool double_mapped = pipe->allocated_mem == 0;
   if (double_mapped)
@@ -350,7 +369,7 @@ static uint32_t read_location( OSPipe *pipe, OSTaskSlot *slot )
     return pipe->receiver_va + pipe->read_index;
 }
 
-static uint32_t write_location( OSPipe *pipe, OSTaskSlot *slot )
+static uint32_t write_location( OSPipe *pipe )
 {
   bool double_mapped = pipe->allocated_mem == 0;
   if (double_mapped)
@@ -368,7 +387,7 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
   OSTask *next = running->next;
   OSTaskSlot *slot = running->slot;
 
-  bool is_normal_pipe = (pipe != workspace.ostask.debug_pipe);
+  bool is_normal_pipe = (pipe != workspace.ostask.log_pipe);
 
   if (pipe->sender != running
    && pipe->sender != 0
@@ -381,29 +400,29 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
   }
 
   if (pipe->sender_va == 0) {
-    if (pipe == workspace.ostask.debug_pipe)
-      set_and_map_debug_pipe();
-    else
-      set_sender_va( slot, pipe );
+    assert( pipe != workspace.ostask.log_pipe );
+    set_sender_va( slot, pipe );
   }
 
   uint32_t available = space_in_pipe( pipe );
 
   if (available >= amount || pipe_receiver_finished( pipe )) {
     regs->r[1] = available;
-    regs->r[2] = write_location( pipe, slot );
+    regs->r[2] = write_location( pipe );
   }
   else {
     pipe->sender_waiting_for = amount;
 
-    if (running == next) PANIC;
-
+    regs->r[1] = 0x77777777;
     save_task_state( regs );
     workspace.ostask.running = next;
-    regs->r[1] = 0xb00b00b0;
+
+    if (workspace.ostask.running == running) PANIC;
 
     // Blocked, waiting for data.
     dll_detach_OSTask( running );
+    
+    return next;
   }
 
   return 0;
@@ -417,10 +436,9 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
   // TODO validation
 
   OSTask *running = workspace.ostask.running;
-  OSTaskSlot *slot = running->slot;
 
   if (pipe->sender != running
-   && (pipe != workspace.ostask.debug_pipe)) {
+   && (pipe != workspace.ostask.log_pipe)) {
     // No setting of sender, here, if the task hasn't already checked for
     // space, how is it going to have written to the pipe?
     return Error_NotYourPipe( regs );
@@ -436,7 +454,7 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 
   // Update the caller's idea of the state of the pipe
   regs->r[1] = available - amount;
-  regs->r[2] = write_location( pipe, slot );
+  regs->r[2] = write_location( pipe );
 
   OSTask *receiver = pipe->receiver;
 
@@ -450,7 +468,7 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
     pipe->receiver_waiting_for = 0;
 
     receiver->regs.r[1] = data_in_pipe( pipe );
-    receiver->regs.r[2] = read_location( pipe, slot );
+    receiver->regs.r[2] = read_location( pipe );
 
     if (workspace.ostask.running != running) PANIC;
 
@@ -463,15 +481,43 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
   return 0;
 }
 
+void unmap_and_free( OSTaskSlot *slot, uint32_t va, bool double_mapped )
+{
+  uint32_t page = va >> 12;
+  app_memory_block *first = &slot->pipe_mem[0];
+  app_memory_block *block = first;
+  while (block->va_page != page) {
+    block++;
+  }
+  int remove = double_mapped ? 2 : 1;
+  do {
+    block[0] = block[remove];
+    block++;
+  } while (block->pages != 0);
+}
+
 OSTask *PipeSetSender( svc_registers *regs, OSPipe *pipe )
 {
   if (pipe->sender != workspace.ostask.running) {
     return Error_NotYourPipe( regs );
   }
-  pipe->sender = ostask_from_handle( regs->r[1] );
-  pipe->sender_va = 0; // FIXME unmap and free the virtual area for re-use
 
-  // TODO Unmap from virtual memory, if new sender is in different slot
+  OSTask *task = ostask_from_handle( regs->r[1] );
+  if (regs->r[1] != 0 && task == 0) {
+    return Error_NotATask( regs );
+  }
+
+  if (pipe->sender == 0 || task == 0 || pipe->sender->slot != task->slot) {
+    if (pipe->sender != 0) {
+      // Unmap and free the virtual area for re-use
+      bool double_mapped = pipe->allocated_mem == 0;
+      OSTaskSlot *slot = pipe->sender->slot;
+      unmap_and_free( slot, pipe->sender_va, double_mapped );
+    }
+    pipe->sender_va = 0;
+  }
+
+  pipe->sender = task;
 
   return 0;
 }
@@ -509,7 +555,7 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
   OSTask *next = running->next;
   OSTaskSlot *slot = running->slot;
 
-  // debug_pipe is not a special case, here; only one task can receive from it.
+  // log_pipe is not a special case, here; only one task can receive from it.
   if (pipe->receiver != running
    && pipe->receiver != 0) {
     return Error_NotYourPipe( regs );
@@ -531,13 +577,14 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 
   if (available >= amount || pipe_sender_finished( pipe )) {
     regs->r[1] = available;
-    regs->r[2] = read_location( pipe, slot );
+    regs->r[2] = read_location( pipe );
 
     if ((regs->spsr & VF) != 0) PANIC;
   }
   else {
     pipe->receiver_waiting_for = amount;
 
+    regs->r[2] = 0x77777777;
     save_task_state( regs );
     workspace.ostask.running = next;
 
@@ -545,6 +592,8 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 
     // Blocked, waiting for data.
     dll_detach_OSTask( running );
+
+    return next;
   }
 
   return 0;
@@ -556,7 +605,6 @@ OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
   // TODO validation
 
   OSTask *running = workspace.ostask.running;
-  OSTaskSlot *slot = running->slot;
 
   if (pipe->receiver != running) {
     // No setting of receiver, here, if the task hasn't already checked for
@@ -570,7 +618,7 @@ OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
     pipe->read_index += amount;
 
     regs->r[1] = available - amount;
-    regs->r[2] = read_location( pipe, slot );
+    regs->r[2] = read_location( pipe );
 
     if (pipe->sender_waiting_for > 0
      && pipe->sender_waiting_for <= space_in_pipe( pipe )) {
@@ -579,7 +627,7 @@ OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
       pipe->sender_waiting_for = 0;
 
       sender->regs.r[1] = space_in_pipe( pipe );
-      sender->regs.r[2] = write_location( pipe, slot );
+      sender->regs.r[2] = write_location( pipe );
 
       // "Returns" from SWI next time scheduled
       if (sender != running) {
@@ -601,10 +649,22 @@ OSTask *PipeSetReceiver( svc_registers *regs, OSPipe *pipe )
     return Error_NotYourPipe( regs );
   }
 
-  pipe->receiver = ostask_from_handle( regs->r[1] );
-  pipe->receiver_va = 0;
+  OSTask *task = ostask_from_handle( regs->r[1] );
+  if (regs->r[1] != 0 && task == 0) {
+    return Error_NotATask( regs );
+  }
 
-  // TODO Unmap from virtual memory, if new receiver in different slot
+  if (pipe->receiver == 0 || task == 0 || pipe->receiver->slot != task->slot) {
+    pipe->receiver_va = 0;
+    if (pipe->receiver != 0) {
+      // Unmap and free the virtual area for re-use
+      bool double_mapped = pipe->allocated_mem == 0;
+      OSTaskSlot *slot = pipe->receiver->slot;
+      unmap_and_free( slot, pipe->receiver_va, double_mapped );
+    }
+  }
+
+  pipe->receiver = task;
 
   return 0;
 }
@@ -627,64 +687,39 @@ OSTask *PipeNotListening( svc_registers *regs, OSPipe *pipe )
   return 0; 
 }
 
-#if 0
-// The debug handler pipe is the special case, where every task
-// can send to it, and the receiver is scheduled whenever there's
-// text in the buffer and this routine is called.
-
-// (The receiver end does not have to be special, FIXME)
-
-// Looking from the outside!
-#include "pipeop.h"
-
-void kick_debug_handler_thread( svc_registers *regs )
+OSTask *TaskOpGetLogPipe( svc_registers *regs )
 {
-  // Push any debug text written in SVC mode to the pipe.
-  // No need to lock the pipes in this routine since:
-  //   The debug pipe, if it exists, exists forever
-  //   The debug pipe is associated with just one core
-  //   The core is running with interrupts disabled.
+  if (0 == workspace.ostask.log_pipe) {
+    regs->r[0] = 0;
+    return 0;
+  }
 
-  if (!((regs->spsr & 0x8f) == 0)) PANIC;
-  if (!((regs->spsr & 0x80) == 0)) PANIC;
+  if (workspace.ostask.log_pipe->receiver != 0) {
+    // TODO Inform the previous receiver before resuming this new owner
+    PANIC;
+  }
 
-  uint32_t written = workspace.ostask.debug_written;
+  regs->r[0] = pipe_handle( workspace.ostask.log_pipe );
+  workspace.ostask.log_pipe->receiver = 0;
 
-  if (written == 0) return;
+  return 0;
+}
 
-  OSPipe *pipe = workspace.ostask.debug_pipe;
+void LogString( char const *string, uint32_t length )
+{
+  OSPipe *pipe = workspace.ostask.log_pipe;
 
+  // Never blocks, that could lock the kernel!
   if (pipe == 0) return;
 
-  OSPipe *p = workspace.ostask.debug_pipe;
-  OSTask *receiver = p->receiver;
-  OSTask *running = workspace.ostask.running;
+  uint32_t available = space_in_pipe( pipe );
+  if (available < length) return;
 
-  if (receiver == 0 || running == receiver) {
-    // Receiver is current task
+  char *dest = (void*) write_location( pipe );
+
+  for (int i = 0; i < length; i++) {
+    dest[i] = string[i];
   }
-  else if (p->receiver_waiting_for == 0) {
-    // Receiver is running
-    // Make it the current task
-    // dll_detach_OSTask( receiver );
-    // dll_attach_OSTask( receiver, &workspace.ostask.running );
-  }
-  else {
-    workspace.ostask.debug_written = 0;
-    workspace.ostask.debug_space = PipeOp_SpaceFilled( pipe, written );
 
-    if (workspace.ostask.running->prev == receiver) {
-      // Rather than wait for the debug pipe to fill up, we'll yield to
-      // the receiver.
-      if (!(p->receiver_waiting_for == 0)) PANIC; // Woken by above SpaceFilled
-
-      // About to swap out this, the sender, task
-      // (Not needed when the pipe is not the debug pipe.)
-      save_task_state( regs );
-
-      workspace.ostask.running = receiver;
-    }
-  }
+  pipe->write_index += length;
 }
-#endif
-

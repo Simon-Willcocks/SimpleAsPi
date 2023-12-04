@@ -176,6 +176,7 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
       :
       : [swi] "i" (OSTask_Tick)
       : "lr", "cc" );
+    Task_LogString( "Tick", 4 );
   }
 }
 

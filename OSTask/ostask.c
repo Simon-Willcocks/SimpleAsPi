@@ -15,8 +15,6 @@
 
 #include "ostask.h"
 
-#define assert( x ) do { if (!(x)) asm ( "bkpt %[line]" : : [line] "i" (__LINE__) ); } while (false)
-
 // OK, to start with, temporarily, 1MiB sections
 extern OSTask OSTask_free_pool[];
 extern OSTaskSlot OSTaskSlot_free_pool[];
@@ -103,6 +101,12 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   setup_processor_vectors();
 
   release_ostask();
+
+  create_log_pipe();
+  char log[] = "Core 00";
+  log[5] += core / 10;
+  log[6] += core % 10;
+  LogString( log, sizeof( log ) - 1 );
 
   // Make this running code into an OSTask
   workspace.ostask.running = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
@@ -243,7 +247,7 @@ static inline void *wakey_wakey( OSTask **headptr, void *p )
   if (t == 0) return 0;
   if (0 < --t->regs.r[0]) return 0;
 
-  OSTask *end = t;
+  OSTask *end;
 
   do {
     end = t;
@@ -360,9 +364,6 @@ OSTask *TaskOpChangeController( svc_registers *regs )
   }
   return 0;
 }
-
-OSTask *TaskOpLockClaim( svc_registers *regs );
-OSTask *TaskOpLockRelease( svc_registers *regs );
 
 OSTask *TaskOpRelinquishControl( svc_registers *regs )
 {
@@ -805,6 +806,9 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_Tick:
     sleeping_tasks_tick();
     break;
+  case OSTask_GetLogPipe:
+    resume = TaskOpGetLogPipe( regs );
+    break;
   case OSTask_PipeCreate ... OSTask_PipeCreate + 15:
     {
       bool reclaimed = core_claim_lock( &shared.ostask.pipes_lock,
@@ -899,7 +903,7 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   return resume;
 }
 
-void NORET execute_svc( svc_registers *regs )
+void __attribute__(( noreturn )) execute_svc( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;

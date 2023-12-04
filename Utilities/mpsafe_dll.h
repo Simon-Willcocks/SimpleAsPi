@@ -118,6 +118,7 @@ static inline T *mpsafe_manipulate_##T##_list_returning_item( T **head, T *(*upd
 } \
 static inline void *mpsafe_manipulate_##T##_list( T **head, void *(*update)( T** a, void *p ), void *p ) \
 { \
+  uint32_t *list = (uint32_t*) head; \
   for (;;) { \
     push_writes_to_cache(); /* Ensure we can see updates made by other cores */ \
     T *head_item = *head; \
@@ -126,11 +127,13 @@ static inline void *mpsafe_manipulate_##T##_list( T **head, void *(*update)( T**
       /* Another core is manipulating the list, try again later */ \
       wait_for_event(); \
     } \
-    else if (uhead_item == change_word_if_equal( (uint32_t*) head, uhead_item, 1 )) { \
-      /* Replaced head pointer with 1, can work on list safely. (May be empty!) */ \
+    else if (uhead_item == change_word_if_equal( list, uhead_item, 1 )) { \
+      /* Replaced head pointer with 1, can work on list safely. */ \
+      /* The list may be empty! */ \
       void *result = update( &head_item, p ); \
       ensure_changes_observable(); \
       *head = head_item; /* Release list */ \
+      ensure_changes_observable(); \
       signal_event(); \
       return result; \
     } \

@@ -47,6 +47,9 @@ enum {
   , OSTask_RunPrivileged                // Don't use at all!
   , OSTask_Tick                         // For HAL module use only
 
+  , OSTask_GetLogPipe                   // For the current core
+  , OSTask_LogString
+
   , OSTask_PipeCreate = OSTask_Yield + 32
   , OSTask_PipeWaitForSpace
   , OSTask_PipeSpaceFilled
@@ -188,6 +191,37 @@ void Task_SwitchToCore( uint32_t core )
     :
     : [swi] "i" (OSTask_SwitchToCore)
     , "r" (c)
+    : "lr", "cc", "memory" );
+}
+
+static inline
+uint32_t Task_GetLogPipe()
+{
+  register uint32_t pipe asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+    : "=r" (pipe)
+    : [swi] "i" (OSTask_GetLogPipe)
+    : "lr", "cc" );
+
+  return pipe;
+}
+
+static inline
+void Task_LogString( char const *string, uint32_t length )
+{
+  if (length == 0) {
+    while (string[length] != '\0') length++;
+  }
+
+  register char const *s asm ( "r0" ) = string;
+  register uint32_t l asm ( "r1" ) = length;
+
+  asm volatile ( "svc %[swi]"
+    :
+    : [swi] "i" (OSTask_LogString)
+    , "r" (s)
+    , "r" (l)
     : "lr", "cc", "memory" );
 }
 

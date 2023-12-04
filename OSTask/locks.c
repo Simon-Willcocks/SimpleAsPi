@@ -40,10 +40,8 @@ typedef union {
   };
 } OSTaskLock;
 
-error_block *TaskOpLockClaim( svc_registers *regs )
+OSTask *TaskOpLockClaim( svc_registers *regs )
 {
-  error_block *error = 0;
-
   // TODO check valid address for task (and move the task to a
   // "sin bin" - it's to big an error to ignore).
   uint32_t *lock = (void *) regs->r[0];
@@ -66,68 +64,54 @@ error_block *TaskOpLockClaim( svc_registers *regs )
     return 0;
   }
   else if ((~1 & old.raw) == handle) {
-    regs->r[0] = 1; // boolean result - already owner.
+    regs->r[0] = 1; // boolean result - already owner (reclaimed).
     return 0;
   }
 
-  save_task_state( regs );
-  workspace.ostask.running = next;
-  dll_detach_OSTask( running );
+  // If we reach here, we're not the owner of the lock, the lock might
+  // have its wanted bit set, or not.
 
   bool reclaimed = lock_ostask();
   if (reclaimed) PANIC;
 
-  // There are three (logical) places the value at lock may be changed.
-  // User code may change the value from 0 to its task handle (but nothing
-  // else).
-  // This code may set the wanted bit.
-  // The other code may change the value altogether.
-  // The latter two are locked out from doing so at this point, but the value
-  // may have changed while we were waiting for the lock (although it probably
-  // won't have).
-  OSTaskLock waiting = old;
-  waiting.wanted = 1;
-  OSTaskLock current;
-  current.raw = change_word_if_equal( lock, old.raw, waiting.raw );
+  // While we were waiting for the ostasks lock, another core may have
+  // updated the lock. (By setting the wanted bit or clearing the lock
+  // to zero.) No other core can do that now we own the ostasks lock.
 
-  if (current.raw != old.raw) { // Unlikely, but possible
-    if (current.raw == 0) {
-      // handle, not waiting.raw; There are no other waiting tasks (except
-      // those about to call Claim)
-      current.raw = change_word_if_equal( lock, 0, handle );
-    }
+  old.raw = change_word_if_equal( lock, 0, code.raw );
 
-    // Only Release is allowed to clear the lock, and it's locked out
-    // This error isn't the running task's fault...
-    if (current.raw == 0) PANIC;
+  if (old.raw != 0) {
+    // Going to be blocked (and not released until the ostasks lock has
+    // been released.
 
-    if (current.raw == handle) { // We're in!
-      // Keep running
-      dll_attach_OSTask( running, &workspace.ostask.running );
-    }
-    else {
-      waiting.raw = current.raw;
-      waiting.wanted = 1;
-      uint32_t old = change_word_if_equal( lock, current.raw, waiting.raw );
-      if (current.raw != old) PANIC;
-    }
-  }
+    save_task_state( regs );
+    workspace.ostask.running = next;
+    dll_detach_OSTask( running );
 
-  if (current.raw != handle) {
     dll_attach_OSTask( running, &shared.ostask.blocked );
     // Put at tail so FIFO
     shared.ostask.blocked = shared.ostask.blocked->next;
+
+    if (!old.wanted) {
+      // The owner cannot have released the lock between the last read
+      // and now, because LockRelease couldn't claim the ostasks lock.
+      old.wanted = 1;
+      *lock = old.raw;
+      push_writes_to_cache();
+    }
+  }
+  else {
+    // We got the lock after all
+    next = 0;
   }
 
   release_ostask();
 
-  return error;
+  return next;
 }
 
-error_block *TaskOpLockRelease( svc_registers *regs )
+OSTask *TaskOpLockRelease( svc_registers *regs )
 {
-  error_block *error = 0;
-
   // TODO check valid address for task
   uint32_t r0 = regs->r[0];
   uint32_t *lock = (void *) r0;
@@ -140,14 +124,10 @@ error_block *TaskOpLockRelease( svc_registers *regs )
   bool reclaimed = lock_ostask();
   if (reclaimed) PANIC;
 
-  // The only code that's allowed to set the low bit in the lock is
-  // locked out from doing it by shared.ostask.lock, so if it's set there's
-  // at least one waiting task in blocked, if it's not, there isn't one yet.
+  OSTask *resume = 0;
+  OSTask *t = shared.ostask.blocked;
 
-  if ((~1 & *lock) != 0) {
-    OSTask *resume = 0;
-    OSTask *t = shared.ostask.blocked;
-
+  if (t != 0) {
     extern uint8_t app_memory_limit;
 
     // TODO: have slot-based blocked lists as well as the shared one,
@@ -181,7 +161,9 @@ error_block *TaskOpLockRelease( svc_registers *regs )
       } while (!still_waiting && t != shared.ostask.blocked);
     }
 
-    if (ostask_handle( resume ) != resume->regs.r[1]) PANIC;
+    // This was checked in LockClaim
+    assert( ostask_handle( resume ) == resume->regs.r[1] );
+
     OSTaskLock new_owner = { .raw = resume->regs.r[1] };
     if (still_waiting) new_owner.wanted = 1;
 
@@ -189,9 +171,12 @@ error_block *TaskOpLockRelease( svc_registers *regs )
 
     mpsafe_insert_OSTask_at_head( &shared.ostask.runnable, resume );
   }
+  else {
+    *lock = 0;
+  }
 
   release_ostask();
 
-  return error;
+  return 0;
 }
 

@@ -143,14 +143,15 @@ static void sleeping_tasks_tick()
 
 int main()
 {
-  OSTask task[3] = {
-    { .sleep_time = 10 },
-    { .sleep_time = 3 },
-    { .sleep_time = 100 } };
+  OSTask task[] = {
+    { .sleep_time = 999 },
+    { .sleep_time = 20 } };
   
   for (int i = 0; i < number_of( task ); i++) {
-    dll_new_OSTask( &task[i] );
-    mpsafe_insert_OSTask_at_head( &shared.ostask.runnable, &task[i] );
+    OSTask *t = &task[i];
+    dll_new_OSTask( t );
+    t->regs.r[0] = t->sleep_time;
+    sleeping_tasks_add( t );
   }
 
   for (int i = 0;;i++) {

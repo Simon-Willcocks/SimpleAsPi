@@ -21,7 +21,7 @@ typedef union OSQueue OSQueue;
 typedef struct {
   OSTask *running;
   OSTask *idle;
-  OSPipe *debug_pipe;
+  OSPipe *log_pipe;
   OSTaskSlot *currently_mapped;
   OSTask *irq_task;
 

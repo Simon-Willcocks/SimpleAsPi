@@ -30,7 +30,7 @@ DEFINE_ERROR( NoRoomInRMA, 0x888, "No room in RMA" );
 DEFINE_ERROR( NoStart, 0x888, "Module not startable" );
 DECLARE_ERROR( UnknownSWI );
 
-extern uint32_t LegacyModulesList;
+extern uint32_t const LegacyModulesList;
 
 struct module_header {
   uint32_t offset_to_start;
@@ -168,10 +168,10 @@ bool module_name_match( char const *left, char const *right )
 }
 
 //static 
-module_header *find_module_in_list( char const *name, uint32_t *list )
+module_header *find_module_in_list( char const *name, uint32_t const *list )
 {
   module_header *header = 0;
-  uint32_t *entry = list;
+  uint32_t const *entry = list;
   while (*entry != 0) {
     header = (void*) (entry + 1);
     if (module_name_match( title_string( header ), name )) {

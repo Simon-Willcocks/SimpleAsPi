@@ -20,17 +20,18 @@
 
 // This file contains declarations useful to the OSTask code.
 
-// The following routines must be provided by higher-level code.
+// The following two routines must be provided by higher-level code:
 
 // This routine is called once, at startup, in svc32 mode with the
 // limited svc stack in workspace.
 void __attribute__(( noreturn )) startup();
 
-#define NORET __attribute__(( noinline, noreturn ))
-
 // Run a non-OSTask SWI
 // Return 0 to continue the current task, an OSTask to run otherwise
 OSTask *execute_swi( svc_registers *regs, int number );
+
+
+#define assert( x ) do { if (!(x)) asm ( "bkpt %[line]" : : [line] "i" (__LINE__) ); } while (false)
 
 static inline
 bool lock_ostask()
@@ -102,7 +103,7 @@ struct OSTaskSlot {
 
   // See memory.c
   app_memory_block app_mem[30];
-  app_memory_block pipe_mem[30];
+  app_memory_block pipe_mem[100];
 
   // List is only used for free pool, ATM.
   OSTaskSlot *next;
@@ -188,7 +189,7 @@ static inline uint32_t pipe_handle( OSPipe *pipe )
   return 0x45504950 ^ (uint32_t) pipe;
 }
 
-extern void setup_pipe_pool();
+void setup_pipe_pool();
 
 OSTask *PipeCreate( svc_registers *regs );
 OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe );
@@ -200,9 +201,17 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeSetReceiver( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeNotListening( svc_registers *regs, OSPipe *pipe );
+OSTask *TaskOpGetLogPipe( svc_registers *regs );
 
-extern void setup_queue_pool();
+void create_log_pipe();
+void LogString( char const *string, uint32_t length );
+
+void setup_queue_pool();
 
 OSTask *QueueCreate( svc_registers *regs );
 OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
                    bool swi, bool core );
+
+OSTask *TaskOpLockClaim( svc_registers *regs );
+OSTask *TaskOpLockRelease( svc_registers *regs );
+
