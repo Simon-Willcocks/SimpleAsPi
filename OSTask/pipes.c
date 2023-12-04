@@ -472,10 +472,15 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 
     if (workspace.ostask.running != running) PANIC;
 
+      // "Returns" from SWI next time scheduled
+      if (receiver != running) {
+        OSTask *tail = running->next;
+        dll_attach_OSTask( receiver, &tail );
+      }
     // Make the receiver ready to run when the sender blocks.
     // This could be take up instantly, this core has no more
     // control over this task.
-    mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, receiver );
+    // mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, receiver );
   }
 
   return 0;
