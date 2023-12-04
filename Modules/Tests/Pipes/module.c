@@ -99,7 +99,7 @@ void __attribute__(( noinline )) c_init( workspace **private,
   PipeOp_SetReceiver( b, 0 );
 
   uint32_t const stack_size = 256;
-  uint8_t *stack = rma_claim( stack_size );
+  uint8_t *stack = rma_claim( stack_size * 2 );
 {
   register void *start asm( "r0" ) = starter;
   register void *sp asm( "r1" ) = stack + stack_size;
@@ -116,7 +116,7 @@ void __attribute__(( noinline )) c_init( workspace **private,
 }
 {
   register void *start asm( "r0" ) = play;
-  register void *sp asm( "r1" ) = stack + stack_size;
+  register void *sp asm( "r1" ) = stack + 2 * stack_size;
   register uint32_t r1 asm( "r2" ) = a;
   register uint32_t r2 asm( "r3" ) = b;
   asm ( "svc %[swi]"
