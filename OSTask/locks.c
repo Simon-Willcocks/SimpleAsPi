@@ -42,10 +42,11 @@ typedef union {
 
 OSTask *TaskOpLockClaim( svc_registers *regs )
 {
+  sanity_check();
+
   // TODO check valid address for task (and move the task to a
   // "sin bin" - it's to big an error to ignore).
   uint32_t *lock = (void *) regs->r[0];
-  regs->r[0] = 0; // Default boolean result - not already owner.
 
   OSTask *running = workspace.ostask.running;
   OSTask *next = running->next;
@@ -61,6 +62,7 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
   old.raw = change_word_if_equal( lock, 0, code.raw );
 
   if (old.raw == 0) {
+    regs->r[0] = 0; // boolean result - not already owner.
     return 0;
   }
   else if ((~1 & old.raw) == handle) {
@@ -82,7 +84,7 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
 
   if (old.raw != 0) {
     // Going to be blocked (and not released until the ostasks lock has
-    // been released.
+    // been released).
 
     save_task_state( regs );
     workspace.ostask.running = next;
@@ -105,6 +107,8 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
     next = 0;
   }
 
+  sanity_check();
+
   release_ostask();
 
   return next;
@@ -112,6 +116,8 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
 
 OSTask *TaskOpLockRelease( svc_registers *regs )
 {
+  sanity_check();
+
   // TODO check valid address for task
   uint32_t r0 = regs->r[0];
   uint32_t *lock = (void *) r0;
@@ -122,20 +128,21 @@ OSTask *TaskOpLockRelease( svc_registers *regs )
   if ((~1 & *lock) != ostask_handle( running )) PANIC; // Sin bin!
 
   bool reclaimed = lock_ostask();
-  if (reclaimed) PANIC;
+  assert( !reclaimed );
 
   OSTask *resume = 0;
   OSTask *t = shared.ostask.blocked;
 
-  if (t != 0) {
-    extern uint8_t app_memory_limit;
+  assert( (*lock & 1) == 0 || (t != 0) );
 
+  extern uint8_t app_memory_limit;
+
+  bool ignore_slots = (regs->r[0] >= (uint32_t) &app_memory_limit);
+
+  if (t != 0) {
     // TODO: have slot-based blocked lists as well as the shared one,
     // makes the search time lower (although these locks shouldn't be
     // used to excess).
-
-    bool ignore_slots = (regs->r[0] >= (uint32_t) &app_memory_limit);
-    bool still_waiting = false;
 
     do {
       if (t->regs.r[0] == r0
@@ -144,8 +151,10 @@ OSTask *TaskOpLockRelease( svc_registers *regs )
       }
       t = t->next;
     } while (resume == 0 && t != shared.ostask.blocked);
+  }
 
-    if (resume == 0) PANIC;
+  if (resume != 0) {
+    bool still_waiting = false; // Any other tasks blocked on the same lock?
 
     if (resume == t) { // Only item
       shared.ostask.blocked = 0;
@@ -170,13 +179,15 @@ OSTask *TaskOpLockRelease( svc_registers *regs )
     *lock = new_owner.raw;
 
     mpsafe_insert_OSTask_at_head( &shared.ostask.runnable, resume );
+    resume->regs.r[0] = 0; // boolean result - not already owner.
   }
   else {
     *lock = 0;
   }
 
+  sanity_check();
+
   release_ostask();
 
   return 0;
 }
-

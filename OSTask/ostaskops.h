@@ -225,6 +225,128 @@ void Task_LogString( char const *string, uint32_t length )
     : "lr", "cc", "memory" );
 }
 
+static inline
+void Task_LogSmallNumber( uint32_t number )
+{
+  // FIXME: This is very chunky, maybe use OS_Convert...
+  // putting this implmentation into NoLegacy.
+  char string[12];
+  int i = 0;
+  if (number >= 10000000000) {
+    char d = '0';
+    while (number >= 10000000000) {
+      d++; number -= 10000000000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 1000000000) {
+    char d = '0';
+    while (number >= 1000000000) {
+      d++; number -= 1000000000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 100000000) {
+    char d = '0';
+    while (number >= 100000000) {
+      d++; number -= 100000000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 10000000) {
+    char d = '0';
+    while (number >= 10000000) {
+      d++; number -= 10000000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 1000000) {
+    char d = '0';
+    while (number >= 1000000) {
+      d++; number -= 1000000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 100000) {
+    char d = '0';
+    while (number >= 100000) {
+      d++; number -= 100000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 10000) {
+    char d = '0';
+    while (number >= 10000) {
+      d++; number -= 10000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 1000) {
+    char d = '0';
+    while (number >= 1000) {
+      d++; number -= 1000;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 100) {
+    char d = '0';
+    while (number >= 100) {
+      d++; number -= 100;
+    }
+    string[i++] = d;
+  }
+
+  if (i > 0 || number >= 10) {
+    char d = '0';
+    while (number >= 10) {
+      d++; number -= 10;
+    }
+    string[i++] = d;
+  }
+
+  if (number >= 0) {
+    string[i++] = '0' + number;
+  }
+
+  Task_LogString( string, i );
+}
+
+static inline char tohex( uint8_t n )
+{
+  return ("0123456789abcdef")[n];
+}
+
+static inline
+void Task_LogHex( uint32_t number )
+{
+  char string[8];
+  for (int i = 0; i < 8; i++) {
+    string[7-i] = tohex( (number >> (i * 4)) & 0xf );
+  }
+
+  Task_LogString( string, 8 );
+}
+
+static inline
+void Task_LogNewLine()
+{
+  Task_LogString( "\n", 1 );
+}
+
+static inline
+void Task_Space()
+{
+  Task_LogString( " ", 1 );
+}
+
 typedef struct {
   error_block *error;
   void *location;

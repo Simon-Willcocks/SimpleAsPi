@@ -429,6 +429,7 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
 }
 
 DEFINE_ERROR( OverfilledPipe, 0x888, "Overfilled pipe" );
+DEFINE_ERROR( NotThatMuchAvailable, 0x888, "Consumed more than available" );
 
 OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 {
@@ -472,15 +473,9 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 
     if (workspace.ostask.running != running) PANIC;
 
-      // "Returns" from SWI next time scheduled
-      if (receiver != running) {
-        OSTask *tail = running->next;
-        dll_attach_OSTask( receiver, &tail );
-      }
-    // Make the receiver ready to run when the sender blocks.
-    // This could be take up instantly, this core has no more
-    // control over this task.
-    // mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, receiver );
+    // Make the receiver ready to run; this could be taken up instantly,
+    // this core has no more control over this task.
+    mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, receiver );
   }
 
   return 0;
@@ -553,6 +548,7 @@ OSTask *PipeNoMoreData( svc_registers *regs, OSPipe *pipe )
 
 OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 {
+sanity_check();
   uint32_t amount = regs->r[1];
   // TODO validation
 
@@ -589,18 +585,21 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
   else {
     pipe->receiver_waiting_for = amount;
 
+sanity_check();
     regs->r[2] = 0x77777777;
     save_task_state( regs );
     workspace.ostask.running = next;
 
     if (workspace.ostask.running == running) PANIC;
 
+sanity_check();
     // Blocked, waiting for data.
     dll_detach_OSTask( running );
-
+sanity_check();
     return next;
   }
 
+sanity_check();
   return 0;
 }
 
@@ -619,30 +618,29 @@ OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
 
   uint32_t available = data_in_pipe( pipe );
 
-  if (available >= amount) {
-    pipe->read_index += amount;
-
-    regs->r[1] = available - amount;
-    regs->r[2] = read_location( pipe );
-
-    if (pipe->sender_waiting_for > 0
-     && pipe->sender_waiting_for <= space_in_pipe( pipe )) {
-      OSTask *sender = pipe->sender;
-
-      pipe->sender_waiting_for = 0;
-
-      sender->regs.r[1] = space_in_pipe( pipe );
-      sender->regs.r[2] = write_location( pipe );
-
-      // "Returns" from SWI next time scheduled
-      if (sender != running) {
-        OSTask *tail = running->next;
-        dll_attach_OSTask( sender, &tail );
-      }
-    }
+  if (available < amount) {
+    return Error_NotThatMuchAvailable( regs );
   }
-  else {
-    PANIC; // Consumed more than available?
+
+  pipe->read_index += amount;
+
+  // Update the caller's idea of the state of the pipe
+  regs->r[1] = available - amount;
+  regs->r[2] = read_location( pipe );
+
+  if (pipe->sender_waiting_for > 0
+   && pipe->sender_waiting_for <= space_in_pipe( pipe )) {
+    // Space is now available
+    OSTask *sender = pipe->sender;
+
+    pipe->sender_waiting_for = 0;
+
+    sender->regs.r[1] = space_in_pipe( pipe );
+    sender->regs.r[2] = write_location( pipe );
+
+    // Make the sender ready to run; this could be taken up instantly,
+    // this core has no more control over this task.
+    mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, sender );
   }
 
   return 0;
@@ -710,15 +708,18 @@ OSTask *TaskOpGetLogPipe( svc_registers *regs )
   return 0;
 }
 
-void LogString( char const *string, uint32_t length )
+OSTask *TaskOpLogString( svc_registers *regs )
 {
+  char const *string = (void*) regs->r[0];
+  uint32_t length = regs->r[1];
+
   OSPipe *pipe = workspace.ostask.log_pipe;
 
   // Never blocks, that could lock the kernel!
-  if (pipe == 0) return;
+  if (pipe == 0) return 0;
 
   uint32_t available = space_in_pipe( pipe );
-  if (available < length) return;
+  if (available < length) return 0;
 
   char *dest = (void*) write_location( pipe );
 
@@ -726,5 +727,14 @@ void LogString( char const *string, uint32_t length )
     dest[i] = string[i];
   }
 
-  pipe->write_index += length;
+  // PipeSpaceFilled only looks at the given length, but fills in
+  // the caller's idea of the state of the pipe, which we're not
+  // interested in.
+  svc_registers tmp = { .r[1] = length };
+  OSTask *resume = PipeSpaceFilled( &tmp, pipe );
+
+  // It also never changes the running task
+  assert( resume == 0 );
+
+  return resume;
 }

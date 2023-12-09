@@ -103,10 +103,6 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   release_ostask();
 
   create_log_pipe();
-  char log[] = "Core 00";
-  log[5] += core / 10;
-  log[6] += core % 10;
-  LogString( log, sizeof( log ) - 1 );
 
   // Make this running code into an OSTask
   workspace.ostask.running = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
@@ -141,10 +137,10 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
     // core's translation tables. (The first core in already has them.)
 
     // This is not the prettiest approach, but I think it should work.
-    asm ( "ldr r0, [%[mem]]" : : [mem] "r" (&OSTaskSlot_free_pool) );
+    asm volatile ( "ldr r0, [%[mem]]" : : [mem] "r" (&OSTaskSlot_free_pool) );
 
     asm ( "mov sp, %[reset_sp]"
-      "\n  cpsid aif, #0x10"
+      "\n  cpsie aif, #0x10"
       :
       : [reset_sp] "r" ((&workspace.svc_stack)+1) );
 
@@ -196,7 +192,7 @@ void unexpected_task_return()
   PANIC;
 }
 
-static inline void *put_to_sleep( OSTask **head, void *p )
+static inline void put_to_sleep( OSTask **head, void *p )
 {
   OSTask *tired = p;
   uint32_t time = tired->regs.r[0];
@@ -233,11 +229,9 @@ static inline void *put_to_sleep( OSTask **head, void *p )
       dll_attach_OSTask( tired, &t );
     }
   }
-
-  return 0;
 }
 
-static inline void *wakey_wakey( OSTask **headptr, void *p )
+static inline OSTask *wakey_wakey( OSTask **headptr, void *p )
 {
   p = p;
 
@@ -259,11 +253,9 @@ static inline void *wakey_wakey( OSTask **headptr, void *p )
   return head;
 }
 
-static inline void *add_woken( OSTask **headptr, void *p )
+static inline void add_woken( OSTask **headptr, void *p )
 {
   dll_insert_OSTask_list_at_head( p, headptr );
-
-  return 0;
 }
 
 static void sleeping_tasks_add( OSTask *tired )
@@ -273,7 +265,7 @@ static void sleeping_tasks_add( OSTask *tired )
 
 static void sleeping_tasks_tick()
 {
-  OSTask *list = mpsafe_manipulate_OSTask_list( &shared.ostask.sleeping, wakey_wakey, 0 );
+  OSTask *list = mpsafe_manipulate_OSTask_list_returning_item( &shared.ostask.sleeping, wakey_wakey, 0 );
   if (list != 0)
     mpsafe_manipulate_OSTask_list( &shared.ostask.runnable, add_woken, list );
 }
@@ -441,11 +433,11 @@ OSTask *TaskOpSetRegisters( svc_registers *regs )
   return 0;
 }
 
-static inline OSTask *for_core( OSTask **head, void *p )
+static __attribute__(( noinline )) OSTask *for_core( OSTask **head, void *p )
 {
   OSTask *first = *head;
   OSTask *t = first;
-  uint32_t core = *(uint32_t*) p;
+  uint32_t core = (uint32_t) p;
 
   if (t == 0) return 0;
 
@@ -454,8 +446,10 @@ static inline OSTask *for_core( OSTask **head, void *p )
       if (t == t->next) {
         *head = 0;
       }
-      else if (t == first) {
-        *head = first->next;
+      else {
+        if (t == first) {
+          *head = first->next;
+        }
         dll_detach_OSTask( t );
       }
       return t;
@@ -467,7 +461,7 @@ static inline OSTask *for_core( OSTask **head, void *p )
   return 0;
 }
 
-OSTask *find_task_for_this_core()
+OSTask * __attribute__(( noinline )) find_task_for_this_core()
 {
   OSTask **head = &shared.ostask.moving;
 
@@ -476,70 +470,84 @@ OSTask *find_task_for_this_core()
 
   return mpsafe_manipulate_OSTask_list_returning_item( head,
                                                        for_core,
-                                                       &workspace.core );
+                                                       (void*)workspace.core );
 }
 
-OSTask *TaskOpSleep( svc_registers *regs, uint32_t ticks )
+OSTask *IdleTaskYield( svc_registers *regs )
 {
+  OSTask *running = workspace.ostask.running;
+  OSTask *resume = running->next;
+
+  // Special case; the idle task never leaves its core.
+  // If there's another task already in the running list,
+  // run it.
+  // If it's alone, it will pull a task from either the
+  // queue of tasks for this core, or from the general
+  // runnable list.
+
+  if (resume == running) {
+    // No other running tasks on this core, pull first from
+    // tasks that called SwitchToCore (almost always empty).
+    resume = find_task_for_this_core();
+
+    // If we got a task, it was requesting this core, right?
+    assert( resume == 0 || resume->regs.r[0] == workspace.core );
+
+    if (resume == 0) {
+      // Pull from general runnable list
+      resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
+    }
+  }
+
+  if (resume != 0) {
+    save_task_state( regs );
+
+    dll_attach_OSTask( resume, &workspace.ostask.running );
+    // Now resume and idle are in the list (resume at the head)
+  }
+  else {
+    // Pause, then drop back to idle task (interrupts enabled),
+    // after which the runnable list will be checked again.
+    wait_for_event();
+  }
+
+  return resume;
+}
+
+OSTask *TaskOpYield( svc_registers *regs )
+{
+  OSTask *running = workspace.ostask.running;
+  OSTask *resume = running->next;
+
+  if (running == workspace.ostask.idle) {
+    resume = IdleTaskYield( regs );
+  }
+  else {
+    // Put at the end of the general runnable list.
+    save_task_state( regs );
+    workspace.ostask.running = resume;
+    dll_detach_OSTask( running );
+
+    mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, running );
+  }
+
+  return resume;
+}
+
+OSTask *TaskOpSleep( svc_registers *regs )
+{
+  if (regs->r[0] == 0) return TaskOpYield( regs );
+
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
 
   assert( resume != running || running == workspace.ostask.idle );
 
-  if (resume == running) {
-    // Only one task in the list (idle)
-    assert( ticks == 0 ); // idle task never sleeps, only yields
+  save_task_state( regs );
+  workspace.ostask.running = resume;
+  dll_detach_OSTask( running );
 
-    assert( running == workspace.ostask.idle );
-
-    resume = find_task_for_this_core();
-
-    if (resume == 0) {
-      resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
-    }
-    else {
-      assert( resume->regs.r[0] == workspace.core );
-    }
-
-    if (resume != 0) {
-      save_task_state( regs );
-
-      dll_attach_OSTask( resume, &workspace.ostask.running );
-      // Now resume and idle are in the list
-    }
-    else {
-      // Pause, then drop back to idle task with interrupts enabled,
-      // after which the runnable list will be checked again.
-      //wait_for_event();
-    }
-  }
-  else {
-    save_task_state( regs );
-
-    workspace.ostask.running = resume;
-
-    // It can't be the only task in the list, there's always idle
-    if (running->next == running || running->prev == running) PANIC;
-
-    dll_detach_OSTask( running );
-
-    // Removed properly from list
-    if (running->next != running || running->prev != running) PANIC;
-    if (workspace.ostask.running == running) PANIC;
-
-    // Removing the head leaves the old next at the head
-    if (workspace.ostask.running != resume) PANIC;
-
-    if (ticks == 0) {
-      // Instantly runnable, but let other tasks run
-      mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, running );
-
-      signal_event(); // Other cores should check runnable list, if waiting
-    }
-    else {
-      sleeping_tasks_add( running );
-    }
-  }
+  sleeping_tasks_add( running );
 
   return resume;
 }
@@ -670,6 +678,14 @@ OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
   uint32_t core = regs->r[0];
 
+Task_LogString( "Switch ", 0 );
+Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogString( " from ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogString( " to ", 0 );
+Task_LogSmallNumber( core );
+Task_LogNewLine();
+
   if (core == workspace.core) return 0; // Optimisation!
 
   if (core > shared.ostask.number_of_cores) PANIC;
@@ -731,15 +747,17 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;
 
+  sanity_check();
+
   if (running->next == running
    && running != workspace.ostask.idle) PANIC;
 
   switch (number) {
   case OSTask_Yield:
-    resume = TaskOpSleep( regs, 0 );
+    resume = TaskOpYield( regs );
     break;
   case OSTask_Sleep:
-    resume = TaskOpSleep( regs, regs->r[0] );
+    resume = TaskOpSleep( regs );
     break;
   case OSTask_Spawn:
   case OSTask_Create:
@@ -809,6 +827,11 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_GetLogPipe:
     resume = TaskOpGetLogPipe( regs );
     break;
+  case OSTask_LogString:
+    resume = TaskOpLogString( regs );
+    assert( resume == 0 );
+    assert( 0 == (regs->spsr & VF) );
+    break;
   case OSTask_PipeCreate ... OSTask_PipeCreate + 15:
     {
       bool reclaimed = core_claim_lock( &shared.ostask.pipes_lock,
@@ -824,6 +847,8 @@ OSTask *ostask_svc( svc_registers *regs, int number )
           resume = Error_InvalidPipeHandle( regs );
         }
         else {
+          sanity_check();
+
           switch (number) {
           case OSTask_PipeCreate:
           case OSTask_PipeWaitForSpace:
@@ -893,7 +918,10 @@ OSTask *ostask_svc( svc_registers *regs, int number )
       }
     }
     break;
+  default: asm ( "bkpt 0xffff" );
   }
+
+  sanity_check();
 
   if (resume != 0 && resume != workspace.ostask.running) PANIC;
 
@@ -1129,4 +1157,18 @@ static void setup_processor_vectors()
   asm ( "msr sp_abt, %[stack]" : : [stack] "r" ((&(workspace.ostask.abt_stack)) + 1) );
   asm ( "msr sp_irq, %[stack]" : : [stack] "r" ((&(workspace.ostask.irq_stack)) + 1) );
   asm ( "msr sp_fiq, %[stack]" : : [stack] "r" ((&(workspace.ostask.fiq_stack)) + 1) );
+}
+
+void __attribute__(( noinline )) sanity_check()
+{
+if ((workspace.ostask.idle->next == workspace.ostask.idle
+  || workspace.ostask.idle->prev == workspace.ostask.idle)
+ && (workspace.ostask.idle->next != workspace.ostask.idle
+  || workspace.ostask.idle->prev != workspace.ostask.idle)) {
+  asm ( "bkpt 1" );
+}
+OSTask *t = workspace.ostask.running;
+int max = 10;
+while (t->next != workspace.ostask.idle) { t = t->next; if (--max == 0) asm ( "bkpt 2" ); }
+while (t->prev != workspace.ostask.idle) { t = t->prev; if (--max == 0) asm ( "bkpt 3" ); }
 }

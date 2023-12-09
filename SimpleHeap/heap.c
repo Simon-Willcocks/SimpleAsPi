@@ -74,7 +74,7 @@ void heap_initialise( void *base, uint32_t size )
   h->free->size = size - sizeof( heap );
 }
 
-static inline void *first_fit( free_heap_block **head, void *p )
+static inline free_heap_block *first_fit( free_heap_block **head, void *p )
 {
   // Size has already been adjusted for header size;
   // allocate exactly that many bytes (or a bit more if the
@@ -103,7 +103,7 @@ static inline void *first_fit( free_heap_block **head, void *p )
 
       f->size -= size;
 
-      return b + 1; // The byte after the header, where the user can write
+      return (void*) (b + 1); // The byte after the header, where the user can write
     }
     f = f->next;
   } while (f != *head);
@@ -119,7 +119,8 @@ void *heap_allocate( void *base, uint32_t size )
   // Allocate a multiple of 16 bytes, including the header.
   size = (size + sizeof( heap_block ) + 15) & ~15;
 
-  return mpsafe_manipulate_free_heap_block_list( &h->free, first_fit, (void*) size );
+  free_heap_block *result = mpsafe_manipulate_free_heap_block_list_returning_item( &h->free, first_fit, (void*) size );
+  return result;
 }
 
 void heap_free( void *base, void *mem )

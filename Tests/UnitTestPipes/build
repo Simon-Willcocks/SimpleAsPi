@@ -5,6 +5,8 @@ SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:NoLegacy:Modules
 # Modules to include (HAL chooses which ones to load.)
 MODULES=HAL:Tests/Pipes
 
+echo Modules: ${MODULES//:/ }
+
 INITIAL_MODULES='"HAL\0Pipes\0"'
 DEFAULT_LANGUAGE='"BASIC"'
 
@@ -41,8 +43,7 @@ $OBJCOPY --rename-section .text=.init --rename-section .data=.init mmu.o mmu.boo
 
 echo Sources: ${SOURCES//://*.c }
 
-echo Modules: ${MODULES//:/ }
-
+# Cleared after the first (HAL) module built
 HALFLAGS="-DINITIAL_MODULES="$INITIAL_MODULES" -DDEFAULT_LANGUAGE=$DEFAULT_LANGUAGE " &&
 
 (

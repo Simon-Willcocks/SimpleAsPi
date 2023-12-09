@@ -153,6 +153,9 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
   ticks_per_interval = ticks_per_interval * slower;
 #endif
 
+  Task_LogString( "Routing GPU interrupts to core ", 0 );
+  Task_LogSmallNumber( core );
+  Task_LogNewLine();
   qa7->GPU_interrupts_routing = core;
   qa7->Core_IRQ_Source[core] = 0xffd;
 
@@ -176,7 +179,6 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
       :
       : [swi] "i" (OSTask_Tick)
       : "lr", "cc" );
-    Task_LogString( "Tick", 4 );
   }
 }
 
@@ -219,7 +221,7 @@ void irq_manager( uint32_t handle, workspace *ws )
     uint32_t const stack_size = 256;
     uint8_t *stack = rma_claim( stack_size );
 
-    // Note: The above rma_claim may (probably will) result on the core
+    // Note: The above rma_claim may (probably will) result in the core
     // we're running on to change.
     // Therefore we have to run it before switching (or switch more than
     // once).
@@ -255,12 +257,14 @@ void irq_manager( uint32_t handle, workspace *ws )
     // Without the volatile keyword this loop gets optimised to
     // if (0 == ws->tasks[i].core_irq_task)
     //   for (;;) Task_Yield();
-    // It's not worth defining the whole worspace as volatile as
+    // It's not worth defining the whole workspace as volatile as
     // very little shared stuff gets changed.
+
     uint32_t volatile *h = &ws->tasks[i].core_irq_task;
     while (0 == *h) {
       Task_Yield();
     }
+    // Note: Yield means this core could be running on any core now.
 
     if (handle != ws->tasks[i].core_irq_task) asm ( "bkpt 10" );
   }

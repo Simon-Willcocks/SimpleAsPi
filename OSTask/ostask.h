@@ -191,6 +191,7 @@ static inline uint32_t pipe_handle( OSPipe *pipe )
 
 void setup_pipe_pool();
 
+OSTask *TaskOpLogString( svc_registers *regs );
 OSTask *PipeCreate( svc_registers *regs );
 OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe );
 OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe );
@@ -215,3 +216,4 @@ OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
 OSTask *TaskOpLockClaim( svc_registers *regs );
 OSTask *TaskOpLockRelease( svc_registers *regs );
 
+void sanity_check();

@@ -102,14 +102,14 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 
   char const entering[] = "Entering default language: " DEFAULT_LANGUAGE "\n";
   Task_LogString( entering, sizeof( entering ) - 1 );
-  register uint32_t load asm ( "r0" ) = 0; // RMRun
-  register char const *module asm ( "r1" ) = DEFAULT_LANGUAGE;
+  register uint32_t enter asm ( "r0" ) = 0; // RMRun
+  register char const *module asm ( "r1" ) = "System:Modules."DEFAULT_LANGUAGE;
   register error_block *error asm ( "r0" );
 
-  asm ( "svc %[swi]"
+  asm volatile ( "svc %[swi]"
     "\n  movvc r0, #0"
     : "=r" (error)
-    : [swi] "i" (OS_Module), "r" (load), "r" (module)
+    : [swi] "i" (OS_Module), "r" (enter), "r" (module)
     : "cc", "memory" );
 
   for (;;) { asm ( "udf 8" ); Task_Sleep( 1000000 ); }

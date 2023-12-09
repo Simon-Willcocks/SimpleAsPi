@@ -50,6 +50,10 @@ typedef struct {
   OSTask *runnable;
   OSTask *sleeping;
   OSTask *blocked;      // Claiming a lock
+  OSTask *moving;       // List of tasks wanting to run on a specific core
+                        // This list should almost always be empty and always
+                        // be short.
+
 
   OSTaskSlot *first;
 
@@ -59,10 +63,6 @@ typedef struct {
   OSPipe *pipe_pool;
 
   uint32_t number_of_cores;
-  OSTask *moving;       // List of tasks wanting to run on a specific core
-                        // This list should almost always be empty and always
-                        // be short.
-
   mmu_page *last_global_device;
 
   uint32_t queues_lock;
