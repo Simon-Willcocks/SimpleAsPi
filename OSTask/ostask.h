@@ -56,17 +56,29 @@ void interrupting_privileged_code( OSTask *task );
 typedef struct OSTaskSlot OSTaskSlot;
 typedef struct OSTask OSTask;
 
+#ifndef TASK_HANDLE_MAGIC
+#define TASK_HANDLE_MAGIC 0x4b534154
+#endif
+
 static inline uint32_t ostask_handle( OSTask *task )
 {
   if (task == 0) return 0;
-  return 0x4b534154 ^ (uint32_t) task;
+  return TASK_HANDLE_MAGIC ^ (uint32_t) task;
 }
 
 static inline OSTask *ostask_from_handle( uint32_t h )
 {
   if (h == 0) return 0;
-  return (OSTask *) (0x4b534154 ^ h);
+  return (OSTask *) (TASK_HANDLE_MAGIC ^ h);
 }
+
+#ifndef QUEUE_HANDLE_MAGIC
+#define QUEUE_HANDLE_MAGIC 0x55455551
+#endif
+
+#if 0 == (QUEUE_HANDLE_MAGIC & 1)
+#error "QUEUE_HANDLE_MAGIC must be odd!"
+#endif
 
 static inline OSQueue *queue_from_handle( uint32_t handle )
 {

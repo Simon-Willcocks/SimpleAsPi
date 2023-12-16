@@ -225,7 +225,7 @@ void Task_LogString( char const *string, uint32_t length )
     : "lr", "cc", "memory" );
 }
 
-static inline
+static inline __attribute__(( optimize( "Os" ) ))
 void Task_LogSmallNumber( uint32_t number )
 {
   // FIXME: This is very chunky, maybe use OS_Convert...

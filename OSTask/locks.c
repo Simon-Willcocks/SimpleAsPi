@@ -42,8 +42,6 @@ typedef union {
 
 OSTask *TaskOpLockClaim( svc_registers *regs )
 {
-  sanity_check();
-
   // TODO check valid address for task (and move the task to a
   // "sin bin" - it's to big an error to ignore).
   uint32_t *lock = (void *) regs->r[0];
@@ -63,6 +61,16 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
 
   if (old.raw == 0) {
     regs->r[0] = 0; // boolean result - not already owner.
+#ifdef DEBUG__LOG_OS_LOCKS
+Task_LogString( "New owner of lock ", 0 );
+Task_LogHex( (uint32_t) lock );
+Task_LogString( " is ", 0 );
+Task_LogHex( (uint32_t) running );
+Task_LogString( " on core ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogNewLine();
+#endif
+
     return 0;
   }
   else if ((~1 & old.raw) == handle) {
@@ -90,6 +98,20 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
     workspace.ostask.running = next;
     dll_detach_OSTask( running );
 
+    assert( running->regs.r[0] == (uint32_t) lock );
+
+#ifdef DEBUG__LOG_OS_LOCKS
+Task_LogString( "Blocked task ", 0 );
+Task_LogHex( (uint32_t) running );
+Task_LogString( " at lock ", 0 );
+Task_LogHex( (uint32_t) lock );
+Task_LogString( " value ", 0 );
+Task_LogHex( *lock );
+Task_LogString( " on core ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogNewLine();
+#endif
+
     dll_attach_OSTask( running, &shared.ostask.blocked );
     // Put at tail so FIFO
     shared.ostask.blocked = shared.ostask.blocked->next;
@@ -104,10 +126,17 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
   }
   else {
     // We got the lock after all
+#ifdef DEBUG__LOG_OS_LOCKS
+Task_LogString( "New owner of lock ", 0 );
+Task_LogHex( (uint32_t) lock );
+Task_LogString( " is ", 0 );
+Task_LogHex( (uint32_t) running );
+Task_LogString( " on core ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogNewLine();
+#endif
     next = 0;
   }
-
-  sanity_check();
 
   release_ostask();
 
@@ -116,8 +145,6 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
 
 OSTask *TaskOpLockRelease( svc_registers *regs )
 {
-  sanity_check();
-
   // TODO check valid address for task
   uint32_t r0 = regs->r[0];
   uint32_t *lock = (void *) r0;
@@ -129,6 +156,16 @@ OSTask *TaskOpLockRelease( svc_registers *regs )
 
   bool reclaimed = lock_ostask();
   assert( !reclaimed );
+
+#ifdef DEBUG__LOG_OS_LOCKS
+Task_LogString( "Releasing lock ", 0 );
+Task_LogHex( r0 );
+Task_LogString( " value ", 0 );
+Task_LogHex( *lock );
+Task_LogString( " on core ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogNewLine();
+#endif
 
   OSTask *resume = 0;
   OSTask *t = shared.ostask.blocked;
@@ -146,10 +183,10 @@ OSTask *TaskOpLockRelease( svc_registers *regs )
 
     do {
       if (t->regs.r[0] == r0
-       && (!ignore_slots && t->slot == slot)) {
+       && (ignore_slots || t->slot == slot)) {
         resume = t;
       }
-      t = t->next;
+      t = t->next; // Whether or not we matched...
     } while (resume == 0 && t != shared.ostask.blocked);
   }
 
@@ -160,7 +197,7 @@ OSTask *TaskOpLockRelease( svc_registers *regs )
       shared.ostask.blocked = 0;
     }
     else {
-      shared.ostask.blocked = t; // = resume->next;
+      shared.ostask.blocked = t;
       dll_detach_OSTask( resume );
 
       do {
@@ -174,18 +211,28 @@ OSTask *TaskOpLockRelease( svc_registers *regs )
     assert( ostask_handle( resume ) == resume->regs.r[1] );
 
     OSTaskLock new_owner = { .raw = resume->regs.r[1] };
-    if (still_waiting) new_owner.wanted = 1;
+    if (still_waiting) {
+      new_owner.wanted = 1;
+    }
+
+#ifdef DEBUG__LOG_OS_LOCKS
+Task_LogString( "Task taking over: ", 0 );
+Task_LogHex( new_owner.raw );
+Task_LogNewLine();
+#endif
 
     *lock = new_owner.raw;
 
-    mpsafe_insert_OSTask_at_head( &shared.ostask.runnable, resume );
+    mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, resume );
     resume->regs.r[0] = 0; // boolean result - not already owner.
   }
   else {
+#ifdef DEBUG__LOG_OS_LOCKS
+Task_LogString( "No waiting task", 0 );
+Task_LogNewLine();
+#endif
     *lock = 0;
   }
-
-  sanity_check();
 
   release_ostask();
 

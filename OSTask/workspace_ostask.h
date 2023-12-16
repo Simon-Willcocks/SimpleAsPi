@@ -40,6 +40,10 @@ typedef struct {
   struct {
     uint32_t stack[128];
   } abt_stack;
+
+#ifdef DEBUG__SEQUENCE_LOG_ENTRIES
+  bool no_index;
+#endif
 } workspace_ostask;
 
 typedef struct {
@@ -54,7 +58,6 @@ typedef struct {
                         // This list should almost always be empty and always
                         // be short.
 
-
   OSTaskSlot *first;
 
   OSTask *task_pool;
@@ -63,8 +66,10 @@ typedef struct {
   OSPipe *pipe_pool;
 
   uint32_t number_of_cores;
-  mmu_page *last_global_device;
 
   uint32_t queues_lock;
+#ifdef DEBUG__SEQUENCE_LOG_ENTRIES
+  uint32_t log_index;
+#endif
 } shared_ostask;
 

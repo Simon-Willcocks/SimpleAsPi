@@ -83,9 +83,6 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   {
     shared.ostask.number_of_cores = number_of_cores();
 
-    extern mmu_page global_devices_top;
-    shared.ostask.last_global_device = &global_devices_top;
-
     extern uint8_t top_of_boot_RAM;
     extern uint8_t top_of_minimum_RAM;
 
@@ -496,6 +493,28 @@ OSTask *IdleTaskYield( svc_registers *regs )
     if (resume == 0) {
       // Pull from general runnable list
       resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
+
+      if (resume != 0) {
+#ifdef DEBUG__LOG_OS_TASKS
+        Task_LogString( "Running ", 0 );
+        if (resume == workspace.ostask.idle)
+          Task_LogString( "idle task ", 0 );
+        Task_LogHex( (uint32_t) resume );
+        Task_LogString( " on core ", 0 );
+        Task_LogSmallNumber( workspace.core );
+        Task_LogNewLine();
+#endif
+      }
+    }
+    else {
+#ifdef DEBUG__LOG_OS_TASKS
+      Task_LogString( "Picked up ", 0 );
+      Task_LogHex( (uint32_t) resume );
+      Task_LogString( " for core ", 0 );
+      Task_LogSmallNumber( workspace.core );
+      Task_LogNewLine();
+#endif
+      assert( resume->regs.r[0] == workspace.core );
     }
   }
 
@@ -519,6 +538,18 @@ OSTask *TaskOpYield( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
 
+#ifdef DEBUG__LOG_OS_TASKS
+if (running == workspace.ostask.idle && resume != running) {
+Task_LogString( "Yielding ", 0 );
+if (running == workspace.ostask.idle)
+  Task_LogString( "idle task ", 0 );
+Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogString( " from ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogNewLine();
+}
+#endif
+
   if (running == workspace.ostask.idle) {
     resume = IdleTaskYield( regs );
   }
@@ -537,6 +568,14 @@ OSTask *TaskOpYield( svc_registers *regs )
 OSTask *TaskOpSleep( svc_registers *regs )
 {
   if (regs->r[0] == 0) return TaskOpYield( regs );
+
+#ifdef DEBUG__LOG_OS_TASKS
+Task_LogString( "Sleeping ", 0 );
+Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogString( " from ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogNewLine();
+#endif
 
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
@@ -678,6 +717,7 @@ OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
   uint32_t core = regs->r[0];
 
+#ifdef DEBUG__LOG_OS_TASKS
 Task_LogString( "Switch ", 0 );
 Task_LogHex( (uint32_t) workspace.ostask.running );
 Task_LogString( " from ", 0 );
@@ -685,6 +725,7 @@ Task_LogSmallNumber( workspace.core );
 Task_LogString( " to ", 0 );
 Task_LogSmallNumber( core );
 Task_LogNewLine();
+#endif
 
   if (core == workspace.core) return 0; // Optimisation!
 
@@ -746,8 +787,6 @@ OSTask *ostask_svc( svc_registers *regs, int number )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;
-
-  sanity_check();
 
   if (running->next == running
    && running != workspace.ostask.idle) PANIC;
@@ -836,7 +875,7 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     {
       bool reclaimed = core_claim_lock( &shared.ostask.pipes_lock,
                                         workspace.core+1 );
-      if (reclaimed) PANIC; // I can't imagine a recursion situation
+      assert( !reclaimed ); // I can't imagine a recursion situation
 
       if (number == OSTask_PipeCreate) {
         resume = PipeCreate( regs );
@@ -847,10 +886,7 @@ OSTask *ostask_svc( svc_registers *regs, int number )
           resume = Error_InvalidPipeHandle( regs );
         }
         else {
-          sanity_check();
-
           switch (number) {
-          case OSTask_PipeCreate:
           case OSTask_PipeWaitForSpace:
             resume = PipeWaitForSpace( regs, pipe ); break;
           case OSTask_PipeSpaceFilled:
@@ -920,8 +956,6 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     break;
   default: asm ( "bkpt 0xffff" );
   }
-
-  sanity_check();
 
   if (resume != 0 && resume != workspace.ostask.running) PANIC;
 
@@ -1157,18 +1191,4 @@ static void setup_processor_vectors()
   asm ( "msr sp_abt, %[stack]" : : [stack] "r" ((&(workspace.ostask.abt_stack)) + 1) );
   asm ( "msr sp_irq, %[stack]" : : [stack] "r" ((&(workspace.ostask.irq_stack)) + 1) );
   asm ( "msr sp_fiq, %[stack]" : : [stack] "r" ((&(workspace.ostask.fiq_stack)) + 1) );
-}
-
-void __attribute__(( noinline )) sanity_check()
-{
-if ((workspace.ostask.idle->next == workspace.ostask.idle
-  || workspace.ostask.idle->prev == workspace.ostask.idle)
- && (workspace.ostask.idle->next != workspace.ostask.idle
-  || workspace.ostask.idle->prev != workspace.ostask.idle)) {
-  asm ( "bkpt 1" );
-}
-OSTask *t = workspace.ostask.running;
-int max = 10;
-while (t->next != workspace.ostask.idle) { t = t->next; if (--max == 0) asm ( "bkpt 2" ); }
-while (t->prev != workspace.ostask.idle) { t = t->prev; if (--max == 0) asm ( "bkpt 3" ); }
 }

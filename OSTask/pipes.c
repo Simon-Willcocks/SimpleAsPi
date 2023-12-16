@@ -413,7 +413,6 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
   else {
     pipe->sender_waiting_for = amount;
 
-    regs->r[1] = 0x77777777;
     save_task_state( regs );
     workspace.ostask.running = next;
 
@@ -548,7 +547,6 @@ OSTask *PipeNoMoreData( svc_registers *regs, OSPipe *pipe )
 
 OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 {
-sanity_check();
   uint32_t amount = regs->r[1];
   // TODO validation
 
@@ -585,21 +583,16 @@ sanity_check();
   else {
     pipe->receiver_waiting_for = amount;
 
-sanity_check();
-    regs->r[2] = 0x77777777;
     save_task_state( regs );
     workspace.ostask.running = next;
 
     if (workspace.ostask.running == running) PANIC;
 
-sanity_check();
     // Blocked, waiting for data.
     dll_detach_OSTask( running );
-sanity_check();
     return next;
   }
 
-sanity_check();
   return 0;
 }
 
@@ -713,6 +706,17 @@ OSTask *TaskOpLogString( svc_registers *regs )
   char const *string = (void*) regs->r[0];
   uint32_t length = regs->r[1];
 
+#ifdef DEBUG__SEQUENCE_LOG_ENTRIES
+  uint32_t index;
+  if (!workspace.ostask.no_index) {
+    uint32_t *p = &shared.ostask.log_index;
+    do {
+      index = *p;
+    } while (index != change_word_if_equal( p, index, index + 1 ));
+    length += 5; // Extra space
+  }
+#endif
+
   OSPipe *pipe = workspace.ostask.log_pipe;
 
   // Never blocks, that could lock the kernel!
@@ -723,9 +727,28 @@ OSTask *TaskOpLogString( svc_registers *regs )
 
   char *dest = (void*) write_location( pipe );
 
+#ifdef DEBUG__SEQUENCE_LOG_ENTRIES
+  if (!workspace.ostask.no_index) {
+    // Octal!
+    dest[0] = '0' + (7 & (index >> 9));
+    dest[1] = '0' + (7 & (index >> 6));
+    dest[2] = '0' + (7 & (index >> 3));
+    dest[3] = '0' + (7 & (index >> 0));
+    dest[4] = ' ';
+    length -= 5;
+    dest += 5;
+  }
+#endif
+
   for (int i = 0; i < length; i++) {
     dest[i] = string[i];
   }
+
+#ifdef DEBUG__SEQUENCE_LOG_ENTRIES
+  if (!workspace.ostask.no_index)
+    length += 5;
+  workspace.ostask.no_index = string[length-1] != '\n';
+#endif
 
   // PipeSpaceFilled only looks at the given length, but fills in
   // the caller's idea of the state of the pipe, which we're not
