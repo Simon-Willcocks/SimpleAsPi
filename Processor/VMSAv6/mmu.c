@@ -378,21 +378,19 @@ void map_memory( memory_mapping const *mapping )
    && virt.section_offset == 0
    && (mapping->pages & 0xff) == 0) {
     // Sections, at least, no need to split
-    l1tt_entry l1;
+    l1tt_entry entry;
 
     switch (mapping->type) {
-    case CK_MemoryRWX: l1 = rwx_section; break;
-    case CK_MemoryRW: l1 = rw_section; break;
-    case CK_MemoryRX: l1 = rx_section; break;
-    case CK_MemoryR: l1 = r_section; break;
-    case CK_Device: l1 = dev_section; break;
+    case CK_MemoryRWX: entry.raw = rwx_section.raw | cached_section.raw; break;
+    case CK_MemoryRW: entry.raw = rw_section.raw | cached_section.raw; break;
+    case CK_MemoryRX: entry.raw = rx_section.raw | cached_section.raw; break;
+    case CK_MemoryR: entry.raw = r_section.raw | cached_section.raw; break;
+    case CK_Device: entry = dev_section; break;
     default:
       PANIC;
     }
 
     uint32_t sections = mapping->pages >> 8;
-
-    l1tt_entry entry = { .raw = l1.raw | cached_section.raw };
 
     if (mapping->all_cores)
       entry.section.S = 1;
@@ -442,10 +440,10 @@ void map_memory( memory_mapping const *mapping )
     l2tt_entry entry;
 
     switch (mapping->type) {
-    case CK_MemoryRWX: entry = rwx_page; break;
-    case CK_MemoryRW: entry = rw_page; break;
-    case CK_MemoryRX: entry = rx_page; break;
-    case CK_MemoryR: entry = r_page; break;
+    case CK_MemoryRWX: entry.raw = rwx_page.raw | cached_page.raw; break;
+    case CK_MemoryRW: entry.raw = rw_page.raw | cached_page.raw; break;
+    case CK_MemoryRX: entry.raw = rx_page.raw | cached_page.raw; break;
+    case CK_MemoryR: entry.raw = r_page.raw | cached_page.raw; break;
     case CK_Device: entry = dev_page; break;
     default:
       PANIC;
