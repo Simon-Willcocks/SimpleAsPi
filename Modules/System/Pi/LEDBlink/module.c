@@ -28,7 +28,7 @@ const unsigned module_flags = 1;
 
 #include "module.h"
 
-NO_start;
+//NO_start;
 //NO_init;
 NO_finalise;
 NO_service_call;
@@ -43,7 +43,9 @@ NO_messages_file;
 const char title[] = "LEGBlink";
 const char help[] = "BCM Blink LED\t0.01 (" CREATION_DATE ")";
 
-GPIO volatile *const gpio = (void*) 0x7000;
+// For consistency, this should be 7000 (work our way down from 0x8000,
+// a page at a time), but for debugging...
+GPIO volatile *const gpio = (void*) 0x6000;
 
 static inline void push_writes_to_device()
 {
@@ -66,8 +68,10 @@ void blinker( uint32_t handle, uint32_t pin,
               uint32_t on_time, uint32_t off_time )
 {
   for (;;) {
+    Task_LogString( "ON\n", 0 );
     led_on( pin );
     Task_Sleep( on_time );
+    Task_LogString( "OFF\n", 0 );
     led_off( pin );
     Task_Sleep( off_time );
   }
@@ -104,12 +108,16 @@ void start_blinker( svc_registers *regs )
 
 void led_manager( uint32_t handle, uint32_t queue )
 {
+  Task_LogString( "led_manager", 0 );
+
   uint32_t gpio_page = 0x3f200000 >> 12;
   Task_MapDevicePages( (uint32_t) gpio, gpio_page, 1 );
 
   set_state( gpio, 22, GPIO_Output );
   push_writes_to_device();
-  led_on( 22 ); // Green
+  led_off( 22 ); // Green
+  Task_LogString( "Green off\n", 0 );
+
   for (;;) {
     queued_task client = Task_QueueWait( queue );
 
@@ -117,7 +125,9 @@ void led_manager( uint32_t handle, uint32_t queue )
 
     Task_GetRegisters( client.task_handle, &regs );
 
+    Task_LogString( "Start Blinking\n", 0 );
     start_blinker( &regs );
+    Task_LogString( "Started Blinking\n", 0 );
 
     Task_ReleaseTask( client.task_handle, 0 );
   }
@@ -172,4 +182,39 @@ void *memcpy(void *d, void *s, uint32_t n)
   return d;
 }
 
+void go()
+{
+  register uint32_t pin asm( "r0" ) = 27;
+  register uint32_t on asm( "r1" ) = 666;
+  register uint32_t off asm( "r2" ) = 334;
+  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
 
+  for (;;) Task_Sleep( 10000 );
+
+  uint32_t gpio_page = 0x3f200000 >> 12;
+  Task_MapDevicePages( (uint32_t) gpio, gpio_page, 1 );
+  set_state( gpio, 22, GPIO_Output );
+  push_writes_to_device();
+  for (;;) {
+    led_off( 22 );
+    //for (int i = 0; i < 0x1000000; i++) asm ( "" );
+    Task_Sleep( 100 );
+    led_on( 22 );
+    //for (int i = 0; i < 0x1000000; i++) asm ( "" );
+    Task_Sleep( 100 );
+  }
+}
+
+void start()
+{
+  // Running in usr32 mode, no stack
+  // led_manager may not yet have started
+  asm ( "mov r0, #0x9000"
+    "\n  svc %[settop]"
+    "\n  mov sp, r0"
+    :
+    : [settop] "i" (OSTask_AppMemoryTop)
+    : "r0" );
+
+  go();
+}

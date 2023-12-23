@@ -59,7 +59,7 @@ static inline void wait_for_event()
 
 uint32_t number_of_cores();
 
-#define PANIC do { asm ( "udf %[line]\n wfi" : : [line] "i" (__LINE__) ); } while (true)
+#define PANIC do { asm ( "bkpt %[line]\n wfi" : : [line] "i" (__LINE__) ); for (;;) {} } while (true)
 
 // TODO:
 // push writes to RAM (va range)

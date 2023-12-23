@@ -108,7 +108,10 @@ bool ask_slot( uint32_t va, uint32_t fault )
         && i < number_of( slot->app_mem )) {
       i++;
     }
-    if (slot->app_mem[i].pages == 0) return false;
+    if (slot->app_mem[i].pages == 0) {
+      PANIC;
+      return false;
+    }
     block = &slot->app_mem[i];
   }
   else {
@@ -122,7 +125,9 @@ bool ask_slot( uint32_t va, uint32_t fault )
 
       i++;
     }
-    if (slot->pipe_mem[i].pages == 0) return false;
+    if (slot->pipe_mem[i].pages == 0) {
+      return false;
+    }
     block = &slot->pipe_mem[i];
   }
 

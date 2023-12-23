@@ -82,6 +82,7 @@ static inline T *mpsafe_manipulate_##T##_list_returning_item( T **head, T *(*upd
       /* Replaced head pointer with 1, can work on list safely. (May be empty!) */ \
       T *result = update( &head_item, p ); \
       *head = head_item; /* Release list */ \
+      ensure_changes_observable(); \
       signal_event(); return result; \
     } \
   } \

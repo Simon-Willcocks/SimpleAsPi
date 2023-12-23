@@ -348,8 +348,8 @@ static l1tt_entry const r_section = { .section = { .type2 = 2, .XN = 1, .read_on
 static l2tt_entry const r_page = { .small_page = 1, .XN = 1, .read_only = 1 };
 
 // Device-nGnRnE, uncached
-static l1tt_entry const dev_section = { .section = { .type2 = 2, .XN = 1, .read_only = 0, .TEX = 0, .B = 0, .C = 0 } };
-static l2tt_entry const dev_page = { .small_page = 1, .XN = 1, .read_only = 0, .TEX = 0, .B = 0, .C = 0 };
+static l1tt_entry const dev_section = { .section = { .type2 = 2, .XN = 1 } };
+static l2tt_entry const dev_page = { .small_page = 1, .XN = 1 };
 
 void map_memory( memory_mapping const *mapping )
 {
@@ -466,7 +466,16 @@ void map_memory( memory_mapping const *mapping )
     entry.AF = 1;
     entry.page_base = phys.page_base;
 
+    if (CK_Device == mapping->type && mapping->pages > 1) PANIC;
+
     for (int i = 0; i < mapping->pages; i++) {
+#ifndef DEBUG__BREAKME
+// Without this line, this condition is sometimes true, with it, it isn't!
+if ((entry.raw & 0xfff) == 0x357) asm ( "bkpt 0" : : "r" (entry.raw), "r" (mapping->base_page), "r" (mapping->pages), "r" (mapping->va), "r" (mapping->type), "r" (mapping->map_specific + (mapping->all_cores << 8) + (mapping->usr32_access << 12)) );
+#else
+// This line does not have the same effect! Same as no line at all
+if ((entry.raw & 0xfff) == 0x357) PANIC;
+#endif
       table->entry[virt.page] = entry;
       if (global != 0)
         global->entry[virt.page] = entry;
@@ -754,7 +763,7 @@ static memory_fault_handler find_handler( uint32_t fa )
 void __attribute__(( naked )) prefetch_handler()
 {
   // Also includes Breakpoints.
-  PANIC;
+  for (;;) { asm ( "wfi" ); }
 }
 
 static bool __attribute__(( noinline )) handle_data_abort()
@@ -789,7 +798,9 @@ void __attribute__(( naked )) data_abort_handler()
       "\n  push { "C_CLOBBERED" }"
       );
 
-  if (!handle_data_abort()) PANIC;
+  if (!handle_data_abort()) {
+    PANIC;
+  }
 
   asm volatile ( "pop { "C_CLOBBERED" }"
     "\n  rfeia sp! // Restore execution and SPSR" );

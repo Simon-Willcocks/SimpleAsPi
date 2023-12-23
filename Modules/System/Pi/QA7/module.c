@@ -205,10 +205,49 @@ void start_ticker()
 
 //////////////////////////////////////////////////
 
+#include "bcm_gpio.h"
+
+GPIO volatile *const gpio = (void*) 0x2000;
+
+static inline void push_writes_to_device()
+{
+  asm ( "dsb" );
+}
+
+static inline void led_on( uint32_t pin )
+{
+  gpio->gpset[pin / 32] = 1 << (pin & 31);
+  push_writes_to_device();
+}
+
+static inline void led_off( uint32_t pin )
+{
+  gpio->gpclr[pin / 32] = 1 << (pin & 31);
+  push_writes_to_device();
+}
+
+void leds( int pin )
+{
+return;
+  for (int n = 0; n < 10; n++) {
+    led_off( pin );
+    for (int i = 0; i < 0x1000000; i++) asm ( "" );
+    led_on( pin );
+    for (int i = 0; i < 0x1000000; i++) asm ( "" );
+  }
+}
+
 void irq_manager( uint32_t handle, workspace *ws )
 {
   uint32_t qa7_page = 0x40000000 >> 12;
   Task_MapDevicePages( (uint32_t) qa7, qa7_page, 1 );
+
+  Task_MapDevicePages( (uint32_t) gpio, 0x3f200, 1 );
+
+  set_state( gpio, 22, GPIO_Output );
+  set_state( gpio, 27, GPIO_Output );
+  push_writes_to_device();
+leds( 27 );
 
   // One IRQ task per core
 #ifdef DEBUG__SINGLE_CORE
@@ -269,6 +308,7 @@ void irq_manager( uint32_t handle, workspace *ws )
     if (handle != ws->tasks[i].core_irq_task) asm ( "bkpt 10" );
   }
 
+leds( 22 );
   Task_EnablingInterrupts();
 
   start_ticker();

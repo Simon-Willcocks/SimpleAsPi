@@ -62,5 +62,7 @@ static inline void set_state( GPIO volatile *g, int bit, int state )
   }
   uint32_t shift = bit * 3;
   uint32_t mask = 7 << shift;
-  g->gpfsel[index] = (g->gpfsel[index] & ~mask) | (state << shift);
+  uint32_t old = g->gpfsel[index];
+  uint32_t new = (old & ~mask) | (state << shift);
+  if (old != new) g->gpfsel[index] = new;
 }

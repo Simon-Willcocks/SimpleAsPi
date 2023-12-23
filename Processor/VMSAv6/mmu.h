@@ -40,9 +40,9 @@ typedef struct __attribute__(( packed )) {
     void    *vap;
   };
   uint32_t type:8;
-  bool     map_specific:1;      // Gets swapped in and out
-  bool     all_cores:1;         // Same physical memory on all cores
-  bool     usr32_access:1;      // Unprivileged access allowed
+  uint32_t map_specific:1;      // Gets swapped in and out
+  uint32_t all_cores:1;         // Same physical memory on all cores
+  uint32_t usr32_access:1;      // Unprivileged access allowed
   uint32_t res:20;
 } memory_mapping;
 

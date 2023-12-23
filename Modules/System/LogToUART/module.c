@@ -113,7 +113,7 @@ void transfer_to_output( uint32_t me, PipeSpace data, workspace *ws, int core )
 void core_debug_task( uint32_t handle, int core, workspace *ws, uint32_t pipe )
 {
   Task_LogString( "Waiting for log ", 16 );
-  asm ( "udf 1" );
+
   Task_LogHex( pipe );
   Task_LogString( "\n", 1 );
   for (;;) {
@@ -159,7 +159,6 @@ void start_log( uint32_t handle, workspace *ws )
 #else
   core_info cores = Task_Cores();
 
-  if (cores.total != 4) asm ( "bkpt 9" );
   for (int i = 0; i < cores.total; i++) {
 #endif
 
