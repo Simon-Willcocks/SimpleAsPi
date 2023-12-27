@@ -105,6 +105,7 @@ typedef union {
   };
   struct {
     uint32_t section_offset:20;
+    // uint32_t section:12; above
   };
 } arm32_ptr;
 
@@ -495,6 +496,46 @@ if ((entry.raw & 0xfff) == 0x357) PANIC;
   push_writes_to_cache();
 
   if (!reclaimed) core_release_lock( &shared.mmu.lock );
+}
+
+memory_pages walk_global_tree( uint32_t va )
+{
+  arm32_ptr virt = { .raw = va };
+  memory_pages result = { .number_of_pages = 0 };
+
+  l1tt_entry l1 = global_translation_table.entry[virt.section];
+
+  if (l1.type == 0) {
+    // No memory mapped at this virtual address
+  }
+  else if (l1.type == 1) {
+    l2tt *table = mapped_table( l1.table );
+    l2tt_entry l2 = table->entry[virt.page];
+
+    if (l2.type == 0) {
+      // No memory mapped at this virtual address
+    }
+    else if (l2.type == 1) {
+      PANIC; // Large page
+    }
+    else { // Small page
+      // TODO: look for contiguous pages leading up to this?
+      // TODO first: look for contiguous pages after this.
+      result.number_of_pages = 1;
+      result.virtual_base = virt.page_base;
+      result.base_page = l2.page_base;
+    }
+  }
+  else {
+    // Section
+    // TODO: look for contiguous sections leading up to this?
+    // TODO first: look for contiguous sections after this.
+    result.number_of_pages = 256; // 1 MiB
+    result.virtual_base = virt.section << 20;
+    result.base_page = l1.section.base << 8;
+  }
+
+  return result;
 }
 
 // These routines can update the tables directly, others have to call

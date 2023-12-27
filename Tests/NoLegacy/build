@@ -4,12 +4,12 @@
 SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:NoLegacy:Modules
 # Modules to include (HAL chooses which ones to load.)
 #MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink:System/LogToUART
-MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink
 
 echo Modules: ${MODULES//:/ }
 
 #INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0'
-INITIAL_MODULES='QA7\0LEDBlink\0'
+INITIAL_MODULES='QA7\0GPUMailbox\0LEDBlink\0'
 #DEFAULT_LANGUAGE=LogToUART
 DEFAULT_LANGUAGE=LEDBlink
 

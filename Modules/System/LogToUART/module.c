@@ -142,7 +142,7 @@ void start_log( uint32_t handle, workspace *ws )
 {
   // This location should be passed to the final driver module by the HAL
   uint32_t uart_page = 0x3f201000 >> 12;
-  Task_MapDevicePages( (uint32_t) uart, uart_page, 1 );
+  Task_MapDevicePages( uart, uart_page, 1 );
 
   ws->output_pipe = PipeOp_CreateForTransfer( 4096 );
 

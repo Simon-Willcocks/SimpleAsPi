@@ -202,6 +202,16 @@ void set_way_no_CCSIDR2()
   asm ( "dsb sy" );
 }
 
+void push_writes_out_of_cache( uint32_t va, uint32_t size )
+{
+  set_way_no_CCSIDR2();
+}
+
+void RAM_may_have_changed( uint32_t va, uint32_t size )
+{
+  set_way_no_CCSIDR2();
+}
+
 static void Cortex_A7_set_smp_mode()
 {
   uint32_t reg;

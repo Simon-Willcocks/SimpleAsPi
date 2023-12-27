@@ -240,9 +240,9 @@ return;
 void irq_manager( uint32_t handle, workspace *ws )
 {
   uint32_t qa7_page = 0x40000000 >> 12;
-  Task_MapDevicePages( (uint32_t) qa7, qa7_page, 1 );
+  Task_MapDevicePages( qa7, qa7_page, 1 );
 
-  Task_MapDevicePages( (uint32_t) gpio, 0x3f200, 1 );
+  Task_MapDevicePages( gpio, 0x3f200, 1 );
 
   set_state( gpio, 22, GPIO_Output );
   set_state( gpio, 27, GPIO_Output );

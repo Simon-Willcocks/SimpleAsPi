@@ -65,19 +65,9 @@ uint32_t number_of_cores();
 // push writes to RAM (va range)
 // RAM may have changed (va range) - invalidate cache
 
-static inline
-void push_writes_out_of_cache( uint32_t va, uint32_t size )
-{
-  // Clean cache
-  PANIC;
-}
+void push_writes_out_of_cache( uint32_t va, uint32_t size );
 
-static inline
-void RAM_may_have_changed( uint32_t va, uint32_t size )
-{
-  // Invalidate cache
-  PANIC;
-}
+void RAM_may_have_changed( uint32_t va, uint32_t size );
 
 // Multi-processing primitives. No awareness of OSTasks.
 

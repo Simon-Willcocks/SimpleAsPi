@@ -43,6 +43,8 @@ enum {
   , OSTask_EnablingInterrupts           // Disable IRQs while I get
   , OSTask_WaitForInterrupt             // ready to wait.
 
+  , OSTask_PhysicalFromVirtual          // For device drivers
+                                        // (Also flushes the cache)
   , OSTask_SwitchToCore                 // Use sparingly!
   , OSTask_RunPrivileged                // Don't use at all!
   , OSTask_Tick                         // For HAL module use only
@@ -147,9 +149,9 @@ void Task_RegisterSWIHandlers( swi_handlers const *h )
 
 // Note: base page is physical address >> 12
 static inline
-void *Task_MapDevicePages( uint32_t va, uint32_t base_page, uint32_t pages )
+void *Task_MapDevicePages( void volatile *va, uint32_t base_page, uint32_t pages )
 {
-  register uint32_t virt asm ( "r0" ) = va;
+  register void volatile *virt asm ( "r0" ) = va;
   register uint32_t page asm ( "r1" ) = base_page;
   register uint32_t number asm ( "r2" ) = pages;
 
@@ -779,6 +781,21 @@ static inline
 bool tasks_waiting_for( uint32_t *lock )
 {
   return (1 & *lock) != 0;
+}
+
+static inline
+uint32_t Task_PhysicalFromVirtual( void *va, uint32_t length )
+{
+  register void *v asm( "r0" ) = va;
+  register uint32_t l asm( "r1" ) = length;
+  register uint32_t p asm( "r0" );
+  asm volatile ( "svc %[swi]"
+      : "=r" (p)
+      : [swi] "i" (OSTask_PhysicalFromVirtual)
+      , "r" (v)
+      , "r" (l)
+      : "lr", "cc", "memory" );
+  return p;
 }
 
 // These two can probably have the "lr" clobber removed; they're only

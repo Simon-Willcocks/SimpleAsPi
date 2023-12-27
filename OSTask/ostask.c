@@ -713,6 +713,28 @@ OSTask *TaskOpRunPrivileged( svc_registers *regs )
   return 0;
 }
 
+app_memory_block block_containing( uint32_t va );
+
+OSTask *TaskOpPhysicalFromVirtual( svc_registers *regs )
+{
+  uint32_t va = regs->r[0];
+  uint32_t length = regs->r[1];
+
+  app_memory_block block = block_containing( va );
+
+  if (block.pages == 0) asm ( "bkpt 3" : : "r" (block.pages) );
+
+  // TODO return error, or sin bin.
+  if (block.pages == 0) PANIC;
+  if (va - (block.va_page << 12) + length > (block.pages << 12)) PANIC;
+
+  regs->r[0] = (block.page_base << 12) + va - (block.va_page << 12);
+
+  push_writes_out_of_cache( va, length );
+
+  return 0;
+}
+
 OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
   uint32_t core = regs->r[0];
@@ -856,6 +878,9 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     break;
   case OSTask_RunPrivileged:
     resume = TaskOpRunPrivileged( regs );
+    break;
+  case OSTask_PhysicalFromVirtual:
+    resume = TaskOpPhysicalFromVirtual( regs );
     break;
   case OSTask_SwitchToCore:
     resume = TaskOpSwitchToCore( regs );

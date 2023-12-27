@@ -111,7 +111,7 @@ void led_manager( uint32_t handle, uint32_t queue )
   Task_LogString( "led_manager", 0 );
 
   uint32_t gpio_page = 0x3f200000 >> 12;
-  Task_MapDevicePages( (uint32_t) gpio, gpio_page, 1 );
+  Task_MapDevicePages( gpio, gpio_page, 1 );
 
   set_state( gpio, 22, GPIO_Output );
   push_writes_to_device();
@@ -192,7 +192,7 @@ void go()
   for (;;) Task_Sleep( 10000 );
 
   uint32_t gpio_page = 0x3f200000 >> 12;
-  Task_MapDevicePages( (uint32_t) gpio, gpio_page, 1 );
+  Task_MapDevicePages( gpio, gpio_page, 1 );
   set_state( gpio, 22, GPIO_Output );
   push_writes_to_device();
   for (;;) {

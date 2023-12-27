@@ -93,11 +93,16 @@ static bool in_range( uint32_t n, uint32_t low, uint32_t above )
 extern uint8_t app_memory_limit;
 static uint32_t const app_top = (uint32_t) &app_memory_limit;
 
-bool ask_slot( uint32_t va, uint32_t fault )
-{
-  OSTaskSlot *slot = workspace.ostask.running->slot;
+extern uint8_t pipes_base;
+static uint32_t const pipes_bottom = (uint32_t) &pipes_base;
+extern uint8_t pipes_top;
+static uint32_t const pipes_end = (uint32_t) &pipes_top;
 
-  app_memory_block *block = 0;
+app_memory_block block_containing( uint32_t va )
+{
+  app_memory_block result = { 0 }; // Zero length
+
+  OSTaskSlot *slot = workspace.ostask.running->slot;
 
   if (va < app_top) {
     int i = 0;
@@ -110,11 +115,10 @@ bool ask_slot( uint32_t va, uint32_t fault )
     }
     if (slot->app_mem[i].pages == 0) {
       PANIC;
-      return false;
     }
-    block = &slot->app_mem[i];
+    result = slot->app_mem[i];
   }
-  else {
+  else if (va >= pipes_bottom && va < pipes_end) {
     int i = 0;
 
     while (slot->pipe_mem[i].pages != 0
@@ -125,17 +129,31 @@ bool ask_slot( uint32_t va, uint32_t fault )
 
       i++;
     }
-    if (slot->pipe_mem[i].pages == 0) {
-      return false;
+    result = slot->pipe_mem[i];
+  }
+  else {
+    memory_pages global_area = walk_global_tree( va );
+
+    if (global_area.number_of_pages != 0) {
+      result.pages = global_area.number_of_pages;
+      if (0 != (0xfff & global_area.virtual_base)) PANIC;
+      result.va_page = global_area.virtual_base >> 12;
+      result.page_base = global_area.base_page;
     }
-    block = &slot->pipe_mem[i];
   }
 
+  return result;
+}
+
+bool ask_slot( uint32_t va, uint32_t fault )
+{
+  app_memory_block block = block_containing( va );
+
   memory_mapping map = {
-    .base_page = block->page_base,
-    .pages = block->pages,
-    .va = block->va_page << 12,
-    .type = (block->device) ? CK_Device : CK_MemoryRWX,
+    .base_page = block.page_base,
+    .pages = block.pages,
+    .va = block.va_page << 12,
+    .type = (block.device) ? CK_Device : CK_MemoryRWX,
     .map_specific = 1,
     .all_cores = 0,
     .usr32_access = 1 };

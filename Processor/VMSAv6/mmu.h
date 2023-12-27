@@ -106,3 +106,11 @@ void forget_current_map();
 // Suitable for jumping to on exceptions (provided by mmu):
 void __attribute__(( naked )) data_abort_handler();
 void __attribute__(( naked )) prefetch_handler();
+
+typedef struct {
+  uint32_t virtual_base;
+  uint32_t base_page;
+  uint32_t number_of_pages;
+} memory_pages;
+
+memory_pages walk_global_tree( uint32_t va );
