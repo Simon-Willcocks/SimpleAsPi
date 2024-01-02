@@ -176,7 +176,6 @@ void *memcpy(void *d, void *s, uint32_t n)
   return d;
 }
 
-// As yet unused...
 void set_way_no_CCSIDR2()
 {
   asm ( "dsb sy" );
@@ -184,10 +183,10 @@ void set_way_no_CCSIDR2()
   for (int level = 1; level <= 2; level++) {
     uint32_t size;
     asm ( "mcr p15, 2, %[level], c0, c0, 0" : : [level] "r" ((level-1) << 1) ); // CSSELR Selection Register.
-    asm ( "mrc p15, 1, %[size], c0, c0, 0" : [size] "=r" (size) ); // CSSIDR
+    asm ( "mrc p15, 1, %[size], c0, c0, 0" : [size] "=r" (size) ); // CCSIDR
     uint32_t line_size = ((size & 7)+4);
-    uint32_t ways = 1 + ((size & 0xff8) >> 3);
-    uint32_t sets = 1 + ((size & 0x7fff000) >> 13);
+    uint32_t ways = 1 + ((size & 0x1ff8) >> 3);
+    uint32_t sets = 1 + ((size & 0xfffe000) >> 13);
     int wayshift; // Number of bits to shift the way index by
     asm ( "clz %[ws], %[assoc]" : [ws] "=r" (wayshift) : [assoc] "r" (ways - 1) );
 
@@ -202,9 +201,117 @@ void set_way_no_CCSIDR2()
   asm ( "dsb sy" );
 }
 
+/*
+MRC p15, 1, R0, c0, c0, 1
+ANDS R3, R0, #0x07000000
+MOV R3, R3, LSR #23
+BEQ Finished
+MOV R10, #0
+Loop1
+ADD R2, R10, R10, LSR #1
+MOV R1, R0, LSR R2
+AND R1, R1, #7
+CMP R1, #2
+BLT Skip
+MCR p15, 2, R10, c0, c0, 0
+ISB
+MRC p15, 1, R1, c0, c0, 0
+AND R2, R1, #7
+ADD R2, R2, #4
+MOV R4, #0x3FF
+ANDS R4, R4, R1, LSR #3
+CLZ R5, R4
+MOV R9, R4
+Loop2
+MOV R7, #0x00007FFF
+ANDS R7, R7, R1, LSR #13
+Loop3
+ORR R11, R10, R9, LSL R5
+ORR R11, R11, R7, LSL R2
+MCR p15, 0, R11, c7, c10, 2
+SUBS R7, R7, #1
+BGE Loop3
+SUBS R9, R9, #1
+BGE Loop2
+Skip
+ADD R10, R10, #2
+CMP R3, R10
+DSB
+BGT Loop1
+Finished
+
+void DDI_0487c_a_4831()
+{
+  asm ( "dsb sy" );
+
+  uint32_t CLIDR;
+  asm ( "mrc p15, 1, %[CLIDR], c0, c0, 1" : [CLIDR] "=r" (CLIDR) );
+  int cache_level_value = (CLIDR & 0x07000000) >> 23;
+  // Strange, given LoC is bits [24:26]
+  if (cache_level_value != 0) {
+    for (int r10 = 0; r10 < cache_level_value; r10 += 2) {
+      enum { None, Instruction, Data, Separate, Unified } type;
+      type = ((CLIDR >> (3 * r10 / 2))  & 7);
+      switch (type) {
+      case None:
+      case Instruction: // No need to flush, read only
+        break;
+      case Data:
+      case Separate:
+      case Unified:
+        {
+          asm ( "mcr p15, 2, %[lvl2], c0, c0, 0"
+            "\n  isb"
+            :
+            : [lvl2] "r" (r10) );
+          union {
+            struct {
+              uint32_t size:3; // -4
+              uint32_t associativity:10; // -1
+              uint32_t num_sets:15; // -1
+              uint32_t res0:4;
+            };
+            uint32_t raw;
+          } CCSIDR;
+          asm ( "mrc p15, 1, %[CCSIDR], c0, c0, 0" 
+            : [CCSIDR] "=r" (CCSIDR.raw) );
+          int way_max = CCSIDR.associativity
+          int wayshift; // Number of bits to shift the way index by
+          asm ( "clz %[ws], %[assoc]"
+            : [ws] "=r" (wayshift)
+            : [assoc] "r" (ways - 1) );
+
+          for (int way = way_max; way >= 0; way--) {
+            for (int set = CCSIDR.num_sets; set >= 0; set--) {
+              uint32_t DCCSW = lvl2 | (set << (CCSIDR.size + 4)) | (way << (clz way_max));
+              asm ( "mcr p15, 0, %[DCCSW], c7, c10, 2"
+                :
+                : [DCCSW] "r" (DCCSW) );
+            }
+          }
+        }
+        break;
+      default: PANIC;
+      }
+      
+      asm ( "dsb sy" );
+    }
+  }
+}
+*/
+
 void push_writes_out_of_cache( uint32_t va, uint32_t size )
 {
-  set_way_no_CCSIDR2();
+  // TODO: larger sizes probably make a full clean quicker...
+
+  size += (va & 15);
+  va = va & ~15;
+
+  for (int i = va; i < va + size; i += 16) {
+    asm ( "mcr p15, 0, %[va], c7, c10, 1" : : [va] "r" (i) );
+  }
+
+  //set_way_no_CCSIDR2();
 }
 
 void RAM_may_have_changed( uint32_t va, uint32_t size )

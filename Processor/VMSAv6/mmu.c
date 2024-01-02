@@ -241,6 +241,9 @@ void clear_memory_region(
 {
   // Only affecting the local tables, with interrupts disabled.
 
+  // Any writes to currently mapped memory...
+  push_writes_to_cache();
+
   if (va_pages == 0) PANIC;
 
   arm32_ptr virt = { .raw = va_base };
@@ -851,12 +854,14 @@ void __attribute__(( naked )) data_abort_handler()
 
 void mmu_switch_map( uint32_t new_map )
 {
+  // CONTEXTIDR
   asm ( "mcr p15, 0, %[map], c13, c0, 1" : : [map] "r" (new_map) );
 }
 
 void forget_current_map()
 {
   uint32_t map;
+  // CONTEXTIDR
   asm ( "mrc p15, 0, %[map], c13, c0, 1" : [map] "=r" (map) );
   asm ( "mcr p15, 0, %[map], c8, c7, 2" : : [map] "r" (map) );
 }

@@ -190,7 +190,7 @@ void start_ticker()
   uint32_t core = cores.current;
 
   register void *start asm( "r0" ) = ticker;
-  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
   register uint32_t r1 asm( "r2" ) = core;
   register QA7 volatile *r2 asm( "r3" ) = qa7;
   asm ( "svc %[swi]"
@@ -250,13 +250,7 @@ void irq_manager( uint32_t handle, workspace *ws )
 leds( 27 );
 
   // One IRQ task per core
-#ifdef DEBUG__SINGLE_CORE
-  {
-    int i = 0;
-#else
   for (int i = 0; i < ws->cores.total; i++) {
-#endif
-
     uint32_t const stack_size = 256;
     uint8_t *stack = rma_claim( stack_size );
 
@@ -277,7 +271,7 @@ leds( 27 );
       , "r" (code) );
 
     register void *start asm( "r0" ) = core_irq_task;
-    register void *sp asm( "r1" ) = stack + stack_size;
+    register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
     register uint32_t r1 asm( "r2" ) = i;
     register workspace *r2 asm( "r3" ) = ws;
 
@@ -373,7 +367,7 @@ void __attribute__(( noinline )) c_init( workspace **private,
   uint8_t *stack = rma_claim( stack_size );
 
   register void *start asm( "r0" ) = irq_manager;
-  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
   register workspace *r1 asm( "r2" ) = ws;
   asm ( "svc %[swi]"
     :

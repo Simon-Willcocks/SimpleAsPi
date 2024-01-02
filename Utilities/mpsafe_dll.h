@@ -81,9 +81,11 @@ static inline T *mpsafe_manipulate_##T##_list_returning_item( T **head, T *(*upd
     else if (uhead_item == change_word_if_equal( (uint32_t*) head, uhead_item, 1 )) { \
       /* Replaced head pointer with 1, can work on list safely. (May be empty!) */ \
       T *result = update( &head_item, p ); \
+      ensure_changes_observable(); \
       *head = head_item; /* Release list */ \
       ensure_changes_observable(); \
-      signal_event(); return result; \
+      signal_event(); \
+      return result; \
     } \
   } \
   return 0; \

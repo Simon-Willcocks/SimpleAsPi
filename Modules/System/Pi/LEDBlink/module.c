@@ -89,7 +89,7 @@ void start_blinker( svc_registers *regs )
   push_writes_to_device();
 
   register void *start asm( "r0" ) = blinker;
-  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
   register uint32_t r1 asm( "r2" ) = pin;
   register uint32_t r2 asm( "r3" ) = on;
   register uint32_t r3 asm( "r4" ) = off;
@@ -113,10 +113,12 @@ void led_manager( uint32_t handle, uint32_t queue )
   uint32_t gpio_page = 0x3f200000 >> 12;
   Task_MapDevicePages( gpio, gpio_page, 1 );
 
+  /*
   set_state( gpio, 22, GPIO_Output );
   push_writes_to_device();
   led_off( 22 ); // Green
   Task_LogString( "Green off\n", 0 );
+  */
 
   for (;;) {
     queued_task client = Task_QueueWait( queue );
@@ -147,7 +149,7 @@ void __attribute__(( noinline )) c_init( workspace **private,
   uint8_t *stack = rma_claim( stack_size );
 
   register void *start asm( "r0" ) = led_manager;
-  register void *sp asm( "r1" ) = stack + stack_size;
+  register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
   register uint32_t r1 asm( "r2" ) = queue;
   asm ( "svc %[swi]"
     :
@@ -184,25 +186,12 @@ void *memcpy(void *d, void *s, uint32_t n)
 
 void go()
 {
-  register uint32_t pin asm( "r0" ) = 27;
-  register uint32_t on asm( "r1" ) = 666;
-  register uint32_t off asm( "r2" ) = 334;
+  register uint32_t pin asm( "r0" ) = 22; // 22 green 27 orange
+  register uint32_t on asm( "r1" ) = 200;
+  register uint32_t off asm( "r2" ) = 100;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
 
   for (;;) Task_Sleep( 10000 );
-
-  uint32_t gpio_page = 0x3f200000 >> 12;
-  Task_MapDevicePages( gpio, gpio_page, 1 );
-  set_state( gpio, 22, GPIO_Output );
-  push_writes_to_device();
-  for (;;) {
-    led_off( 22 );
-    //for (int i = 0; i < 0x1000000; i++) asm ( "" );
-    Task_Sleep( 100 );
-    led_on( 22 );
-    //for (int i = 0; i < 0x1000000; i++) asm ( "" );
-    Task_Sleep( 100 );
-  }
 }
 
 void start()

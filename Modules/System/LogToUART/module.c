@@ -153,15 +153,9 @@ void start_log( uint32_t handle, workspace *ws )
   // every time, perhaps it would be better to start with the current
   // core and wrap around to zero, ending up back on the core we started
   // on?
-#ifdef DEBUG__SINGLE_CORE
-  {
-    int i = 0;
-#else
   core_info cores = Task_Cores();
 
   for (int i = 0; i < cores.total; i++) {
-#endif
-
     uint32_t const stack_size = 256;
     uint8_t *stack = rma_claim( stack_size );
 
@@ -178,7 +172,7 @@ void start_log( uint32_t handle, workspace *ws )
     
     if (pipe != 0) {
       register void *start asm( "r0" ) = core_debug_task;
-      register void *sp asm( "r1" ) = stack + stack_size;
+      register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
       register uint32_t r1 asm( "r2" ) = i;
       register workspace *r2 asm( "r3" ) = ws;
       register uint32_t r3 asm( "r4" ) = pipe;
@@ -217,12 +211,11 @@ void __attribute__(( noinline )) c_init( workspace **private,
 {
   workspace *ws = rma_claim( sizeof( workspace ) );
   *private = ws;
-  uint8_t *stack = (void*) (ws + 1);
   ws->lock = 0;
   ws->output_pipe = 0;
 
   register void *start asm( "r0" ) = start_log;
-  register void *sp asm( "r1" ) = stack;
+  register uint32_t sp asm( "r1" ) = aligned_stack( ws + 1 );
   register workspace *r1 asm( "r2" ) = ws;
   asm ( "svc %[swi]"
     :
@@ -259,9 +252,14 @@ void *memcpy(void *d, void *s, uint32_t n)
 
 void __attribute__(( noreturn )) Logging()
 {
+  register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
+  register uint32_t on asm( "r1" ) = 200;
+  register uint32_t off asm( "r2" ) = 100;
+  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
+
   for (;;) {
     Task_LogString( "Loggy ", 6 );
-    Task_Sleep( 100 );
+    Task_Sleep( 1000 );
   }
 }
 

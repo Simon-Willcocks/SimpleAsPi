@@ -783,10 +783,12 @@ bool tasks_waiting_for( uint32_t *lock )
   return (1 & *lock) != 0;
 }
 
+// TODO: Make this only work with pipes, in fact, pass in
+// pipe, offset, length.
 static inline
-uint32_t Task_PhysicalFromVirtual( void *va, uint32_t length )
+uint32_t Task_PhysicalFromVirtual( void const *va, uint32_t length )
 {
-  register void *v asm( "r0" ) = va;
+  register void const *v asm( "r0" ) = va;
   register uint32_t l asm( "r1" ) = length;
   register uint32_t p asm( "r0" );
   asm volatile ( "svc %[swi]"

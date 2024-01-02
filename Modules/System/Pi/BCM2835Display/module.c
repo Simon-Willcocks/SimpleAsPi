@@ -54,17 +54,14 @@ struct workspace {
 
 void open_display( uint32_t handle, workspace *ws )
 {
+  Task_LogString( "Opening BCM2835 display\n", 0 );
+
+#if 1
   uint32_t space_on_stack[30];
 
-#ifndef DEBUG__BREAKME1
   uint32_t mr = (uint32_t) space_on_stack;
   mr = (mr + 15) & ~15;
   uint32_t *mailbox_request = (void*) mr;
-#else
-  // arm-none-eabi-gcc-9.2.1 seems to generate nonsense for this...
-  uint32_t *mailbox_request = (uint32_t) space_on_stack;
-  while (0 != 15 & ((uint32_t) mailbox_request)) mailbox_request++;
-#endif
 
   // Order is important, at least for QEMU, I think
 
@@ -97,7 +94,43 @@ void open_display( uint32_t handle, workspace *ws )
   uint32_t *frame_buffer_size = mailbox_request + i;
   mailbox_request[i++] = 0;
   mailbox_request[i++] = 0; // No more tags
+#else
+  // This works, the other doesn't. I don't know why.
+  // On the plus side, the inter-module communications seem to be OK.
+  static uint32_t const __attribute__(( aligned( 16 ) )) mailbox_request[] = {
+  26 * 4, // Message buffer size
+  0, // request
+  0x00048004,  // Set virtual (buffer) width/height
+  8,
+  0,
+  1920,
+  1092, // 12 invisible pixels to make the buffer 8MiB
+  0x00048003, // Set physical (display) width/height
+  8,
+  0,
+  1920,
+  1080,
+  0x00048005, // Set depth
+  4,
+  0,
+  32,
+  0x00048006, // Pixel order
+  4,
+  0,
+  0, // 0: BGR, 1: RGB
+  0x00040001, // Allocate buffer
+  8,
+  0,
+  2 << 20,
+  0,
+  0
+  };
+#endif
 
+  // A better approach would be to create a pipe over the data and pass
+  // that to the server; it can then get a physical address from the
+  // local end of the pipe. Being allowed to specify random physical
+  // addresses is a bad idea.
   uint32_t pa = Task_PhysicalFromVirtual( mailbox_request, *mailbox_request );
 
   register uint32_t req asm( "r0" ) = pa;
@@ -107,7 +140,11 @@ void open_display( uint32_t handle, workspace *ws )
       : "r" (req)
       : "lr", "cc" );
 
-  ws->pa = *frame_buffer;
+  Task_LogString( "BCM2835 display request sent\n", 0 );
+
+  // Tasks aren't supposed to return, yet...
+  for (;;) Task_Sleep( 100000 );
+  //ws->pa = *frame_buffer;
 }
 
 void __attribute__(( noinline )) c_init( workspace **private,
@@ -120,7 +157,7 @@ void __attribute__(( noinline )) c_init( workspace **private,
   *private = ws;
 
   register void *start asm( "r0" ) = open_display;
-  register void *sp asm( "r1" ) = ws + 1;
+  register uint32_t sp asm( "r1" ) = aligned_stack( ws + 1 );
   register workspace *r1 asm( "r2" ) = ws;
 
   register uint32_t handle asm( "r0" );

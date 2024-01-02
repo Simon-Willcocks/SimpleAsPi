@@ -82,6 +82,10 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   if (first)
   {
     shared.ostask.number_of_cores = number_of_cores();
+#ifdef DEBUG__SINGLE_CORE
+    shared.ostask.number_of_cores = 1;
+    assert( core == 0 );
+#endif
 
     extern uint8_t top_of_boot_RAM;
     extern uint8_t top_of_minimum_RAM;
@@ -228,7 +232,8 @@ static inline void put_to_sleep( OSTask **head, void *p )
   }
 }
 
-static inline OSTask *wakey_wakey( OSTask **headptr, void *p )
+//static inline 
+OSTask *wakey_wakey( OSTask **headptr, void *p )
 {
   p = p;
 
@@ -250,17 +255,23 @@ static inline OSTask *wakey_wakey( OSTask **headptr, void *p )
   return head;
 }
 
-static inline void add_woken( OSTask **headptr, void *p )
+//static inline 
+void add_woken( OSTask **headptr, void *p )
 {
+  OSTask *head = *headptr;
   dll_insert_OSTask_list_at_head( p, headptr );
+  // I really want it at the tail... I think.
+  if (head != 0) *headptr = head;
 }
 
-static void sleeping_tasks_add( OSTask *tired )
+//static 
+void sleeping_tasks_add( OSTask *tired )
 {
   mpsafe_manipulate_OSTask_list( &shared.ostask.sleeping, put_to_sleep, tired );
 }
 
-static void sleeping_tasks_tick()
+//static 
+void sleeping_tasks_tick()
 {
   OSTask *list = mpsafe_manipulate_OSTask_list_returning_item( &shared.ostask.sleeping, wakey_wakey, 0 );
   if (list != 0)
@@ -275,6 +286,7 @@ DEFINE_ERROR( UnknownQueueSWI, 0x888, "Unknown Queue operation" );
 
 DEFINE_ERROR( NotATask, 0x666, "Programmer error: Not a task" );
 DEFINE_ERROR( NotYourTask, 0x666, "Programmer error: Not your task" );
+DEFINE_ERROR( InvalidInitialStack, 0x666, "Tasks must always be started with 8-byte aligned stack" );
 
 static OSTask *RunInControlledTask( svc_registers *regs, bool wait )
 {
@@ -596,7 +608,10 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   OSTask *running = workspace.ostask.running;
   OSTask *task = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
 
-  if (task->next != task || task->prev != task) PANIC;
+  if ((regs->r[1] & 7) != 0)
+    return Error_InvalidInitialStack( regs );
+
+  assert( task->next == task || task->prev == task );
 
   if (spawn) {
     task->slot = mpsafe_detach_OSTaskSlot_at_head( &shared.ostask.slot_pool );
@@ -623,6 +638,9 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   dll_attach_OSTask( task, &next );
 
   regs->r[0] = ostask_handle( task );
+
+  // If running yields, the most recently created task will run instead
+  assert( running->next == task );
 
   return 0;
 }

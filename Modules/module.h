@@ -16,10 +16,6 @@
 /* Together with module.script, this routine generates a RISC OS module
  * header.
  *
- * arm-linux-gnueabi-gcc-8 my_module.c -o my_module.elf -nostartfiles -nostdlib -fpic \
-   -fno-zero-initialized-in-bss -static -g -march=armv8-a+nofp -T module.script &&
- * arm-linux-gnueabi-objcopy  -R .ignoring -O binary my_module.elf my_module.bin
- *
  * Usage:
  * #define MODULE_CHUNK <chunk number> (not needed if no SWI chunk)
  * #include "module.h"
@@ -40,15 +36,6 @@
  * messages_file (const char [])
  *
  * Only include this header file in one C file for each module.
- *
- * arm-linux-gnueabi-gcc-8 *.c -Wall -o /tmp/module$$.elf -fpie -static-pie \
-        -nostartfiles -nostdlib -fno-zero-initialized-in-bss -O4 \
-        -g -march=armv8-a+nofp -T module.script -I . -I include \
-        -fno-toplevel-reorder
- *
- * The generated code can be translated into a module (ffa) file using:
- *
- * arm-linux-gnueabi-objcopy -R .ignoring -O binary /tmp/module$$.elf <module>,ffa
  *
  */
 void __attribute__(( naked, section( ".text.init" ) )) file_start()
@@ -104,6 +91,13 @@ void *__attribute__(( section( ".text.init" ) )) adr( void *fn )
     "\n  sub r0, r0, #adr-header"
     : "=r" (out) : "r" (in), "r" (in2) );
   return out;
+}
+
+// EABI specifies stack is 8-byte aligned at any public interface.
+// Created tasks are likely to follow that specification.
+uint32_t aligned_stack( void *top )
+{
+  return ~7 & (uint32_t) top;
 }
 
 /* How to declare commands. FIXME: needs a few macros.

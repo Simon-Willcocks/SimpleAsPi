@@ -4,14 +4,15 @@
 SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:NoLegacy:Modules
 # Modules to include (HAL chooses which ones to load.)
 #MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink:System/LogToUART
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART:System/DoNothing
 
 echo Modules: ${MODULES//:/ }
 
+#INITIAL_MODULES='QA7\0GPUMailbox\0LEDBlink\0LogToUART\0'
 #INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0'
-INITIAL_MODULES='QA7\0GPUMailbox\0LEDBlink\0'
-#DEFAULT_LANGUAGE=LogToUART
-DEFAULT_LANGUAGE=LEDBlink
+INITIAL_MODULES='QA7\0GPUMailbox\0BCM2835Display\0LEDBlink\0'
+#DEFAULT_LANGUAGE=LEDBlink
+DEFAULT_LANGUAGE=DoNothing
 
 # This is not a foolproof test, but it should catch some foolishness
 for i in ${INITIAL_MODULES/\\0/ } $DEFAULT_LANGUAGE ; do 
@@ -73,6 +74,9 @@ done &&
 echo '{ 0, 0 } };' >> Generated/rom_modules.h 
 ) || exit 1 &&
 
+echo 'char const build_options[] = "Build options: '"$*"'";' >> Generated/rom_modules.h 
+echo 'char const modcflags[] = "Build module flags: '"$MODCFLAGS"'";' >> Generated/rom_modules.h 
+
 echo Modules built &&
 
 echo SWI chunks: &&
@@ -90,6 +94,8 @@ for i in Generated/*,ffa
 do
   od -j 28 -N 4 -t x4 -A none $i 
 done | sort | uniq -c | grep -v -e '00000000$' -e '\<1\>' && exit 2
+
+echo
 
 # 16MiB boot RAM
 # 256MiB minimum RAM

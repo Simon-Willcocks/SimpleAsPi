@@ -193,7 +193,7 @@ void map_slot( OSTaskSlot *new )
       // Ensure all slot-relevant entries are set to call ask_slot
       initialise_app_virtual_memory_area();
     }
-    else if (current != new) {
+    else {
       clear_app_virtual_memory_area( current );
     }
     mmu_switch_map( new->mmu_map );

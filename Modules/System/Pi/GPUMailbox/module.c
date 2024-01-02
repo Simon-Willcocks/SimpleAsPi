@@ -81,6 +81,16 @@ struct workspace {
 // Channel encoded in SWI or register? SWI, it's not going to be a
 // run-time question.
 
+static inline bool receive_empty( GPU_mailbox volatile *m )
+{
+  return 0 != (m->status & (1 << 30));
+}
+
+static inline bool transmit_full( GPU_mailbox volatile *m )
+{
+  return 0 != (m->status & (1 << 31));
+}
+
 void response_manager( uint32_t handle, workspace *ws )
 {
   Task_LogString( "response_manager\n", 0 );
@@ -90,11 +100,15 @@ void response_manager( uint32_t handle, workspace *ws )
   gpu->mailbox[0].config = 1;
 
   for (;;) {
-    // Wait for GPU interrupt - needs GPU module
-    register uint32_t num asm ( "r0" ) = 0;
+    // Wait for GPU interrupt - move to GPU module
+    Task_LogString( "Waiting for GPU interrupt\n", 0 );
+
+    register uint32_t num asm ( "r0" ) = 8;
     asm ( "svc 0x1000" : : "r" (num) );
 
-    while (0 == (gpu->mailbox[0].status & 0x40000000)) {
+    Task_LogString( "GPU interrupt\n", 0 );
+
+    while (!receive_empty( &gpu->mailbox[0] )) {
       uint32_t response = gpu->mailbox[0].value;
       bool found = false;
 
@@ -126,7 +140,7 @@ void mailbox_manager( uint32_t handle, workspace *ws )
   Task_MapDevicePages( gpu, gpu_page, 1 );
 
   register void *start asm( "r0" ) = response_manager;
-  register void *sp asm( "r1" ) = &ws->response_manager_stack + 1;
+  register uint32_t sp asm( "r1" ) = aligned_stack( &ws->response_manager_stack + 1 );
   register workspace *r1 asm( "r2" ) = ws;
   register uint32_t new_handle asm( "r0" );
   asm ( "svc %[swi]"
@@ -140,7 +154,13 @@ void mailbox_manager( uint32_t handle, workspace *ws )
   uint32_t response_task = new_handle;
 
   for (;;) {
+    Task_LogString( "GPUMailbox waiting for request\n", 0 );
+
     queued_task client = Task_QueueWait( ws->queue );
+
+    Task_LogString( "GPUMailbox request received for channel ", 0 );
+    Task_LogSmallNumber( 0xf & client.swi );
+    Task_LogNewLine();
 
     svc_registers regs;
 
@@ -212,7 +232,7 @@ void __attribute__(( noinline )) c_init( workspace **private,
   Task_RegisterSWIHandlers( &handlers );
 
   register void *start asm( "r0" ) = mailbox_manager;
-  register void *sp asm( "r1" ) = &ws->mailbox_manager_stack + 1;
+  register uint32_t sp asm( "r1" ) = aligned_stack( &ws->mailbox_manager_stack + 1 );
   register workspace *r1 asm( "r2" ) = ws;
   asm ( "svc %[swi]"
     :
