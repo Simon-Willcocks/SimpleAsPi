@@ -95,7 +95,7 @@ void open_display( uint32_t handle, workspace *ws )
   mailbox_request[i++] = 0;
   mailbox_request[i++] = 0; // No more tags
 #else
-  // This works, the other doesn't. I don't know why.
+  // This works, the other didn't. Cache flushing wasn't implemented properly!
   // On the plus side, the inter-module communications seem to be OK.
   static uint32_t const __attribute__(( aligned( 16 ) )) mailbox_request[] = {
   26 * 4, // Message buffer size

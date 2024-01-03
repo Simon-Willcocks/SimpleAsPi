@@ -304,9 +304,13 @@ void push_writes_out_of_cache( uint32_t va, uint32_t size )
 {
   // TODO: larger sizes probably make a full clean quicker...
 
+  // First, finish any writes to the cache
+  asm ( "dsb sy" );
+
   size += (va & 15);
   va = va & ~15;
 
+  // DCCMVAC Data Cache line Clean by VA to PoC (external RAM)
   for (int i = va; i < va + size; i += 16) {
     asm ( "mcr p15, 0, %[va], c7, c10, 1" : : [va] "r" (i) );
   }
