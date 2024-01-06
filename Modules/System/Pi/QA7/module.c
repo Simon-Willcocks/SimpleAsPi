@@ -14,10 +14,12 @@
  */
 
 // QA7 module, for use on Raspberry Pi 2 - 3
+// Includes GPU interrupts
 
 #include "CK_types.h"
 #include "ostaskops.h"
 #include "qa7.h"
+#include "bcm_gpu.h"
 
 typedef struct workspace workspace;
 
@@ -35,10 +37,17 @@ struct workspace {
   struct {
     uint32_t stack[64];
   } runstack;
+  uint32_t gpu_handler;
+  uint32_t gpu_task[64];
   struct qa7_irq_sources tasks[]; // One set per core
 };
 
 #define MODULE_CHUNK "0x1000"
+
+// SWI 1000 - Wait for interrupt r0 = irq number
+// SWI 1001 - Wait for core interrupt r0 = irq number, r1 = core number
+// IRQ numbers 0-63 are GPU interrupts, 64-76 are QA7 interrupts or
+// something else! TODO
 
 const unsigned module_flags = 1;
 // Bit 0: 32-bit compatible
@@ -60,7 +69,44 @@ NO_messages_file;
 const char title[] = "QA7";
 const char help[] = "BCM QA7\t\t0.01 (" CREATION_DATE ")";
 
-QA7 volatile *const qa7 = (void*) 0x7000;
+static QA7 volatile *const qa7 = (void*) 0x7000;
+static GPU volatile *const gpu = (void*) 0x6000;
+
+// Multi-processing primitives. No awareness of OSTasks.
+
+// Change the word at `word' to the value `to' if it contained `from'.
+// Returns the original content of word (== from, if changed successfully)
+static inline
+uint32_t change_word_if_equal( uint32_t *word, uint32_t from, uint32_t to )
+{
+  uint32_t failed = true;
+  uint32_t value;
+
+  do {
+    asm volatile ( "ldrex %[value], [%[word]]"
+                   : [value] "=&r" (value)
+                   : [word] "r" (word) );
+
+    if (value == from) {
+      // Assembler note:
+      // The failed and word registers are not allowed to be the same, so
+      // pretend to gcc that the word may be written as well as read.
+
+      asm volatile ( "strex %[failed], %[value], [%[word]]"
+                     : [failed] "=&r" (failed)
+                     , [word] "+r" (word)
+                     : [value] "r" (to) );
+
+      ensure_changes_observable();
+    }
+    else {
+      asm ( "clrex" );
+      break;
+    }
+  } while (failed);
+
+  return value;
+}
 
 void setup_clock_svc()
 {
@@ -80,6 +126,20 @@ void setup_clock_svc()
                  : [config] "r" (0x303) );
 }
 
+static inline
+void release_irq_tasks( uint32_t active, uint32_t *irq_tasks )
+{
+  while (active != 0) {
+    if (0 != (1 & active)) {
+      if (*irq_tasks == 0) asm ( "bkpt 6" );
+      Task_ReleaseTask( *irq_tasks, 0 );
+      *irq_tasks = 0;
+    }
+    irq_tasks++;
+    active = active >> 1;
+  }
+}
+
 void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 {
   core_info cores = Task_Cores();
@@ -94,11 +154,26 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
   // is running with interrupts disabled, so there's no race condition.
   ws->tasks[core].core_irq_task = handle;
 
+  if (0 == change_word_if_equal( &ws->gpu_handler, 0, handle )) {
+    // This core is claiming the GPU interrupts
+    gpu->disable_irqs1 = 0xffffffff;
+    gpu->disable_irqs2 = 0xffffffff;
+    gpu->disable_base = 0xff;
+    ensure_changes_observable();
+
+    // Writes to QA7
+    // This core only
+    qa7->GPU_interrupts_routing = core;
+  }
+
+  // All cores (do not spit up the qa7 writes)
+  qa7->Core_IRQ_Source[core] = 0;
+  ensure_changes_observable();
+
   for (;;) {
     Task_WaitForInterrupt();
 
     uint32_t interrupts = qa7->Core_IRQ_Source[core];
-    uint32_t *irq_task = core_irq_tasks;
 
 // This approach is multi processor safe because:
 //  Word read/writes are atomic.
@@ -108,15 +183,37 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 //  The function writing the handles will only write a non-zero value if
 // zero was read
 
-    while (interrupts != 0) {
-      if (0 != (1 & interrupts)) {
-        if (*irq_task == 0) asm ( "bkpt 6" );
-        Task_ReleaseTask( *irq_task, 0 );
-        *irq_task = 0;
+    if ((interrupts & (1 << 8)) != 0) { // GPU interrupt
+
+      if (handle != ws->gpu_handler) asm ( "bkpt 8" );
+
+      interrupts &= ~(1 << 8);
+      // Assuming pending registers only include enabled IRQs
+      uint32_t pending;
+
+      pending = gpu->pending1;
+      if (pending != 0) {
+asm ( "udf 1" );
+        gpu->disable_irqs1 = pending;
+        release_irq_tasks( pending, &ws->gpu_task[0] );
       }
-      irq_task++;
-      interrupts = interrupts >> 1;
+
+      pending = gpu->pending2;
+      if (pending != 0) {
+asm ( "udf 2" );
+        gpu->disable_irqs2 = pending;
+        release_irq_tasks( pending, &ws->gpu_task[32] );
+      }
+
+      if (interrupts != 0) {
+        gpu->disable_base = interrupts & 0xff;
+asm ( "udf 3" );
+      }
+
+      ensure_changes_observable();
     }
+
+    release_irq_tasks( interrupts, core_irq_tasks );
   }
 }
 
@@ -153,22 +250,20 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
   ticks_per_interval = ticks_per_interval * slower;
 #endif
 
-  Task_LogString( "Routing GPU interrupts to core ", 0 );
-  Task_LogSmallNumber( core );
-  Task_LogNewLine();
-  qa7->GPU_interrupts_routing = core;
-  qa7->Core_IRQ_Source[core] = 0xffd;
+  // Is this interrupt enable for the other 12 interrupts?
+  // Documentations says it's status, not control.
+  qa7->Core_IRQ_Source[core] = 0xfff;
+
+  Task_EnablingInterrupts();
 
   qa7->Core_timers_Interrupt_control[core] = 1;
 
   ensure_changes_observable(); // Wrote to QA7
 
-  Task_EnablingInterrupts();
-
   timer_set_countdown( ticks_per_interval );
 
   for (;;) {
-    register uint32_t request asm ( "r0" ) = 0;
+    register uint32_t request asm ( "r0" ) = 64;
     asm ( "svc 0x1000" : : "r" (request) );
 
     timer_set_countdown( ticks_per_interval );
@@ -240,7 +335,20 @@ return;
 void irq_manager( uint32_t handle, workspace *ws )
 {
   uint32_t qa7_page = 0x40000000 >> 12;
+  uint32_t const gpu_page = 0x3f00b000 >> 12;
+
   Task_MapDevicePages( qa7, qa7_page, 1 );
+  Task_MapDevicePages( gpu, gpu_page, 1 );
+
+  // EXPERIMENT:
+  gpu->enable_base = 0xff;
+  ensure_changes_observable(); // Wrote to GPU
+  for (int core = 0; core < ws->cores.total; core++) {
+    qa7->Core_IRQ_Source[core] = 0xfff;
+    qa7->Core_timers_Interrupt_control[core] = 1;
+  }
+  ensure_changes_observable(); // Wrote to QA7
+  // end. Not it!
 
   Task_MapDevicePages( gpio, 0x3f200, 1 );
 
@@ -305,7 +413,9 @@ leds( 27 );
 leds( 22 );
   Task_EnablingInterrupts();
 
+#ifndef DEBUG__NO_TICKER
   start_ticker();
+#endif
 
   for (;;) {
     queued_task client = Task_QueueWait( ws->queue );
@@ -317,24 +427,44 @@ leds( 22 );
     uint32_t req = regs.r[0];
 
     if (0 == (regs.spsr & 0x80)) asm ( "bkpt 2" );
-    if (req >= 12) asm ( "bkpt 3" );
-    if (0 != ws->tasks[client.core].task[req]) asm ( "bkpt 4" );
-    if (8 == req) {
-      // Only ever one core receiving GPU interrupts...
-      for (int i = 0; i < ws->cores.total; i++) {
-        if (0 != ws->tasks[i].task[8]) asm ( "bkpt 5" );
-      }
+    if (req >= 72) asm ( "bkpt 3" );
+
+    uint32_t *task_entry;
+    uint32_t handler;
+
+    if (req < 64) { // GPU interrupt
+      task_entry = &ws->gpu_task[req];
+      handler = ws->gpu_handler;
     }
+    else { // QA7 interrupt
+      task_entry = &ws->tasks[client.core].task[req-64];
+      handler = ws->tasks[client.core].core_irq_task;
+    }
+
+    if (0 != *task_entry) asm ( "bkpt 4" );
+    if (handler == 0) asm ( "bkpt 7" : : "r" (client.core | 0x47474747) );
 
     // Ensure the irq task has the right to release the client
     // before telling it about the client.
-    uint32_t handler = ws->tasks[client.core].core_irq_task;
-
-    if (handler == 0) asm ( "bkpt 7" : : "r" (client.core | 0x44440000) );
 
     Task_ChangeController( client.task_handle, handler );
 
-    ws->tasks[client.core].task[req] = client.task_handle;
+    *task_entry = client.task_handle;
+
+    ensure_changes_observable();
+
+    // Allow the interrupt through to the ARM.
+    if (req < 32) { // GPU interrupt, word 1
+      gpu->enable_irqs1 = (1 << req);
+    }
+    else if (req < 64) { // GPU interrupt, word 1
+      gpu->enable_irqs2 = (1 << (req - 32));
+    }
+    else if (req < 72) { // GPU interrupt, base
+      gpu->enable_base = (1 << (req - 64));
+    }
+
+    ensure_changes_observable();
   }
 }
 
