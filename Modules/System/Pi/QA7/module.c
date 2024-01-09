@@ -38,16 +38,30 @@ struct workspace {
     uint32_t stack[64];
   } runstack;
   uint32_t gpu_handler;
-  uint32_t gpu_task[64];
+  uint32_t gpu_task[72];
   struct qa7_irq_sources tasks[]; // One set per core
 };
 
 #define MODULE_CHUNK "0x1000"
 
-// SWI 1000 - Wait for interrupt r0 = irq number
-// SWI 1001 - Wait for core interrupt r0 = irq number, r1 = core number
-// IRQ numbers 0-63 are GPU interrupts, 64-76 are QA7 interrupts or
-// something else! TODO
+// SWI 1000 - claim interrupt
+//    IN: r0 = irq number
+//    OUT: All registers preserved, or error indicating
+//         * already claimed
+//         * invalid number (sin bin?)
+// Call from init, before starting to manipulate hardware
+
+// SWI 1001 - Wait for interrupt
+//    IN: r0 = irq number
+//    OUT: All registers preserved, or error indicating 
+//         * shutdown
+//         * invalid number (sin bin?)
+//         * other task waiting (sin bin?)
+// Call with interrupts disabled (i.e. after calling Task_EnablingInterrupts).
+// This call enables the interrupt in the interrupt controller and returns
+// when one occurs.
+
+// IRQ numbers 0-71 are GPU interrupts, 128-... are QA7 interrupts.
 
 const unsigned module_flags = 1;
 // Bit 0: 32-bit compatible
@@ -140,6 +154,154 @@ void release_irq_tasks( uint32_t active, uint32_t *irq_tasks )
   }
 }
 
+void release_gpu_handlers( workspace *ws )
+{
+  // Bits 10, 11, 12, 13 & 14 are IRQ 7, 9, 10, 18 & 19
+  static uint32_t const mapping1[] = {
+    0,
+    (1 << 7),
+    (1 << 9),
+    (1 << 9) | (1 << 7),
+    (1 << 10),
+    (1 << 10) | (1 << 7),
+    (1 << 10) | (1 << 9),
+    (1 << 10) | (1 << 9) | (1 << 7),
+    (1 << 18),
+    (1 << 18) | (1 << 7),
+    (1 << 18) | (1 << 9),
+    (1 << 18) | (1 << 9) | (1 << 7),
+    (1 << 18) | (1 << 10),
+    (1 << 18) | (1 << 10) | (1 << 7),
+    (1 << 18) | (1 << 10) | (1 << 9),
+    (1 << 18) | (1 << 10) | (1 << 9) | (1 << 7),
+    (1 << 19),
+    (1 << 19) | (1 << 7),
+    (1 << 19) | (1 << 9),
+    (1 << 19) | (1 << 9) | (1 << 7),
+    (1 << 19) | (1 << 10),
+    (1 << 19) | (1 << 10) | (1 << 7),
+    (1 << 19) | (1 << 10) | (1 << 9),
+    (1 << 19) | (1 << 10) | (1 << 9) | (1 << 7),
+    (1 << 19) | (1 << 18),
+    (1 << 19) | (1 << 18) | (1 << 7),
+    (1 << 19) | (1 << 18) | (1 << 9),
+    (1 << 19) | (1 << 18) | (1 << 9) | (1 << 7),
+    (1 << 19) | (1 << 18) | (1 << 10),
+    (1 << 19) | (1 << 18) | (1 << 10) | (1 << 7),
+    (1 << 19) | (1 << 18) | (1 << 10) | (1 << 9),
+    (1 << 19) | (1 << 18) | (1 << 10) | (1 << 9) | (1 << 7) };
+
+  // Bits 15-19 & 20 are IRQs 21-25 & 30
+  static uint32_t const mapping2[] = {
+    0,
+    (1 << 21),
+    (1 << 22),
+    (1 << 22) | (1 << 21),
+    (1 << 23),
+    (1 << 23) | (1 << 21),
+    (1 << 23) | (1 << 22),
+    (1 << 23) | (1 << 22) | (1 << 21),
+    (1 << 24),
+    (1 << 24) | (1 << 21),
+    (1 << 24) | (1 << 22),
+    (1 << 24) | (1 << 22) | (1 << 21),
+    (1 << 24) | (1 << 23),
+    (1 << 24) | (1 << 23) | (1 << 21),
+    (1 << 24) | (1 << 23) | (1 << 22),
+    (1 << 24) | (1 << 23) | (1 << 22) | (1 << 21),
+    (1 << 25),
+    (1 << 25) | (1 << 21),
+    (1 << 25) | (1 << 22),
+    (1 << 25) | (1 << 22) | (1 << 21),
+    (1 << 25) | (1 << 23),
+    (1 << 25) | (1 << 23) | (1 << 21),
+    (1 << 25) | (1 << 23) | (1 << 22),
+    (1 << 25) | (1 << 23) | (1 << 22) | (1 << 21),
+    (1 << 25) | (1 << 24),
+    (1 << 25) | (1 << 24) | (1 << 21),
+    (1 << 25) | (1 << 24) | (1 << 22),
+    (1 << 25) | (1 << 24) | (1 << 22) | (1 << 21),
+    (1 << 25) | (1 << 24) | (1 << 23),
+    (1 << 25) | (1 << 24) | (1 << 23) | (1 << 21),
+    (1 << 25) | (1 << 24) | (1 << 23) | (1 << 22),
+    (1 << 25) | (1 << 24) | (1 << 23) | (1 << 22) | (1 << 21),
+    (1 << 30),
+    (1 << 30) | (1 << 21),
+    (1 << 30) | (1 << 22),
+    (1 << 30) | (1 << 22) | (1 << 21),
+    (1 << 30) | (1 << 23),
+    (1 << 30) | (1 << 23) | (1 << 21),
+    (1 << 30) | (1 << 23) | (1 << 22),
+    (1 << 30) | (1 << 23) | (1 << 22) | (1 << 21),
+    (1 << 30) | (1 << 24),
+    (1 << 30) | (1 << 24) | (1 << 21),
+    (1 << 30) | (1 << 24) | (1 << 22),
+    (1 << 30) | (1 << 24) | (1 << 22) | (1 << 21),
+    (1 << 30) | (1 << 24) | (1 << 23),
+    (1 << 30) | (1 << 24) | (1 << 23) | (1 << 21),
+    (1 << 30) | (1 << 24) | (1 << 23) | (1 << 22),
+    (1 << 30) | (1 << 24) | (1 << 23) | (1 << 22) | (1 << 21),
+    (1 << 30) | (1 << 25),
+    (1 << 30) | (1 << 25) | (1 << 21),
+    (1 << 30) | (1 << 25) | (1 << 22),
+    (1 << 30) | (1 << 25) | (1 << 22) | (1 << 21),
+    (1 << 30) | (1 << 25) | (1 << 23),
+    (1 << 30) | (1 << 25) | (1 << 23) | (1 << 21),
+    (1 << 30) | (1 << 25) | (1 << 23) | (1 << 22),
+    (1 << 30) | (1 << 25) | (1 << 23) | (1 << 22) | (1 << 21),
+    (1 << 30) | (1 << 25) | (1 << 24),
+    (1 << 30) | (1 << 25) | (1 << 24) | (1 << 21),
+    (1 << 30) | (1 << 25) | (1 << 24) | (1 << 22),
+    (1 << 30) | (1 << 25) | (1 << 24) | (1 << 22) | (1 << 21),
+    (1 << 30) | (1 << 25) | (1 << 24) | (1 << 23),
+    (1 << 30) | (1 << 25) | (1 << 24) | (1 << 23) | (1 << 21),
+    (1 << 30) | (1 << 25) | (1 << 24) | (1 << 23) | (1 << 22),
+    (1 << 30) | (1 << 25) | (1 << 24) | (1 << 23) | (1 << 22) | (1 << 21)
+  };
+
+  // Assuming pending registers only include enabled IRQs
+  uint32_t base_pending;
+
+  base_pending = gpu->base_pending;
+
+  uint32_t pending1;
+
+  if (0 != (base_pending & (1 << 8))) {
+    pending1 = gpu->pending1;
+    // (Includes all the ones mapped to base_pending)
+  }
+  else {
+    pending1 = mapping1[(base_pending >> 10) & 31];
+  }
+
+  if (pending1 != 0) {
+    gpu->disable_irqs1 = pending1;
+    release_irq_tasks( pending1, &ws->gpu_task[0] );
+  }
+
+  uint32_t pending2;
+
+  if (0 != (base_pending & (1 << 9))) {
+    pending2 = gpu->pending2;
+  }
+  else {
+    pending2 = mapping2[(base_pending >> 15) & 63];
+  }
+
+  if (pending2 != 0) {
+    gpu->disable_irqs2 = pending2;
+    release_irq_tasks( pending2, &ws->gpu_task[32] );
+  }
+
+  base_pending &= 0xff;
+  if (0 != base_pending) {
+    gpu->disable_base = base_pending;
+    release_irq_tasks( base_pending, &ws->gpu_task[64] );
+  }
+
+  ensure_changes_observable();
+}
+
 void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 {
   core_info cores = Task_Cores();
@@ -155,6 +317,8 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
   ws->tasks[core].core_irq_task = handle;
 
   if (0 == change_word_if_equal( &ws->gpu_handler, 0, handle )) {
+    Task_LogString( "Claiming GPU interrupts\n", 0 );
+
     // This core is claiming the GPU interrupts
     gpu->disable_irqs1 = 0xffffffff;
     gpu->disable_irqs2 = 0xffffffff;
@@ -167,7 +331,7 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
   }
 
   // All cores (do not spit up the qa7 writes)
-  qa7->Core_IRQ_Source[core] = 0;
+  qa7->Core_IRQ_Source[core] = 0xfff;
   ensure_changes_observable();
 
   for (;;) {
@@ -188,29 +352,8 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
       if (handle != ws->gpu_handler) asm ( "bkpt 8" );
 
       interrupts &= ~(1 << 8);
-      // Assuming pending registers only include enabled IRQs
-      uint32_t pending;
 
-      pending = gpu->pending1;
-      if (pending != 0) {
-asm ( "udf 1" );
-        gpu->disable_irqs1 = pending;
-        release_irq_tasks( pending, &ws->gpu_task[0] );
-      }
-
-      pending = gpu->pending2;
-      if (pending != 0) {
-asm ( "udf 2" );
-        gpu->disable_irqs2 = pending;
-        release_irq_tasks( pending, &ws->gpu_task[32] );
-      }
-
-      if (interrupts != 0) {
-        gpu->disable_base = interrupts & 0xff;
-asm ( "udf 3" );
-      }
-
-      ensure_changes_observable();
+      release_gpu_handlers( ws );
     }
 
     release_irq_tasks( interrupts, core_irq_tasks );
@@ -237,6 +380,15 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
   core_info cores = Task_Cores();
   if (core != cores.current) asm ( "bkpt 11" );
 
+  static const uint32_t irq_number = 128; // QA7 timer
+
+  Task_LogString( "Claiming QA7 timer interrupt\n", 0 );
+
+  register uint32_t irq asm ( "r0" ) = irq_number;
+  asm ( "svc 0x1000" : : "r" (irq) );
+
+  Task_LogString( "Claimed QA7 timer interrupt\n", 0 );
+
   qa7->timer_prescaler = 0x06aaaaab;
 
   uint32_t clock_frequency;
@@ -256,15 +408,17 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
 
   Task_EnablingInterrupts();
 
-  qa7->Core_timers_Interrupt_control[core] = 1;
+  qa7->Core_timers_Interrupt_control[core] = 15;
 
   ensure_changes_observable(); // Wrote to QA7
 
   timer_set_countdown( ticks_per_interval );
 
+  Task_LogString( "Waiting for first QA7 timer interrupt\n", 0 );
+
   for (;;) {
-    register uint32_t request asm ( "r0" ) = 64;
-    asm ( "svc 0x1000" : : "r" (request) );
+    register uint32_t irq asm ( "r0" ) = irq_number;
+    asm ( "svc 0x1001" : : "r" (irq) );
 
     timer_set_countdown( ticks_per_interval );
 
@@ -279,6 +433,8 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
 
 void start_ticker()
 {
+  Task_LogString( "Starting ticker\n", 0 );
+
   static uint32_t const stack_size = 72;
   uint8_t *stack = rma_claim( stack_size );
   core_info cores = Task_Cores();
@@ -296,6 +452,8 @@ void start_ticker()
     , "r" (r1)
     , "r" (r2)
     : "lr", "cc" );
+
+  Task_LogString( "Started ticker\n", 0 );
 }
 
 //////////////////////////////////////////////////
@@ -339,16 +497,6 @@ void irq_manager( uint32_t handle, workspace *ws )
 
   Task_MapDevicePages( qa7, qa7_page, 1 );
   Task_MapDevicePages( gpu, gpu_page, 1 );
-
-  // EXPERIMENT:
-  gpu->enable_base = 0xff;
-  ensure_changes_observable(); // Wrote to GPU
-  for (int core = 0; core < ws->cores.total; core++) {
-    qa7->Core_IRQ_Source[core] = 0xfff;
-    qa7->Core_timers_Interrupt_control[core] = 1;
-  }
-  ensure_changes_observable(); // Wrote to QA7
-  // end. Not it!
 
   Task_MapDevicePages( gpio, 0x3f200, 1 );
 
@@ -415,56 +563,76 @@ leds( 22 );
 
 #ifndef DEBUG__NO_TICKER
   start_ticker();
+#else
+#warning "Sleep ticker disabled"
 #endif
 
   for (;;) {
     queued_task client = Task_QueueWait( ws->queue );
 
-    svc_registers regs;
+    switch (client.swi & 63) {
+    case 0: // Claim interrupt
+      // TODO: Set a flag.
+      // The primary purpose of this call is to avoid tasks enabling
+      // an interrupt before the interrupt controller is ready.
 
-    Task_GetRegisters( client.task_handle, &regs );
+      // We could do without this if all interrupts could be masked, but
+      // some have to be enabled or disabled at source (which we don't want
+      // to know about).
+      Task_ReleaseTask( client.task_handle, 0 );
+      break;
+    case 1: // Wait for interrupt
+      {
+        svc_registers regs;
 
-    uint32_t req = regs.r[0];
+        Task_GetRegisters( client.task_handle, &regs );
 
-    if (0 == (regs.spsr & 0x80)) asm ( "bkpt 2" );
-    if (req >= 72) asm ( "bkpt 3" );
+        uint32_t req = regs.r[0];
 
-    uint32_t *task_entry;
-    uint32_t handler;
+        if (0 == (regs.spsr & 0x80)) asm ( "bkpt 2" );
+        if ((req >= 72 && req < 128) || req >= 128 + 12) asm ( "bkpt 3" );
 
-    if (req < 64) { // GPU interrupt
-      task_entry = &ws->gpu_task[req];
-      handler = ws->gpu_handler;
+        uint32_t *task_entry;
+        uint32_t handler;
+
+        if (req < 72) { // GPU interrupt
+          task_entry = &ws->gpu_task[req];
+          handler = ws->gpu_handler;
+        }
+        else { // QA7 interrupt
+          task_entry = &ws->tasks[client.core].task[req-128];
+          handler = ws->tasks[client.core].core_irq_task;
+        }
+
+        if (0 != *task_entry) asm ( "bkpt 4" );
+        if (handler == 0) asm ( "bkpt 7" : : "r" (client.core | 0x47474747) );
+
+        // Ensure the irq task has the right to release the client
+        // before telling it about the client.
+
+        Task_ChangeController( client.task_handle, handler );
+
+        *task_entry = client.task_handle;
+
+        ensure_changes_observable();
+
+        // Allow the interrupt through to the ARM.
+        if (req < 32) { // GPU interrupt, word 1
+          gpu->enable_irqs1 = (1 << req);
+        }
+        else if (req < 64) { // GPU interrupt, word 1
+          gpu->enable_irqs2 = (1 << (req - 32));
+        }
+        else if (req < 72) { // GPU interrupt, base
+          gpu->enable_base = (1 << (req - 64));
+        }
+
+        ensure_changes_observable();
+      }
+      break;
+    default:
+      asm ( "bkpt 3" );
     }
-    else { // QA7 interrupt
-      task_entry = &ws->tasks[client.core].task[req-64];
-      handler = ws->tasks[client.core].core_irq_task;
-    }
-
-    if (0 != *task_entry) asm ( "bkpt 4" );
-    if (handler == 0) asm ( "bkpt 7" : : "r" (client.core | 0x47474747) );
-
-    // Ensure the irq task has the right to release the client
-    // before telling it about the client.
-
-    Task_ChangeController( client.task_handle, handler );
-
-    *task_entry = client.task_handle;
-
-    ensure_changes_observable();
-
-    // Allow the interrupt through to the ARM.
-    if (req < 32) { // GPU interrupt, word 1
-      gpu->enable_irqs1 = (1 << req);
-    }
-    else if (req < 64) { // GPU interrupt, word 1
-      gpu->enable_irqs2 = (1 << (req - 32));
-    }
-    else if (req < 72) { // GPU interrupt, base
-      gpu->enable_base = (1 << (req - 64));
-    }
-
-    ensure_changes_observable();
   }
 }
 
@@ -490,6 +658,7 @@ void __attribute__(( noinline )) c_init( workspace **private,
   ws->queue = Task_QueueCreate();
   swi_handlers handlers = { };
   handlers.action[0].queue = ws->queue;
+  handlers.action[1].queue = ws->queue;
 
   Task_RegisterSWIHandlers( &handlers );
 
