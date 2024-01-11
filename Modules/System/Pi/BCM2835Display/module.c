@@ -117,42 +117,6 @@ void open_display( uint32_t handle, workspace *ws )
   // checking if the value of mailbox_request[1] is non-zero
   Task_MemoryChanged( mailbox_request, *mailbox_request );
 
-if (mailbox_request[1] == 0x80000000 // OK
-&& mailbox_request[4] == 0x80000008
-&& mailbox_request[9] == 0x80000008
-&& mailbox_request[14] == 0x80000004
-&& mailbox_request[18] == 0x80000004
-&& mailbox_request[22] == 0x80000008 // OK
-
-&& (0xfffff & mailbox_request[23]) == 0 // OK
-
-// && mailbox_request[24] == 0x7ff800  // Not OK (on real hardware)
-//&& mailbox_request[24] == 1920 * 1080 * 4 // No
-&& mailbox_request[24] >= 1920 * 1080 * 4 // Yes 
-&& mailbox_request[24] < 0x800000 // Yes
-
-// && mailbox_request[24] >= 1920 * 1092 * 4 // No!
-// && mailbox_request[24] <= 0x800000
-&& *bits_per_pixel == 32 // OK
-
-&& *frame_buffer_size == mailbox_request[24] // OK
-
-// && *frame_buffer_size <= (1920 * 1096 * 4) // No
-&& *frame_buffer_size <= (1920 * 1200 * 4) // OK
-
-&& *frame_buffer == mailbox_request[23] // OK
-
-&& *frame_buffer >= 0x80000000 // Yes (real hardware)
-&& *frame_buffer >= 0xc0000000 // Yes
-// && *frame_buffer >= 0xe0000000 // No
-&& *frame_buffer < 0xd0000000 // Yes
-) {
-  register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
-  register uint32_t on asm( "r1" ) = 100;
-  register uint32_t off asm( "r2" ) = 200;
-  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
-}
-
   Task_LogString( "BCM2835 display open, base ", 0 );
   Task_LogHex( *frame_buffer );
   Task_LogString( ", size ", 0 );
@@ -176,7 +140,6 @@ if (mailbox_request[1] == 0x80000000 // OK
   Task_MemoryChanged( fb, *frame_buffer_size );
 
   Task_LogString( "Filled\n", 0 );
-  for (;;) { Task_Sleep( 10000 ); }
 }
 
 void __attribute__(( noinline )) c_init( workspace **private,
