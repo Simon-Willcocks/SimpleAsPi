@@ -190,6 +190,7 @@ void __attribute__(( noinline )) save_task_state( svc_registers *regs )
 
 void unexpected_task_return()
 {
+  // Running in usr32
   Task_EndTask();
 }
 
@@ -699,25 +700,6 @@ OSTask *TaskOpWaitForInterrupt( svc_registers *regs )
   return resume;
 }
 
-// This is a horrible, horrible security hole, but no worse than OS_EnterOS
-// or code variables, or Wimp_TransferBlock. I need it to initialise some
-// timers using system registers on every core in QEMU. (SwitchToCore can't
-// work in svc32 mode.
-// The code can take one parameter (in r1, passed to the code in r0), may
-// return one value (in r0), and has no way of reporting errors. It will 
-// have a (limited) stack and interrupts will be disabled.
-// It may corrupt any register except r13.
-// The code may be in an application's memory, but must never do anything
-// to switch tasks (including future virtual memory misses).
-OSTask *TaskOpRunPrivileged( svc_registers *regs )
-{
-  uint32_t (*code)( uint32_t r0 ) = (void*)regs->r[0];
-
-  regs->r[0] = code( regs->r[1] );
-
-  return 0;
-}
-
 app_memory_block block_containing( uint32_t va );
 
 OSTask *TaskOpPhysicalFromVirtual( svc_registers *regs )
@@ -942,9 +924,6 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     break;
   case OSTask_WaitForInterrupt:
     resume = TaskOpWaitForInterrupt( regs );
-    break;
-  case OSTask_RunPrivileged:
-    resume = TaskOpRunPrivileged( regs );
     break;
   case OSTask_PhysicalFromVirtual:
     resume = TaskOpPhysicalFromVirtual( regs );

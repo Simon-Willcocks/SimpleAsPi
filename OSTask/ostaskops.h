@@ -48,7 +48,6 @@ enum {
   , OSTask_MemoryChanged                // Invalidates any cache
 
   , OSTask_SwitchToCore                 // Use sparingly!
-  , OSTask_RunPrivileged                // Don't use at all!
   , OSTask_Tick                         // For HAL module use only
 
   , OSTask_MapFrameBuffer
