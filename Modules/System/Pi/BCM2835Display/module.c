@@ -1,4 +1,4 @@
-/* Copyright 2021 Simon Willcocks
+/* Copyright 2023 Simon Willcocks
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,8 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-// QA7 module, for use on Raspberry Pi 2 - 3
 
 #include "CK_types.h"
 #include "ostaskops.h"
@@ -56,7 +54,6 @@ void open_display( uint32_t handle, workspace *ws )
 {
   Task_LogString( "Opening BCM2835 display\n", 0 );
 
-#if 1
   uint32_t space_on_stack[30];
 
   uint32_t mr = (uint32_t) space_on_stack;
@@ -72,7 +69,11 @@ void open_display( uint32_t handle, workspace *ws )
   mailbox_request[i++] = 8;
   mailbox_request[i++] = 0;
   mailbox_request[i++] = 1920;
-  mailbox_request[i++] = 1092; // 12 invisible pixels to make the buffer 8MiB
+#ifdef QEMU
+  mailbox_request[i++] = 1092; // 12 invisible pixels to make the buffer almost 8MiB
+#else
+  mailbox_request[i++] = 1080; // Real hardware doesn't like the above trick
+#endif
   mailbox_request[i++] = 0x00048003; // Set physical (display) width/height
   mailbox_request[i++] = 8;
   mailbox_request[i++] = 0;
@@ -81,6 +82,7 @@ void open_display( uint32_t handle, workspace *ws )
   mailbox_request[i++] = 0x00048005; // Set depth
   mailbox_request[i++] = 4;
   mailbox_request[i++] = 0;
+  uint32_t *bits_per_pixel = mailbox_request + i;
   mailbox_request[i++] = 32;
   mailbox_request[i++] = 0x00048006; // Pixel order
   mailbox_request[i++] = 4;
@@ -94,38 +96,6 @@ void open_display( uint32_t handle, workspace *ws )
   uint32_t *frame_buffer_size = mailbox_request + i;
   mailbox_request[i++] = 0;
   mailbox_request[i++] = 0; // No more tags
-#else
-  // This works, the other didn't. Cache flushing wasn't implemented properly!
-  // On the plus side, the inter-module communications seem to be OK.
-  static uint32_t const __attribute__(( aligned( 16 ) )) mailbox_request[] = {
-  26 * 4, // Message buffer size
-  0, // request
-  0x00048004,  // Set virtual (buffer) width/height
-  8,
-  0,
-  1920,
-  1092, // 12 invisible pixels to make the buffer 8MiB
-  0x00048003, // Set physical (display) width/height
-  8,
-  0,
-  1920,
-  1080,
-  0x00048005, // Set depth
-  4,
-  0,
-  32,
-  0x00048006, // Pixel order
-  4,
-  0,
-  0, // 0: BGR, 1: RGB
-  0x00040001, // Allocate buffer
-  8,
-  0,
-  2 << 20,
-  0,
-  0
-  };
-#endif
 
   // A better approach would be to create a pipe over the data and pass
   // that to the server; it can then get a physical address from the
@@ -133,18 +103,80 @@ void open_display( uint32_t handle, workspace *ws )
   // addresses is a bad idea.
   uint32_t pa = Task_PhysicalFromVirtual( mailbox_request, *mailbox_request );
 
+  Task_LogString( "BCM2835 display opening\n", 0 );
+
   register uint32_t req asm( "r0" ) = pa;
   asm volatile (
       "svc #0x1088" // Channel 8
       :
       : "r" (req)
-      : "lr", "cc" );
+      : "lr", "cc", "memory" );
 
-  Task_LogString( "BCM2835 display request sent\n", 0 );
+  // Make sure we can see what the GPU wrote
+  // This can be shown to be essential by commenting it out and
+  // checking if the value of mailbox_request[1] is non-zero
+  Task_MemoryChanged( mailbox_request, *mailbox_request );
 
-  // Tasks aren't supposed to return, yet...
-  for (;;) Task_Sleep( 100000 );
-  //ws->pa = *frame_buffer;
+if (mailbox_request[1] == 0x80000000 // OK
+&& mailbox_request[4] == 0x80000008
+&& mailbox_request[9] == 0x80000008
+&& mailbox_request[14] == 0x80000004
+&& mailbox_request[18] == 0x80000004
+&& mailbox_request[22] == 0x80000008 // OK
+
+&& (0xfffff & mailbox_request[23]) == 0 // OK
+
+// && mailbox_request[24] == 0x7ff800  // Not OK (on real hardware)
+//&& mailbox_request[24] == 1920 * 1080 * 4 // No
+&& mailbox_request[24] >= 1920 * 1080 * 4 // Yes 
+&& mailbox_request[24] < 0x800000 // Yes
+
+// && mailbox_request[24] >= 1920 * 1092 * 4 // No!
+// && mailbox_request[24] <= 0x800000
+&& *bits_per_pixel == 32 // OK
+
+&& *frame_buffer_size == mailbox_request[24] // OK
+
+// && *frame_buffer_size <= (1920 * 1096 * 4) // No
+&& *frame_buffer_size <= (1920 * 1200 * 4) // OK
+
+&& *frame_buffer == mailbox_request[23] // OK
+
+&& *frame_buffer >= 0x80000000 // Yes (real hardware)
+&& *frame_buffer >= 0xc0000000 // Yes
+// && *frame_buffer >= 0xe0000000 // No
+&& *frame_buffer < 0xd0000000 // Yes
+) {
+  register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
+  register uint32_t on asm( "r1" ) = 100;
+  register uint32_t off asm( "r2" ) = 200;
+  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
+}
+
+  Task_LogString( "BCM2835 display open, base ", 0 );
+  Task_LogHex( *frame_buffer );
+  Task_LogString( ", size ", 0 );
+  Task_LogHex( *frame_buffer_size );
+  Task_LogString( ", mapped at ", 0 );
+
+  uint32_t size = *frame_buffer_size;
+  size = (size + 0xfff) >> 12;
+
+  // Correct for something... Returns an address between 0xc0000000
+  // and 0xd0000000, but needs to be accessed with lower physical
+  // addresses. I can't remember why this is needed!
+  uint32_t base = (0x3fffffff & *frame_buffer) >> 12;
+  uint32_t *fb = Task_MapFrameBuffer( base, 0x800 ); // size );
+
+  Task_LogHex( (uint32_t) fb );
+  Task_LogNewLine();
+
+  memset( fb, 0xcc, *frame_buffer_size );
+
+  Task_MemoryChanged( fb, *frame_buffer_size );
+
+  Task_LogString( "Filled\n", 0 );
+  for (;;) { Task_Sleep( 10000 ); }
 }
 
 void __attribute__(( noinline )) c_init( workspace **private,

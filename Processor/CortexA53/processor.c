@@ -320,7 +320,15 @@ void push_writes_out_of_cache( uint32_t va, uint32_t size )
 
 void RAM_may_have_changed( uint32_t va, uint32_t size )
 {
-  set_way_no_CCSIDR2();
+  size += (va & 15);
+  va = va & ~15;
+
+  // DCIMVAC Data Cache line Invalidate by VA to PoC (external RAM)
+  for (int i = va; i < va + size; i += 16) {
+    asm ( "mcr p15, 0, %[va], c7, c6, 1" : : [va] "r" (i) );
+  }
+
+  asm ( "dmb sy" );
 }
 
 static void Cortex_A7_set_smp_mode()

@@ -200,10 +200,16 @@ void SetState( struct group *group, uint32_t to_set, uint32_t new )
 
 void irq_task()
 {
+  uint32_t irq_number = 0;
+
+  // Needed before enabling any interrupts
+  register num asm ( "r0" ) = irq_number;
+  asm ( "svc 0x1000" : : "r" (num) );
+
   Task_EnablingInterrupt(); // Needed before first call to Wait
   for (;;) {
-    register num asm ( "r0" ) = 0;
-    asm ( "svc 0x1000" : : "r" (num) );
+    register num asm ( "r0" ) = irq_number;
+    asm ( "svc 0x1001" : : "r" (num) );
   }
 }
 

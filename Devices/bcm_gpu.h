@@ -15,16 +15,16 @@ typedef struct __attribute__(( packed )) {
   // 0x200
   union {
     struct {
-      uint32_t basic_pending;
+      uint32_t base_pending;
       uint32_t pending1;
       uint32_t pending2;
       uint32_t fiq_control;
       uint32_t enable_irqs1;
       uint32_t enable_irqs2;
-      uint32_t enable_basic;
+      uint32_t enable_base;
       uint32_t disable_irqs1;
       uint32_t disable_irqs2;
-      uint32_t disable_basic;
+      uint32_t disable_base;
     };
     uint32_t to0x400[0x200/4];
   };

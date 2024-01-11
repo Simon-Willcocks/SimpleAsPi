@@ -122,32 +122,15 @@ uint32_t change_word_if_equal( uint32_t *word, uint32_t from, uint32_t to )
   return value;
 }
 
-void setup_clock_svc()
-{
-  const uint32_t clock_frequency = 1000000;
-
-  // Allow EL0 to access the timer.
-  // It would be better to use just qa7 access, but QEMU doesn't
-  // seem to allow that at the moment...
-  // For information only. CNTFRQ
-  asm volatile ( "mcr p15, 0, %[clk], c14, c0, 0"
-                 :
-                 : [clk] "r" (clock_frequency) );
-
-  // No event stream, EL0 accesses not trapped to undefined: CNTHCTL
-  asm volatile ( "mcr p15, 0, %[config], c14, c1, 0"
-                 :
-                 : [config] "r" (0x303) );
-}
-
 static inline
 void release_irq_tasks( uint32_t active, uint32_t *irq_tasks )
 {
   while (active != 0) {
     if (0 != (1 & active)) {
-      if (*irq_tasks == 0) asm ( "bkpt 6" );
-      Task_ReleaseTask( *irq_tasks, 0 );
+      uint32_t task = *irq_tasks;
+      if (task == 0) asm ( "bkpt 6" );
       *irq_tasks = 0;
+      Task_ReleaseTask( task, 0 );
     }
     irq_tasks++;
     active = active >> 1;
@@ -325,14 +308,10 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
     gpu->disable_base = 0xff;
     ensure_changes_observable();
 
-    // Writes to QA7
-    // This core only
     qa7->GPU_interrupts_routing = core;
-  }
 
-  // All cores (do not spit up the qa7 writes)
-  qa7->Core_IRQ_Source[core] = 0xfff;
-  ensure_changes_observable();
+    ensure_changes_observable();
+  }
 
   for (;;) {
     Task_WaitForInterrupt();
@@ -362,57 +341,43 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 
 //////////////////////////////////////////////////
 
-// This section will be moved to a separate module asap
-// Two separate modules, actually, one for QEMU, the other for
-// real hardware that implments the QA7 timer with automatic
-// re-load.
-
-static inline
-void timer_set_countdown( int32_t timer )
+void ticker( uint32_t handle, QA7 volatile *qa7 )
 {
-  asm volatile ( "mcr p15, 0, %[t], c14, c2, 0" : : [t] "r" (timer) );
-  // Clear interrupt and enable timer
-  asm volatile ( "mcr p15, 0, %[config], c14, c2, 1" : : [config] "r" (1) );
-}
-
-void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
-{
-  core_info cores = Task_Cores();
-  if (core != cores.current) asm ( "bkpt 11" );
-
-  static const uint32_t irq_number = 128; // QA7 timer
+  static const uint32_t irq_number = 139; // QA7 local timer
 
   Task_LogString( "Claiming QA7 timer interrupt\n", 0 );
 
+  // This request may change the core we're running on...
+  // This request used to do that, but I'll update the server to
+  // switch to this core before releasing the client.
   register uint32_t irq asm ( "r0" ) = irq_number;
   asm ( "svc 0x1000" : : "r" (irq) );
 
   Task_LogString( "Claimed QA7 timer interrupt\n", 0 );
 
-  qa7->timer_prescaler = 0x06aaaaab;
-
-  uint32_t clock_frequency;
-
-  asm volatile ( "mrc p15, 0, %[clk], c14, c0, 0" : [clk] "=r" (clock_frequency) );
-
-  uint32_t ticks_per_interval = clock_frequency / 1000; // milliseconds, honest!
-
-#ifdef QEMU
-  const int slower = 100;
-  ticks_per_interval = ticks_per_interval * slower;
-#endif
-
-  // Is this interrupt enable for the other 12 interrupts?
-  // Documentations says it's status, not control.
-  qa7->Core_IRQ_Source[core] = 0xfff;
-
   Task_EnablingInterrupts();
 
-  qa7->Core_timers_Interrupt_control[core] = 15;
+  core_info cores = Task_Cores();
+  int core = cores.current;
+
+  qa7->Local_Interrupt_routing0 = core; // IRQ to this core, please
+
+  // Just in case the above needs to be processed before the first
+  // interrupt...
+  ensure_changes_observable();
+
+  // Automatically reloads when reaches zero
+  // Interrupt cleared by writing (1 << 31) to Local_timer_write_flags
+  qa7->Local_timer_control_and_status = 
+      (1 << 29) | // Interrupt enable
+      (1 << 28) | // Timer enable
+#ifdef QEMU
+      3840000; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms * 100 for qemu
+#else
+      38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
+#endif
 
   ensure_changes_observable(); // Wrote to QA7
-
-  timer_set_countdown( ticks_per_interval );
 
   Task_LogString( "Waiting for first QA7 timer interrupt\n", 0 );
 
@@ -420,7 +385,8 @@ void ticker( uint32_t handle, uint32_t core, QA7 volatile *qa7 )
     register uint32_t irq asm ( "r0" ) = irq_number;
     asm ( "svc 0x1001" : : "r" (irq) );
 
-    timer_set_countdown( ticks_per_interval );
+    // Clear interrupt flag
+    qa7->Local_timer_write_flags = (1 << 31);
 
     // There's only one place in each system that calls this,
     // so there's no point in putting it into ostaskops.h
@@ -437,20 +403,16 @@ void start_ticker()
 
   static uint32_t const stack_size = 72;
   uint8_t *stack = rma_claim( stack_size );
-  core_info cores = Task_Cores();
-  uint32_t core = cores.current;
 
   register void *start asm( "r0" ) = ticker;
   register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
-  register uint32_t r1 asm( "r2" ) = core;
-  register QA7 volatile *r2 asm( "r3" ) = qa7;
+  register QA7 volatile *r1 asm( "r2" ) = qa7;
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_Create)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
-    , "r" (r2)
     : "lr", "cc" );
 
   Task_LogString( "Started ticker\n", 0 );
@@ -517,15 +479,6 @@ leds( 27 );
 
     Task_SwitchToCore( i );
 
-    register void (*code)() asm ( "r0" ) = setup_clock_svc;
-    register uint32_t out asm ( "r0" );
-
-    asm volatile ( // volatile because I ignore the output value
-          "svc %[swi]"
-      : "=r" (out)
-      : [swi] "i" (OSTask_RunPrivileged)
-      , "r" (code) );
-
     register void *start asm( "r0" ) = core_irq_task;
     register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
     register uint32_t r1 asm( "r2" ) = i;
@@ -579,6 +532,10 @@ leds( 22 );
       // We could do without this if all interrupts could be masked, but
       // some have to be enabled or disabled at source (which we don't want
       // to know about).
+
+      // It might also come in useful if we name interrupt sources etc.
+
+      Task_SwitchToCore( client.core );
       Task_ReleaseTask( client.task_handle, 0 );
       break;
     case 1: // Wait for interrupt

@@ -371,7 +371,7 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
     if (is_queue( action ))
       return queue_running_OSTask( regs, action.queue, swi_offset );
     else if (action.code == 0) {
-      asm ( "udf 86" );
+      asm ( "bkpt 86" );
       return Error_UnknownSWI( regs );
     }
     else {

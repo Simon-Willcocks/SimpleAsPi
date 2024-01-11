@@ -45,9 +45,13 @@ enum {
 
   , OSTask_PhysicalFromVirtual          // For device drivers
                                         // (Also flushes the cache)
+  , OSTask_MemoryChanged                // Invalidates any cache
+
   , OSTask_SwitchToCore                 // Use sparingly!
   , OSTask_RunPrivileged                // Don't use at all!
   , OSTask_Tick                         // For HAL module use only
+
+  , OSTask_MapFrameBuffer
 
   , OSTask_GetLogPipe                   // For the current core
   , OSTask_LogString
@@ -74,7 +78,7 @@ enum {
 static inline
 void Task_Sleep( uint32_t ms )
 {
-#ifdef QEMU
+#ifdef XQEMU
   ms = ms / 10;
 #endif
   register uint32_t t asm( "r0" ) = ms;
@@ -194,6 +198,25 @@ void Task_SwitchToCore( uint32_t core )
     : [swi] "i" (OSTask_SwitchToCore)
     , "r" (c)
     : "lr", "cc", "memory" );
+}
+
+static inline
+void *Task_MapFrameBuffer( uint32_t pa, uint32_t pages )
+{
+  register uint32_t physical asm ( "r0" ) = pa;
+  register uint32_t size asm ( "r1" ) = pages;
+
+  register void *va asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvs r0, #0"
+        : "=r" (va)
+        : [swi] "i" (OSTask_MapFrameBuffer)
+        , "r" (physical)
+        , "r" (size)
+        : "lr", "cc" );
+
+  return va;
 }
 
 static inline
@@ -794,6 +817,21 @@ uint32_t Task_PhysicalFromVirtual( void const *va, uint32_t length )
   asm volatile ( "svc %[swi]"
       : "=r" (p)
       : [swi] "i" (OSTask_PhysicalFromVirtual)
+      , "r" (v)
+      , "r" (l)
+      : "lr", "cc", "memory" );
+  return p;
+}
+
+static inline
+uint32_t Task_MemoryChanged( void const *va, uint32_t length )
+{
+  register void const *v asm( "r0" ) = va;
+  register uint32_t l asm( "r1" ) = length;
+  register uint32_t p asm( "r0" );
+  asm volatile ( "svc %[swi]"
+      : "=r" (p)
+      : [swi] "i" (OSTask_MemoryChanged)
       , "r" (v)
       , "r" (l)
       : "lr", "cc", "memory" );

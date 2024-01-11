@@ -9,10 +9,10 @@ MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/P
 echo Modules: ${MODULES//:/ }
 
 #INITIAL_MODULES='QA7\0GPUMailbox\0LEDBlink\0LogToUART\0'
-#INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0'
-INITIAL_MODULES='QA7\0GPUMailbox\0BCM2835Display\0LEDBlink\0'
-#DEFAULT_LANGUAGE=LEDBlink
-DEFAULT_LANGUAGE=DoNothing
+#INITIAL_MODULES='QA7\0LEDBlink\0'
+INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0LEDBlink\0'
+DEFAULT_LANGUAGE=LEDBlink
+#DEFAULT_LANGUAGE=LogToUART
 
 # This is not a foolproof test, but it should catch some foolishness
 for i in ${INITIAL_MODULES/\\0/ } $DEFAULT_LANGUAGE ; do 
@@ -130,6 +130,8 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=app_memory_limit=0x30000000 \
         -Wl,--defsym=pipes_base=0x80000000 \
         -Wl,--defsym=pipes_top=0xc0000000 \
+        -Wl,--defsym=frame_buffers_base=0xc0000000 \
+        -Wl,--defsym=frame_buffers_top=0xe0000000 \
         \
         -Wl,--defsym=translation_table=0xfff80000 \
         -Wl,--defsym=global_translation_table=0xfff84000 \

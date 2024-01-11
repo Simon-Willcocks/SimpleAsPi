@@ -190,7 +190,7 @@ void __attribute__(( noinline )) save_task_state( svc_registers *regs )
 
 void unexpected_task_return()
 {
-  PANIC;
+  Task_EndTask();
 }
 
 static inline void put_to_sleep( OSTask **head, void *p )
@@ -647,39 +647,26 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
 
 OSTask *TaskOpEndTask( svc_registers *regs )
 {
-  OSTask *running = workspace.ostask.running;
-  OSTask *resume = running->next;
+// FIXME
+  regs->r[0] = 0xffffffff; // Maximum sleep
+  regs->lr = unexpected_task_return;
+  regs->spsr = 0x10;
+  return TaskOpSleep( regs );
 
-  workspace.ostask.running = resume;
+  extern uint32_t new_queue();
 
-  // It can't be the only task in the list, there's always idle
-  if (running->next == running || running->prev == running) PANIC;
-
-  dll_detach_OSTask( running );
-
-  // Removed properly from list
-  if (running->next != running || running->prev != running) PANIC;
-  if (workspace.ostask.running == running) PANIC;
-
-  // Removing the head leaves the old next at the head
-  if (workspace.ostask.running != resume) PANIC;
-
-  // FIXME: Should call some higher lever housekeeping functions.
-
-  // If this takes too long, the pointer could be sent to a
-  // task that cleans it out and returns it to the pool.
-  memset( running, 0, sizeof( OSTask ) );
-
-  dll_new_OSTask( running );
-
-  mpsafe_insert_OSTask_at_tail( &shared.ostask.task_pool, running );
-
-  if (--running->slot->number_of_tasks == 0) {
-    // FIXME
-    PANIC;
+  // FIXME: Tidy up the task, look for any locks held by it, perhaps?
+  // If it's the last one in the slot, free the slot, any pipes it has
+  // open, etc. Lots to do!
+  uint32_t *queue_handle = &shared.ostask.terminated_tasks_queue;
+  while (*queue_handle <= 1) {
+    uint32_t old = change_word_if_equal( queue_handle, 0, 1 );
+    if (old == 0) {
+      *queue_handle = new_queue();
+    }
   }
 
-  return resume;
+  return queue_running_OSTask( regs, *queue_handle, 0 );
 }
 
 OSTask *TaskOpWaitForInterrupt( svc_registers *regs )
@@ -753,6 +740,16 @@ OSTask *TaskOpPhysicalFromVirtual( svc_registers *regs )
   return 0;
 }
 
+OSTask *TaskOpMemoryChanged( svc_registers *regs )
+{
+  uint32_t va = regs->r[0];
+  uint32_t length = regs->r[1];
+
+  RAM_may_have_changed( va, length );
+
+  return 0;
+}
+
 OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
   uint32_t core = regs->r[0];
@@ -817,6 +814,56 @@ OSTask *TaskOpMapDevicePages( svc_registers *regs )
   return 0;
 }
 
+// TODO: Make this more general? For use for dynamic areas, perhaps?
+OSTask *TaskOpMapFrameBuffer( svc_registers *regs )
+{
+  uint32_t phys = regs->r[0];
+  uint32_t pages = regs->r[1];
+
+#if 0
+  if ((pages & 0xff) != 0) PANIC; // TODO Deal with smaller or unaligned buffers
+  if ((phys & 0xff) != 0) PANIC; // TODO Deal with smaller or unaligned buffers
+
+  extern uint8_t frame_buffers_base;
+  extern uint8_t frame_buffers_top;
+
+  uint32_t fb_base = &frame_buffers_base - (uint8_t*)0;
+  uint32_t fb_top = &frame_buffers_top - (uint8_t*)0;
+
+  if (shared.ostask.frame_buffer_base == 0) {
+    change_word_if_equal( &shared.ostask.frame_buffer_base, 0, fb_base );
+    assert( shared.ostask.frame_buffer_base != 0 );
+  }
+
+  uint32_t base;
+  uint32_t old = shared.ostask.frame_buffer_base;
+
+  do {
+    base = old;
+    uint32_t next = base + (pages << 12);
+    old = change_word_if_equal( &shared.ostask.frame_buffer_base, base, next );
+
+    if (next >= fb_top) PANIC; // FIXME: Deal with running out of space 
+  } while (old != base);
+#else
+  uint32_t base = 0xc0000000;
+#endif
+
+  memory_mapping mapping = {
+    .base_page = phys,
+    .pages = pages,
+    .va = base,
+    .type = CK_MemoryRW,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 1 };
+  map_memory( &mapping );
+
+  regs->r[0] = base;
+
+  return 0;
+}
+
 OSTask *TaskOpAppMemoryTop( svc_registers *regs )
 {
   regs->r[0] = app_memory_top( regs->r[0] );
@@ -839,8 +886,10 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     resume = TaskOpSleep( regs );
     break;
   case OSTask_Spawn:
+    resume = TaskOpCreate( regs, true );
+    break;
   case OSTask_Create:
-    resume = TaskOpCreate( regs, (number == OSTask_Spawn) );
+    resume = TaskOpCreate( regs, false );
     break;
   case OSTask_EndTask:
     resume = TaskOpEndTask( regs );
@@ -900,11 +949,17 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_PhysicalFromVirtual:
     resume = TaskOpPhysicalFromVirtual( regs );
     break;
+  case OSTask_MemoryChanged:
+    resume = TaskOpMemoryChanged( regs );
+    break;
   case OSTask_SwitchToCore:
     resume = TaskOpSwitchToCore( regs );
     break;
   case OSTask_Tick:
     sleeping_tasks_tick();
+    break;
+  case OSTask_MapFrameBuffer:
+    resume = TaskOpMapFrameBuffer( regs );
     break;
   case OSTask_GetLogPipe:
     resume = TaskOpGetLogPipe( regs );

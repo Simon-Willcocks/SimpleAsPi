@@ -65,6 +65,9 @@ typedef struct {
   OSQueue *queue_pool;
   OSPipe *pipe_pool;
 
+  uint32_t terminated_tasks_queue;
+  uint32_t frame_buffer_base;
+
   uint32_t number_of_cores;
 
   uint32_t queues_lock;

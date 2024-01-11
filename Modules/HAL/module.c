@@ -98,6 +98,12 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     if (error != 0) {
       asm ( "udf 7" );
     }
+
+    // In case the initialisation kicked off some tasks, let them run!
+    // Legacy modules might have set callbacks, they'll have been run
+    // by the time we get here. (Modules are not permitted to call
+    // Yield in their initialisation code, svc mode.)
+    Task_Yield();
   }
 
   char const entering[] = "Entering default language: " DEFAULT_LANGUAGE "\n";

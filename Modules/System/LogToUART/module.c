@@ -17,6 +17,9 @@
 #include "ostaskops.h"
 #include "bcm_uart.h"
 
+// Note for when the UART code is written; associated interrupt is 57
+
+
 void send_to_uart( char const *string, uint32_t length );
 
 typedef struct workspace workspace;

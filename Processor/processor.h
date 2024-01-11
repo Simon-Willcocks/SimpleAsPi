@@ -94,7 +94,7 @@ uint32_t change_word_if_equal( uint32_t *word, uint32_t from, uint32_t to )
                      , [word] "+r" (word)
                      : [value] "r" (to) );
 
-      ensure_changes_observable();
+      if (!failed) ensure_changes_observable();
     }
     else {
       asm ( "clrex" );

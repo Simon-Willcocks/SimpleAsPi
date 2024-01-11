@@ -113,12 +113,10 @@ void led_manager( uint32_t handle, uint32_t queue )
   uint32_t gpio_page = 0x3f200000 >> 12;
   Task_MapDevicePages( gpio, gpio_page, 1 );
 
-  /*
-  set_state( gpio, 22, GPIO_Output );
+  set_state( gpio, 27, GPIO_Output );
   push_writes_to_device();
-  led_off( 22 ); // Green
-  Task_LogString( "Green off\n", 0 );
-  */
+  led_on( 27 ); // Yellow
+  Task_LogString( "Yellow off\n", 0 );
 
   for (;;) {
     queued_task client = Task_QueueWait( queue );
