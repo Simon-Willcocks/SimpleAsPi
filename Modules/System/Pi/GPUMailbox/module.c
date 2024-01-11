@@ -216,13 +216,10 @@ void response_manager( uint32_t handle, workspace *ws )
   for (;;) {
     Task_LogString( "Waiting for GPU mailbox interrupt\n", 0 );
 
-#if 1
-while (mail_empty( &gpu->mailbox[0] )) Task_Yield();
-#else
     // This SWI enables the interrupt internally
     register uint32_t num asm ( "r0" ) = 65;
     asm ( "svc 0x1001" : : "r" (num) );
-#endif
+
     Task_LogString( "GPU mailbox interrupt\n", 0 );
 
     while (!mail_empty( &gpu->mailbox[0] )) {
