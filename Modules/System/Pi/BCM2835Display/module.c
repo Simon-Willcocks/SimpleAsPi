@@ -106,16 +106,30 @@ void open_display( uint32_t handle, workspace *ws )
   Task_LogString( "BCM2835 display opening\n", 0 );
 
   register uint32_t req asm( "r0" ) = pa;
+  register error_block *error asm( "r0" );
   asm volatile (
-      "svc #0x1088" // Channel 8
-      :
+      "svc #0x21088" // Channel 8
+  "\n  movvc r0, #0"
+      : "=r" (error)
       : "r" (req)
       : "lr", "cc", "memory" );
 
+  if (error != 0) {
+    Task_LogString( "BCM2835 GPU Mailbox not responding ", 0 );
+    return;
+  }
   // Make sure we can see what the GPU wrote
   // This can be shown to be essential by commenting it out and
   // checking if the value of mailbox_request[1] is non-zero
   Task_MemoryChanged( mailbox_request, *mailbox_request );
+
+  Task_LogString( "BCM2835 display response ", 0 );
+  Task_LogHex( mailbox_request[1] );
+  Task_LogNewLine();
+
+  if (0 == mailbox_request[1]) {
+    return;
+  }
 
   Task_LogString( "BCM2835 display open, base ", 0 );
   Task_LogHex( *frame_buffer );

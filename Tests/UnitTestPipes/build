@@ -94,7 +94,6 @@ arm-none-eabi-gcc-9.2.1 \
         romimage_end.c \
         -Wl,--defsym=legacy_svc_stack_top=0xff100000 \
         -Wl,--defsym=legacy_zero_page=0xfff40000 \
-        -Wl,--defsym=global_devices_top=0xfff60000 \
         \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
         -Wl,--defsym=top_of_minimum_RAM=0x10000000 \

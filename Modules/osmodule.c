@@ -174,6 +174,11 @@ module_header *find_module_in_list( char const *name, uint32_t const *list )
   uint32_t const *entry = list;
   while (*entry != 0) {
     header = (void*) (entry + 1);
+#ifdef DEBUG__SHOW_MODULES
+  Task_LogString( title_string( header ), 0 );
+  Task_LogNewLine();
+#endif
+
     if (module_name_match( title_string( header ), name )) {
       return header;
     }
@@ -356,6 +361,43 @@ void run_action( svc_registers *regs, uint32_t code, module *m )
   );
 }
 
+uint32_t swi_handler( module_header *h )
+{
+  uint32_t result = h->offset_to_swi_handler;
+  if (result != 0) result += (uint32_t) h;
+  return result;
+}
+
+static void run_swi_handler_code( svc_registers *regs, uint32_t svc, module *m )
+{
+  // Like run_action, except calling a single routine for all SWIs.
+  register uint32_t non_kernel_code asm( "r14" ) = swi_handler( m->header );
+  register uint32_t *private_word asm( "r12" ) = &m->private_word;
+  register uint32_t svc_index asm( "r11" ) = svc & 0x3f;
+
+  asm (
+      "\n  push { %[regs] }"
+      "\n  subs r0, r0, r0" // Clear V (also N, C, and set Z)
+      "\n  ldm %[regs], { r0-r9 }"
+      "\n  blx r14"
+      "\nreturn:"
+      "\n  pop { %[regs] }"
+      "\n  stm %[regs], { r0-r9 }"
+      "\n  ldr r1, [%[regs], %[spsr]]"
+      "\n  bic r1, #0xf0000000"
+      "\n  mrs r2, cpsr"
+      "\n  and r2, r2, #0xf0000000"
+      "\n  orr r1, r1, r2"
+      "\n  str r1, [%[regs], %[spsr]]"
+      :
+      : [regs] "r" (regs)
+      , "r" (private_word)
+      , "r" (svc_index)
+      , "r" (non_kernel_code)
+      , [spsr] "i" (4 * (&regs->spsr - &regs->r[0]))
+      : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9" );
+}
+
 OSTask *run_module_swi( svc_registers *regs, int swi )
 {
   module *m = find_module_by_chunk( swi );
@@ -379,7 +421,9 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
     }
   }
   else {
-    PANIC; // Legacy module
+    // Legacy module SWI, requires legacy stack ownership, can't check here 
+    // because we don't know about it!
+    run_swi_handler_code( regs, swi, m );
   }
 
   return 0;

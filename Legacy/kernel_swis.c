@@ -617,6 +617,4 @@ void interrupting_privileged_code( OSTask *task )
   task->regs.lr = (uint32_t) ResumeLegacy;
   // Don't let the ResumeLegacy routine be interrupted!
   task->regs.spsr |= 0x80;
-
-  // Task_LogString( "Interrupted privileged code ", 0 ); Task_LogHex( (uint32_t) task );
 }

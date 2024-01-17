@@ -194,13 +194,12 @@ static inline l1tt_table_entry table_entry( l2tt *table )
   return entry;
 }
 
-static inline l2tt *make_section_page_mappable( arm32_ptr virt )
+static inline l2tt *get_free_table()
 {
   // Replace an invalid l1tt entry with a table so that pages can
   // be mapped into the area.
 
   l2tt *table;
-  l1tt_table_entry entry;
 
   // Fill a level 2 table with the same handler
   // Reminder: MMU structures are protected by shared.mmu.lock
@@ -208,29 +207,17 @@ static inline l2tt *make_section_page_mappable( arm32_ptr virt )
 
   if (0 == shared.mmu.free) {
     // Early in the boot process, don't panic yet!
-PANIC;
-    int i;
-
-    for (i = 0; i < number_of( local_kernel_page_table ); i++) {
-      table = &local_kernel_page_table[i];
-      if (table->entry[0].raw == 0) break;
-    }
-    if (table->entry[i].raw != 0) PANIC;
-
-    if (1 != translation_table.entry[0xfff].type) PANIC;
-
-    entry = translation_table.entry[0xfff].table;
-    entry.page_table_base |= i;
+    // OK, do panic; the current code never encounters this problem
+    // and may never do so.
+    // If it does, find a way to allocate spare space in the core's
+    // workspace to a 1024-byte table.
+    PANIC;
   }
   else {
     table = shared.mmu.free->next;
 
     dll_detach_l2tt( table );
-
-    entry = table_entry( table );
   }
-
-  translation_table.entry[virt.section].table = entry;
 
   return table;
 }
@@ -261,7 +248,9 @@ void clear_memory_region(
       memory_fault_handler handler =
                 translation_table.entry[virt.section].handler;
 
-      l2table = make_section_page_mappable( virt );
+      l2table = get_free_table();
+
+      translation_table.entry[virt.section].table = table_entry( l2table );
 
       // Copy the section handler to the remaining entries
       for (int i = 0; i < virt.page; i++) {
@@ -318,7 +307,9 @@ void clear_memory_region(
       memory_fault_handler handler =
                 translation_table.entry[virt.section].handler;
 
-      l2table = make_section_page_mappable( virt );
+      l2table = get_free_table();
+
+      translation_table.entry[virt.section].table = table_entry( l2table );
 
       // Copy the section handler to the remaining entries
       for (int i = va_pages; i < 256; i++) {
@@ -373,6 +364,8 @@ void map_memory( memory_mapping const *mapping )
   arm32_ptr phys = { .raw = (mapping->base_page << 12) };
   arm32_ptr virt = { .raw = mapping->va };
 
+  bool all_cores = mapping->all_cores;
+
   // First off, are we mapping pages, large pages, sections,
   // or supersections (or a mixture)?
 
@@ -396,7 +389,7 @@ void map_memory( memory_mapping const *mapping )
 
     uint32_t sections = mapping->pages >> 8;
 
-    if (mapping->all_cores)
+    if (all_cores)
       entry.section.S = 1;
 
     if (mapping->usr32_access)
@@ -410,7 +403,7 @@ void map_memory( memory_mapping const *mapping )
     entry.section.base = phys.section;
     for (int i = 0; i < sections; i++) {
       translation_table.entry[virt.section + i] = entry;
-      if (mapping->all_cores)
+      if (all_cores)
         global_translation_table.entry[virt.section + i] = entry;
       entry.section.base++;
     }
@@ -422,69 +415,110 @@ void map_memory( memory_mapping const *mapping )
     // Not yet implemented!
     extern l2tt VMSAv6_Level2_Tables[4096];
 
+    // Executive decision: If the first page mapped in a global section
+    // is global, the whole section will be global.
+    // If not, not.
+
+    // i.e. if the section is not marked as check global or if the first
+    // page mapped into a global section is not for all cores, the table
+    // will not be shared.
+
+    // TODO: Report an error (or PANIC) if the table is shared, but the
+    // page being mapped into it shouldn't be.
+
     l2tt *table = 0;
+    l2tt *global_table = 0;
+    l1tt_entry entry = translation_table.entry[virt.section];
 
-    if (translation_table.entry[virt.section].type == 1) {
-      table = mapped_table( translation_table.entry[virt.section].table );
+    if (entry.type == 0                         // No table yet
+     && entry.handler == check_global_table     // Section check global
+     && all_cores) {                            // Mapping global page
+      // Has another core already created a table to be shared?
+      l1tt_entry global = global_translation_table.entry[virt.section];
+
+      if (global.type == 1) {
+        // Yes, share the table.
+        translation_table.entry[virt.section] = global;
+        entry = global;
+      }
+
+      // No? Then we'll make the table in a mo...
     }
-    else if (translation_table.entry[virt.section].type == 0) {
-      memory_fault_handler handler =
-                translation_table.entry[virt.section].handler;
 
-      table = make_section_page_mappable( virt );
+    if (entry.type == 0) {
+      // Don't have a handy shared table (or we don't want to share a table)
+      // So, make our own
+
+      table = get_free_table();
 
       for (int i = 0; i < 256; i++) {
-        table->entry[i].handler = handler;
+        table->entry[i].handler = entry.handler;
+      }
+
+      entry.table = table_entry( table );
+
+      translation_table.entry[virt.section] = entry;
+
+      if (entry.handler == check_global_table) {
+        if (all_cores) { // We're going to share the table
+          global_translation_table.entry[virt.section] = entry;
+        }
+        else { // The global mapping needs its own table
+          global_table = get_free_table();
+
+          for (int i = 0; i < 256; i++) {
+            global_table->entry[i].handler = entry.handler;
+          }
+
+          global_translation_table.entry[virt.section].table =
+                        table_entry( global_table );
+        }
+      }
+    }
+    else if (entry.type == 1) {
+      table = mapped_table( entry.table );
+      if (all_cores) {
+        l1tt_entry global = global_translation_table.entry[virt.section];
+        global_table = mapped_table( global.table );
       }
     }
 
-    if (translation_table.entry[virt.section].type != 1) PANIC;
+    if (entry.type != 1) PANIC;
     if (table == 0) PANIC;
 
-    l2tt_entry entry;
+    l2tt_entry page_entry;
 
     switch (mapping->type) {
-    case CK_MemoryRWX: entry.raw = rwx_page.raw | cached_page.raw; break;
-    case CK_MemoryRW: entry.raw = rw_page.raw | cached_page.raw; break;
-    case CK_MemoryRX: entry.raw = rx_page.raw | cached_page.raw; break;
-    case CK_MemoryR: entry.raw = r_page.raw | cached_page.raw; break;
-    case CK_Device: entry = dev_page; break;
+    case CK_MemoryRWX: page_entry.raw = rwx_page.raw | cached_page.raw; break;
+    case CK_MemoryRW: page_entry.raw = rw_page.raw | cached_page.raw; break;
+    case CK_MemoryRX: page_entry.raw = rx_page.raw | cached_page.raw; break;
+    case CK_MemoryR: page_entry.raw = r_page.raw | cached_page.raw; break;
+    case CK_Device: page_entry = dev_page; break;
     default:
       PANIC;
     }
 
-    l2tt *global = 0;
-    if (mapping->all_cores) {
-      entry.S = 1;
-      l1tt_entry l1 = global_translation_table.entry[virt.section];
-      if (l1.type != 1) PANIC;
-      global = global_mapped_table( l1.table );
+    if (all_cores) {
+      page_entry.S = 1;
     }
 
     if (mapping->usr32_access)
-      entry.unprivileged_access = 1;
+      page_entry.unprivileged_access = 1;
 
     if (mapping->map_specific)
-      entry.nG = 1;
+      page_entry.nG = 1;
 
-    entry.AF = 1;
-    entry.page_base = phys.page_base;
+    page_entry.AF = 1;
+    page_entry.page_base = phys.page_base;
 
     if (CK_Device == mapping->type && mapping->pages > 1) PANIC;
 
     for (int i = 0; i < mapping->pages; i++) {
-#ifndef DEBUG__BREAKME
-// Without this line, this condition is sometimes true, with it, it isn't!
-if ((entry.raw & 0xfff) == 0x357) asm ( "bkpt 0" : : "r" (entry.raw), "r" (mapping->base_page), "r" (mapping->pages), "r" (mapping->va), "r" (mapping->type), "r" (mapping->map_specific + (mapping->all_cores << 8) + (mapping->usr32_access << 12)) );
-#else
-// This line does not have the same effect! Same as no line at all
-if ((entry.raw & 0xfff) == 0x357) PANIC;
-#endif
-      table->entry[virt.page] = entry;
-      if (global != 0)
-        global->entry[virt.page] = entry;
+      table->entry[virt.page] = page_entry;
+      if (global_table != 0 && all_cores)
+        global_table->entry[virt.page] = page_entry;
 
-      entry.page_base++;
+      page_entry.page_base++;
       virt.page++;
     }
   }

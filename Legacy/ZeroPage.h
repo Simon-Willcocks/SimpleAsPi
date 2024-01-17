@@ -29,7 +29,7 @@
 
 /* Note that offsets will change if the structure is compiled in 64-bit. */
 #if 4 != __SIZEOF_POINTER__
-#error "Use -m32 and multilib to test this file"
+#error "Use -m32 and multilib to test this file on 64-bit platforms"
 #endif
 
 typedef struct EcfOraEor EcfOraEor;
