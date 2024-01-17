@@ -19,7 +19,10 @@ typedef struct {
 typedef struct {
   uint32_t jtable[128];
   uint32_t queue;
+  // owner is a pointer to a word in RMA, which is accessible to the
+  // usr32 mode task, as well as the kernel_swis code.
   uint32_t *owner;
-  uint32_t *sp;         // The SP when the legacy task was interrupted
+  // The SP when the task running legacy code was interrupted
+  uint32_t *sp;
 } shared_legacy;
 

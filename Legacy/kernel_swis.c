@@ -580,9 +580,16 @@ void __attribute__(( noreturn )) startup()
 
 void __attribute__(( naked, noreturn )) ResumeLegacy()
 {
-  // When interrupted task resumes, that will restore sp, lr, and the pc.
+  // When interrupted task resumes, that will restore sp, the cpsr, then lr,
+  // and the pc.
+
+  // We know that the I flag was clear when the task was interrupted, because
+  // it wouldn't have been interrupted!
+
   register uint32_t **legacy_sp asm( "lr" ) = &shared.legacy.sp;
   asm ( "ldr sp, [lr]"
+
+    "\n  cpsie i"
     "\n  pop { lr, pc }"
     :
     : "r" (legacy_sp) );
@@ -590,6 +597,9 @@ void __attribute__(( naked, noreturn )) ResumeLegacy()
 
 void interrupting_privileged_code( OSTask *task )
 {
+  // This should only ever happen in legacy code.
+  // We need to be able to get the task back to the state it was in when
+  // interrupted, without corrupting anything.
   uint32_t svc_lr;
   asm ( "mrs %[sp], sp_svc"
     "\n  mrs %[lr], lr_svc"
@@ -598,8 +608,15 @@ void interrupting_privileged_code( OSTask *task )
     , [lr] "=&r" (svc_lr)
     : [reset_sp] "r" ((&workspace.svc_stack)+1) );
 
+  // TODO: Check here if the legacy stack is exhausted. If it is, there's
+  // probably an interrupt that's stuck on incorrectly, I think.
+
   shared.legacy.sp -= 2;
   shared.legacy.sp[0] = svc_lr;
   shared.legacy.sp[1] = task->regs.lr;
   task->regs.lr = (uint32_t) ResumeLegacy;
+  // Don't let the ResumeLegacy routine be interrupted!
+  task->regs.spsr |= 0x80;
+
+  // Task_LogString( "Interrupted privileged code ", 0 ); Task_LogHex( (uint32_t) task );
 }
