@@ -158,6 +158,16 @@ void setup_legacy_svc_stack()
 
 extern LegacyZeroPage legacy_zero_page;
 
+void IMB_Range()
+{
+  // Does this processor have split instruction and data caches?
+  // I don't think so.
+  // DSB, DMB, ISB?
+  asm ( "dsb" );
+  asm ( "dmb" );
+  asm ( "isb" );
+}
+
 void setup_legacy_zero_page()
 {
   // One block of memory shared by all cores. (At the moment.)
@@ -176,6 +186,8 @@ void setup_legacy_zero_page()
   map_memory( &map );
 
   memset( &legacy_zero_page, 0, sizeof( legacy_zero_page ) );
+
+  legacy_zero_page.Proc_IMB_Range = IMB_Range;
 }
 
 void *cb_array( int num, int size )
