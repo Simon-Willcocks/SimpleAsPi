@@ -142,9 +142,11 @@ void setup_legacy_svc_stack()
   // -1 in case whole MiB is used
   // e.g. top 0xff100000 -> 0xff0fffff -> base 0xff000000
 
+  uint32_t pages = (top - base + 0xfff) >> 12;
+
   memory_mapping map = {
-    .base_page = claim_contiguous_memory( 256 ),
-    .pages = (top - base) >> 12,
+    .base_page = claim_contiguous_memory( pages ),
+    .pages = pages,
     .va = base,
     .type = CK_MemoryRW,
     .map_specific = 0,

@@ -130,6 +130,9 @@ void core_debug_task( uint32_t handle, int core, workspace *ws, uint32_t pipe )
 
 void send_to_uart( char const *string, uint32_t length )
 {
+#ifndef QEMU
+  return; // Testing 19/1/2024 seems to fail on real hardware
+#else
   for (int i = 0; i < length; i++) {
     // Send to UART (this should work on qemu, but not on real hardware;
     // that needs to wait for ready to send interrupts
@@ -139,6 +142,7 @@ void send_to_uart( char const *string, uint32_t length )
     // and set the alternate functions.
     uart->data = string[i];
   }
+#endif
 }
 
 void start_log( uint32_t handle, workspace *ws )
@@ -146,6 +150,8 @@ void start_log( uint32_t handle, workspace *ws )
   // This location should be passed to the final driver module by the HAL
   uint32_t uart_page = 0x3f201000 >> 12;
   Task_MapDevicePages( uart, uart_page, 1 );
+
+  send_to_uart( "Starting", 9 );
 
   ws->output_pipe = PipeOp_CreateForTransfer( 4096 );
 

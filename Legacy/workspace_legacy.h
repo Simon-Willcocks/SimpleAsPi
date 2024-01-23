@@ -17,7 +17,6 @@ typedef struct {
 } workspace_legacy;
 
 typedef struct {
-  uint32_t jtable[128];
   uint32_t queue;
   // owner is a pointer to a word in RMA, which is accessible to the
   // usr32 mode task, as well as the kernel_swis code.

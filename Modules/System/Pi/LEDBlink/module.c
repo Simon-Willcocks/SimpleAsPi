@@ -40,7 +40,7 @@ NO_swi_names;
 NO_swi_decoder;
 NO_messages_file;
 
-const char title[] = "LEGBlink";
+const char title[] = "LEDBlink";
 const char help[] = "BCM Blink LED\t0.01 (" CREATION_DATE ")";
 
 // For consistency, this should be 7000 (work our way down from 0x8000,
@@ -184,7 +184,7 @@ void *memcpy(void *d, void *s, uint32_t n)
 
 void go()
 {
-  register uint32_t pin asm( "r0" ) = 22; // 22 green 27 orange
+  register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
   register uint32_t on asm( "r1" ) = 200;
   register uint32_t off asm( "r2" ) = 100;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );

@@ -5,11 +5,24 @@ MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/P
 
 echo Modules: ${MODULES//:/ }
 
-INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0GPUMailbox\0BCM2835Display\0UtilityModule\0FileSwitch\0ResourceFS\0TerritoryManager\0Messages\0MessageTrans\0UK\0'
-#VFPSupport\0BASIC\0'
-DEFAULT_LANGUAGE=LogToUART
+# Be careful not to include the same module twice!
+# At least until it will be safely coped with.
+INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0'
 
-echo $INITIAL_MODULES
+INITIAL_MODULES+='LogToUART\0'
+
+INITIAL_MODULES+='UtilityModule\0'
+INITIAL_MODULES+='FileSwitch\0ResourceFS\0'
+INITIAL_MODULES+='TerritoryManager\0Messages\0MessageTrans\0'
+#INITIAL_MODULES+='UK\0'
+#INITIAL_MODULES+='VFPSupport\0BASIC\0'
+#INITIAL_MODULES+='UtilityModule\0FileSwitch\0ResourceFS\0TerritoryManager\0'
+#INITIAL_MODULES+='UtilityModule\0FileSwitch\0'
+#INITIAL_MODULES+='UtilityModule\0'
+
+DEFAULT_LANGUAGE=LEDBlink
+
+echo Initial modules: ${INITIAL_MODULES//\\0/, }
 echo Default language: $DEFAULT_LANGUAGE
 
 rm -rf Generated
@@ -190,4 +203,5 @@ strings kernel7.img -t x | grep OSIm | grep $KERNEL_OFFSET &&
 echo Seems alright &&
 
 echo Image built, disassembling &&
-time arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump
+# time arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump
+echo NOT!

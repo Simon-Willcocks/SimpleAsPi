@@ -148,7 +148,7 @@ static inline l2tt *shared_table( l1tt_table_entry entry )
   return vbase.rawp;
 }
 
-static inline l2tt *global_mapped_table( l1tt_table_entry entry )
+static inline l2tt *mapped_global_table( l1tt_table_entry entry )
 {
   arm32_ptr base = { .page_base = shared.mmu.l2tables_phys_base };
 
@@ -200,10 +200,6 @@ static inline l2tt *get_free_table()
   // be mapped into the area.
 
   l2tt *table;
-
-  // Fill a level 2 table with the same handler
-  // Reminder: MMU structures are protected by shared.mmu.lock
-  // or being called early in the boot sequence so single-tasking.
 
   if (0 == shared.mmu.free) {
     // Early in the boot process, don't panic yet!
@@ -346,7 +342,7 @@ static l2tt_entry const r_page = { .small_page = 1, .XN = 1, .read_only = 1 };
 static l1tt_entry const dev_section = { .section = { .type2 = 2, .XN = 1 } };
 static l2tt_entry const dev_page = { .small_page = 1, .XN = 1 };
 
-void map_memory( memory_mapping const *mapping )
+void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mapping )
 {
   if (mapping->pages == 0) PANIC;
 
@@ -401,11 +397,19 @@ void map_memory( memory_mapping const *mapping )
     entry.section.AF = 1;
 
     entry.section.base = phys.section;
-    for (int i = 0; i < sections; i++) {
-      translation_table.entry[virt.section + i] = entry;
-      if (all_cores)
-        global_translation_table.entry[virt.section + i] = entry;
-      entry.section.base++;
+    uint32_t start = virt.section;
+    if (all_cores) {
+      for (int i = start; i < start + sections; i++) {
+        translation_table.entry[i] = entry;
+        global_translation_table.entry[i] = entry;
+        entry.section.base++;
+      }
+    }
+    else {
+      for (int i = start; i < start + sections; i++) {
+        translation_table.entry[i] = entry;
+        entry.section.base++;
+      }
     }
   }
   else {
@@ -448,18 +452,19 @@ void map_memory( memory_mapping const *mapping )
     if (entry.type == 0) {
       // Don't have a handy shared table (or we don't want to share a table)
       // So, make our own
+      memory_fault_handler handler = entry.handler;
 
       table = get_free_table();
 
       for (int i = 0; i < 256; i++) {
-        table->entry[i].handler = entry.handler;
+        table->entry[i].handler = handler;
       }
 
       entry.table = table_entry( table );
 
       translation_table.entry[virt.section] = entry;
 
-      if (entry.handler == check_global_table) {
+      if (handler == check_global_table) {
         if (all_cores) { // We're going to share the table
           global_translation_table.entry[virt.section] = entry;
         }
@@ -467,7 +472,7 @@ void map_memory( memory_mapping const *mapping )
           global_table = get_free_table();
 
           for (int i = 0; i < 256; i++) {
-            global_table->entry[i].handler = entry.handler;
+            global_table->entry[i].handler = handler;
           }
 
           global_translation_table.entry[virt.section].table =
@@ -479,7 +484,7 @@ void map_memory( memory_mapping const *mapping )
       table = mapped_table( entry.table );
       if (all_cores) {
         l1tt_entry global = global_translation_table.entry[virt.section];
-        global_table = mapped_table( global.table );
+        global_table = mapped_global_table( global.table );
       }
     }
 
@@ -589,8 +594,10 @@ bool check_global_table( uint32_t va, uint32_t fault )
       translation_table.entry[virt.section] = l1;
 
       if (l1.type == 0) {
-        if (check_global_table == l1.handler)
+        if (check_global_table == l1.handler) {
+          PANIC;
           return false;
+        }
         else
           return l1.handler( va, fault );
       }
@@ -613,8 +620,10 @@ bool check_global_table( uint32_t va, uint32_t fault )
       }
 
       if (l2.type == 0) {
-        if (check_global_table == l2.handler)
+        if (check_global_table == l2.handler) {
+          PANIC;
           return false;
+        }
         else
           return l2.handler( va, fault );
       }

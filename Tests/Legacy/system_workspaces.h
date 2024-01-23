@@ -30,7 +30,9 @@ typedef struct {
 
 typedef struct {
   struct {
-    uint32_t s[100];
+    // More than 100 words needed for Legacy subsystem
+    // TODO: How much more?
+    uint32_t s[400];
   } svc_stack;
   uint32_t core;
   workspace_ostask ostask;

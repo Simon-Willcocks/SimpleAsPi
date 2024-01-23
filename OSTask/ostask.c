@@ -70,6 +70,14 @@ void __attribute__(( naked, noreturn )) idle_task();
 
 void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 {
+#ifdef DEBUG__BREAKME_STARTUP_CORE_NON_ZERO
+#ifdef DEBUG__SINGLE_CORE
+#error "Not the smartest combination of options!"
+#endif
+  OSTaskSlot *volatile *p = &shared.ostask.first;
+  while (*p == 0 && core == 0) {}
+#endif
+
   forget_boot_low_memory_mapping();
 
   bool reclaimed = core_claim_lock( &shared.ostask.lock, core + 1 );
