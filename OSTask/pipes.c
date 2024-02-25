@@ -34,8 +34,8 @@ struct OSPipe {
   uint32_t receiver_waiting_for; // Non-zero if blocked
   uint32_t receiver_va; // Zero if not allocated
 
-  uint32_t physical;
-  uint32_t allocated_mem;
+  uint32_t memory;      // In slot memory (including pipes?)
+  OSTaskSlot *owner;    // NULL, if memory is owned by the pipe
   uint32_t max_block_size;
   uint32_t max_data;
   uint32_t write_index;
@@ -142,16 +142,20 @@ OSTask *PipeCreate( svc_registers *regs )
 
   pipe->max_block_size = max_block_size;
   pipe->max_data = max_data;
-  pipe->allocated_mem = allocated_mem;
+  pipe->memory = allocated_mem;
   if (allocated_mem == 0) {
+    pipe->owner = 0;
+
     if (!((max_block_size & 0xfff) == 0)) PANIC; // Needs proper checking...
 
-    pipe->physical = claim_contiguous_memory( pipe->max_block_size >> 12 );
-    if (pipe->physical == 0 || pipe->physical == 0xffffffff) PANIC;
+    pipe->memory = claim_contiguous_memory( pipe->max_block_size >> 12 );
+    if (pipe->memory == 0 || pipe->memory == 0xffffffff) PANIC;
     // Needs to be in bytes for small pipes to work
-    pipe->physical = pipe->physical << 12;
+    pipe->memory = pipe->memory << 12;
   }
   else {
+    pipe->owner = running->slot;
+
     PANIC;
 #if 0
     physical_memory_block block = Kernel_physical_address( allocated_mem, running->slot );
@@ -164,7 +168,7 @@ OSTask *PipeCreate( svc_registers *regs )
 
     uint32_t offset = allocated_mem - memory_block_virtual_base( block );
     if (!(allocated_mem >= memory_block_virtual_base( block ))) PANIC; // Otherwise the memory is not in that block!
-    pipe->physical = offset + memory_block_physical_base( block );
+    pipe->memory = offset + memory_block_physical_base( block );
     if (offset + max_block_size > memory_block_size( block )) {
       // FIXME: This is a memory leak of the pipe in the RMA
       PANIC;
@@ -211,11 +215,11 @@ void create_log_pipe()
 
   pipe->max_block_size = size / 2;
   pipe->max_data = pipe->max_block_size;
-  pipe->allocated_mem = 0;
-  pipe->physical = claim_contiguous_memory( pipe->max_block_size >> 12 );
-  if (pipe->physical == 0 || pipe->physical == 0xffffffff) PANIC;
+  pipe->owner = 0;
+  pipe->memory = claim_contiguous_memory( pipe->max_block_size >> 12 );
+  if (pipe->memory == 0 || pipe->memory == 0xffffffff) PANIC;
 
-  pipe->physical = pipe->physical << 12;
+  pipe->memory = pipe->memory << 12;
 
   pipe->sender_waiting_for = 0;
   pipe->receiver_waiting_for = 0;
@@ -226,7 +230,7 @@ void create_log_pipe()
   pipe->sender_va = &log_pipe - (uint8_t*) 0;
 
   memory_mapping map = {
-    .base_page = pipe->physical >> 12,
+    .base_page = pipe->memory >> 12,
     .pages = pipe->max_block_size >> 12,
     .va = pipe->sender_va,
     .type = CK_MemoryRW,
@@ -244,7 +248,7 @@ void create_log_pipe()
 
 static uint32_t __attribute__(( noinline )) pipe_map_size( OSPipe *pipe )
 {
-  bool double_mapped = pipe->allocated_mem == 0;
+  bool double_mapped = pipe->owner == 0;
   uint32_t map_size = pipe->max_block_size;
 
   if (double_mapped) {
@@ -252,8 +256,8 @@ static uint32_t __attribute__(( noinline )) pipe_map_size( OSPipe *pipe )
   }
   else {
     // Need to map whole area into pipes area
-    uint32_t base_page = pipe->allocated_mem & ~0xfff;
-    uint32_t above_last = (pipe->allocated_mem + pipe->max_block_size + 0xfff) & ~0xfff;
+    uint32_t base_page = pipe->memory & ~0xfff;
+    uint32_t above_last = (pipe->memory + pipe->max_block_size + 0xfff) & ~0xfff;
     map_size = above_last - base_page;
   }
 
@@ -293,7 +297,7 @@ bool insert_pipe_in_gap( OSTaskSlot *slot, OSPipe *pipe, bool sender )
   if (block->pages != 0) PANIC;
   if (block - first >= number_of( slot->pipe_mem )) PANIC;
 
-  bool double_mapped = pipe->allocated_mem == 0;
+  bool double_mapped = pipe->owner == 0;
   if (double_mapped) {
     // Create two blocks, same physical address, consecutive
     // virtual addresses.
@@ -301,19 +305,19 @@ bool insert_pipe_in_gap( OSTaskSlot *slot, OSPipe *pipe, bool sender )
 
     block[0].va_page = potential_va >> 12;
     block[0].pages = size >> 13;
-    block[0].page_base = pipe->physical >> 12;
+    block[0].page_base = pipe->memory >> 12;
     block[0].device = 0;
     block[0].read_only = sender ? 0 : 1;
     block[1].va_page = (potential_va + size/2) >> 12;
     block[1].pages = size >> 13;
-    block[1].page_base = pipe->physical >> 12;
+    block[1].page_base = pipe->memory >> 12;
     block[1].device = 0;
     block[1].read_only = sender ? 0 : 1;
   }
   else {
     block[0].va_page = potential_va >> 12;
     block[0].pages = size >> 12;
-    block[0].page_base = pipe->physical >> 12;
+    block[0].page_base = pipe->memory >> 12;
     block[0].device = 0;
     block[0].read_only = sender ? 0 : 1;
   }
@@ -330,7 +334,7 @@ bool insert_pipe_in_gap( OSTaskSlot *slot, OSPipe *pipe, bool sender )
 
 static void set_sender_va( OSTaskSlot *slot, OSPipe *pipe )
 {
-  if (pipe->physical == 0) PANIC;
+  if (pipe->memory == 0) PANIC;
 
   if (workspace.ostask.log_pipe == pipe) PANIC;
 
@@ -342,7 +346,7 @@ static void set_sender_va( OSTaskSlot *slot, OSPipe *pipe )
 
 static void set_receiver_va( OSTaskSlot *slot, OSPipe *pipe )
 {
-  if (pipe->physical == 0) PANIC;
+  if (pipe->memory == 0) PANIC;
 
   if (!insert_pipe_in_gap( slot, pipe, false )) {
     // FIXME report error!
@@ -362,7 +366,7 @@ static uint32_t space_in_pipe( OSPipe *pipe )
 
 static uint32_t read_location( OSPipe *pipe )
 {
-  bool double_mapped = pipe->allocated_mem == 0;
+  bool double_mapped = pipe->owner == 0;
   if (double_mapped)
     return pipe->receiver_va + (pipe->read_index % pipe->max_block_size);
   else
@@ -371,7 +375,7 @@ static uint32_t read_location( OSPipe *pipe )
 
 static uint32_t write_location( OSPipe *pipe )
 {
-  bool double_mapped = pipe->allocated_mem == 0;
+  bool double_mapped = pipe->owner == 0;
   if (double_mapped)
     return pipe->sender_va + (pipe->write_index % pipe->max_block_size);
   else
@@ -509,7 +513,7 @@ OSTask *PipeSetSender( svc_registers *regs, OSPipe *pipe )
   if (pipe->sender == 0 || task == 0 || pipe->sender->slot != task->slot) {
     if (pipe->sender != 0) {
       // Unmap and free the virtual area for re-use
-      bool double_mapped = pipe->allocated_mem == 0;
+      bool double_mapped = pipe->owner == 0;
       OSTaskSlot *slot = pipe->sender->slot;
       unmap_and_free( slot, pipe->sender_va, double_mapped );
     }
@@ -654,7 +658,7 @@ OSTask *PipeSetReceiver( svc_registers *regs, OSPipe *pipe )
     pipe->receiver_va = 0;
     if (pipe->receiver != 0) {
       // Unmap and free the virtual area for re-use
-      bool double_mapped = pipe->allocated_mem == 0;
+      bool double_mapped = pipe->owner == 0;
       OSTaskSlot *slot = pipe->receiver->slot;
       unmap_and_free( slot, pipe->receiver_va, double_mapped );
     }

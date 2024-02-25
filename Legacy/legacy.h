@@ -19,5 +19,6 @@ void __attribute__(( naked, noreturn )) serve_legacy_swis( uint32_t pipe );
 // These routines are given default implementations in Legacy,
 // weakly linked.
 OSTask *do_OS_Module( svc_registers *regs );
+OSTask *do_OS_ServiceCall( svc_registers *regs );
 bool needs_legacy_stack( uint32_t swi );
 OSTask *run_module_swi( svc_registers *regs, int swi );

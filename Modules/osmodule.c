@@ -139,6 +139,11 @@ static inline const char *title_string( module_header *header )
   return pointer_at_offset_from( header, header->offset_to_title_string );
 }
 
+static inline void *service_call_handler( module_header *h )
+{
+  return pointer_at_offset_from( h, h->offset_to_service_call_handler );
+}
+
 // Case insensitive, nul, cr, lf, space, or % terminates.
 // So "abc" matches "abc def", "abc%ghi", etc.
 bool module_name_match( char const *left, char const *right )
@@ -174,10 +179,6 @@ module_header *find_module_in_list( char const *name, uint32_t const *list )
   uint32_t const *entry = list;
   while (*entry != 0) {
     header = (void*) (entry + 1);
-#ifdef DEBUG__SHOW_MODULES
-  Task_LogString( title_string( header ), 0 );
-  Task_LogNewLine();
-#endif
 
     if (module_name_match( title_string( header ), name )) {
       return header;
@@ -205,7 +206,11 @@ static inline uint32_t bcd( char c )
 
 static void Service_ModulePostInit( module *module )
 {
-  // Service_ModulePreInit
+#ifdef DEBUG__SHOW_SERVICE_CALLS
+  Task_LogString( "Service_ModulePostInit: ", 24 );
+  Task_LogString( title_string( module->header ), 0 );
+  Task_LogNewLine();
+#endif
 
   char const *postfix = module->postfix[0] == 0 ? 0 : module->postfix;
   char const *title = title_string( module->header );
@@ -252,6 +257,19 @@ error_block *run_initialisation_code( const char *env, module *m,
 
   if (code == 0) return 0;
 
+#ifdef DEBUG__SHOW_MODULES
+  Task_LogString( "Init: ", 6 );
+  Task_LogString( title_string( m->header ), 0 );
+  if (*env > ' ') {
+    Task_LogString( " ", 1 );
+    Task_LogString( env, 0 );
+  }
+  else {
+    Task_LogString( " no parameters", 14 );
+  }
+  Task_LogNewLine();
+#endif
+
   register uint32_t *non_kernel_code asm( "r14" ) = code;
   register uint32_t *private_word asm( "r12" ) = &m->private_word;
   register uint32_t _instance asm( "r11" ) = instance;
@@ -274,9 +292,18 @@ error_block *run_initialisation_code( const char *env, module *m,
   // so avoid corrupting any by simply not storing them
   shared.module.in_init = old_in_init;
 
+#ifdef DEBUG__SHOW_MODULES
+  Task_LogString( "Returned from init", 0 );
+  Task_LogNewLine();
+#endif
   if (error == 0) {
     Service_ModulePostInit( m );
   }
+
+#ifdef DEBUG__SHOW_MODULES
+  Task_LogString( "Done", 4 );
+  Task_LogNewLine();
+#endif
 
   return error;
 }
@@ -448,7 +475,7 @@ module_header *find_named_module( char const *name )
   }
   else PANIC; // Look in filesystems
 
-  if (header == 0) PANIC;
+  if (header == 0) PANIC; // Not found in ROM
 
   return header;
 }
@@ -470,6 +497,8 @@ module_header *load_named_module( char const *name )
 module *find_initialised_module( char const *name )
 {
   module_header *header = find_named_module( name );
+
+  if (header == 0) return 0;
 
   module *instance = shared.module.modules;
   while (instance != 0 && instance->header != header) {
@@ -503,6 +532,58 @@ error_block *load_and_initialise( char const *name )
   }
 
   return run_initialisation_code( name, m, number );
+}
+
+static bool __attribute__(( noinline )) run_service_call_handler_code( svc_registers *regs, module *m )
+{
+  register void *non_kernel_code asm( "r14" ) =
+                        service_call_handler( m->header );
+
+  register uint32_t *private_word asm( "r12" ) = &m->private_word;
+
+  asm goto (
+        "  push { %[regs] }"
+      "\n  ldm %[regs], { r0-r8 }"
+      "\n  udf 3"
+      "\n  blx r14"
+      "\n  udf 4"
+      "\n  pop { r14 }"
+      "\n  stm r14, { r0-r8 }"
+      "\n  bvs %l[failed]"
+      :
+      : [regs] "r" (regs)
+      , "r" (non_kernel_code)
+      , "r" (private_word)
+      : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8" 
+      : failed );
+
+  return true;
+
+failed:
+  return false;
+}
+
+OSTask *do_OS_ServiceCall( svc_registers *regs )
+{
+  module *m = shared.module.modules;
+  if (m == 0) return 0;
+
+  uint32_t call = regs->r[1];
+
+  while (m != 0 && regs->r[1] != 0) {
+    if (0 != m->header->offset_to_service_call_handler) {
+      // Call for all instances, or just the base?
+      if (m->instances != 0) PANIC;
+
+      bool result = run_service_call_handler_code( regs, m );
+      if (!result) break;
+
+      assert( regs->r[1] == 0 || regs->r[1] == call );
+    }
+    m = m->next;
+  }
+
+  return 0;
 }
 
 OSTask *do_OS_Module( svc_registers *regs )
@@ -544,6 +625,44 @@ OSTask *do_OS_Module( svc_registers *regs )
     break;
   case 7: // Free
     shared_heap_free( (void*) regs->r[2] );
+    break;
+  case 18: // Extract module information
+    {
+      char const *name = (void*) regs->r[1];
+
+      if (module_name_match( name, "UtilityModule" )) {
+        // Special case, used by Wimp
+        // Desktop/Wimp/s/Wimp02 "Figure out ROM location"
+
+        regs->r[1] = 1;
+        regs->r[2] = 0;
+        regs->r[3] = 0xfc010000; // Not true
+        regs->r[4] = 0;
+
+        return 0;
+      }
+
+      //  TODO: instances
+      char const *p = name;
+      while (*p != '\0' && *p != '%' && *p != ' ') p++;
+      if (*p == '%') PANIC;
+
+      module *m = find_initialised_module( name );
+      if (m == 0) {
+        return Error_ModuleNotFound( regs );
+      }
+      else {
+        uint32_t n = 0;
+        module *p = shared.module.modules;
+        while (p != m) { n++; p = p->next; }
+        regs->r[1] = n;
+        regs->r[2] = 0;
+        regs->r[3] = (uint32_t) m->header; // FIXME: Guessed
+        regs->r[4] = m->private_word;
+        if (regs->r[2] != 0)
+          regs->r[5] = (uint32_t) &m->postfix;
+      }
+    }
     break;
   case 2: // RMEnter
   case 3: // RMReinit

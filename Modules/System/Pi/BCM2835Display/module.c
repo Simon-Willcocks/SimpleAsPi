@@ -13,6 +13,23 @@
  * limitations under the License.
  */
 
+// Number of interfaces (HDMI, DisplayPort, ScreenCast?)
+// Or is that max number of screens?
+// Active screens (with a display associated with it)
+// Overlays?
+
+// How about this:
+//  The application doesn't need to worry about where its window is being displayed.
+//  On return from GetRectangle, the frame buffer/output sprite can be anywhere.
+//  If you want to triple buffer, create a window ... no, bad idea
+
+// Could the main frame buffer be a single pixel?
+
+// Map the frame buffer into Slot memory, create pipes for other tasks to write to.
+// SpaceFilled pushes to the cache. Always "fill" the whole thing (or never do, leave
+// it to the Wimp or some such).
+
+
 #include "CK_types.h"
 #include "ostaskops.h"
 
@@ -47,6 +64,9 @@ static inline void push_writes_to_device()
 
 struct workspace {
   uint32_t pa;
+  uint32_t fb_physical_address;
+  uint32_t fb_size;
+  uint32_t graphics_driver_id;
   uint32_t stack[63];
 };
 
@@ -69,11 +89,7 @@ void open_display( uint32_t handle, workspace *ws )
   mailbox_request[i++] = 8;
   mailbox_request[i++] = 0;
   mailbox_request[i++] = 1920;
-#ifdef QEMU
-  mailbox_request[i++] = 1092; // 12 invisible pixels to make the buffer almost 8MiB
-#else
-  mailbox_request[i++] = 1080; // Real hardware doesn't like the above trick
-#endif
+  mailbox_request[i++] = 1080;
   mailbox_request[i++] = 0x00048003; // Set physical (display) width/height
   mailbox_request[i++] = 8;
   mailbox_request[i++] = 0;
@@ -135,26 +151,41 @@ void open_display( uint32_t handle, workspace *ws )
   Task_LogHex( *frame_buffer );
   Task_LogString( ", size ", 0 );
   Task_LogHex( *frame_buffer_size );
-  Task_LogString( ", mapped at ", 0 );
-
-  uint32_t size = *frame_buffer_size;
-  size = (size + 0xfff) >> 12;
 
   // Correct for something... Returns an address between 0xc0000000
   // and 0xd0000000, but needs to be accessed with lower physical
   // addresses. I can't remember why this is needed!
-  uint32_t base = (0x3fffffff & *frame_buffer) >> 12;
-  uint32_t *fb = Task_MapFrameBuffer( base, 0x800 ); // size );
+  // I think it has to do with the GPU's caching.
 
-  Task_LogHex( (uint32_t) fb );
-  Task_LogNewLine();
+  uint32_t base_page = (0x3fffffff & *frame_buffer) >> 12;
+  //uint32_t base_page = *frame_buffer >> 12;
+  uint32_t pages = (*frame_buffer_size + 0xfff) >> 12;
+  // Map whole MiBs
+  pages = (pages + 0xff) & ~0xff;
 
-  memset( fb, 0xcc, *frame_buffer_size );
+  // Map into local memory
+  uint32_t *screen = (void *) (2 << 20);
 
-  Task_MemoryChanged( fb, *frame_buffer_size );
+  // screen = Task_MapFrameBuffer( base_page, pages );
+  Task_MapDevicePages( screen, base_page, pages );
 
-  Task_LogString( "Filled\n", 0 );
+  for (int y = 0; y < 1080; y++) {
+    for (int x = 0; x < 1920; x++) {
+      screen[1920 * y + x] = ~((x << 6) | (y << 12));
+    }
+  }
+
+  Task_MemoryChanged( screen, pages << 12 );
+
+  Task_LogString( "Display ready\n", 0 );
+
+  for (;;) {
+    // Handle requests for access to FB
+    Task_Sleep( 100 );
+  }
 }
+
+// Initialisation
 
 void __attribute__(( noinline )) c_init( workspace **private,
                                          char const *env,
@@ -203,4 +234,3 @@ void *memcpy(void *d, void *s, uint32_t n)
   for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
   return d;
 }
-

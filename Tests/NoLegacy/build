@@ -4,13 +4,14 @@
 SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:NoLegacy:Modules
 # Modules to include (HAL chooses which ones to load.)
 #MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink:System/LogToUART
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART:System/DoNothing
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART
 
 echo Modules: ${MODULES//:/ }
 
 #INITIAL_MODULES='QA7\0GPUMailbox\0LEDBlink\0LogToUART\0'
 #INITIAL_MODULES='QA7\0LEDBlink\0'
-INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0LEDBlink\0LogToUART\0'
+INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0GPUMailbox\0BCM2835Display\0'
+#INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0'
 DEFAULT_LANGUAGE=LEDBlink
 #DEFAULT_LANGUAGE=LogToUART
 
@@ -74,6 +75,7 @@ done &&
 echo '{ 0, 0 } };' >> Generated/rom_modules.h 
 ) || exit 1 &&
 
+echo 'char const build_script[] = "Build script: '"$0"'";' >> Generated/rom_modules.h 
 echo 'char const build_options[] = "Build options: '"$*"'";' >> Generated/rom_modules.h 
 echo 'char const modcflags[] = "Build module flags: '"$MODCFLAGS"'";' >> Generated/rom_modules.h 
 

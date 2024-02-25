@@ -196,9 +196,10 @@ void __attribute__(( noinline )) save_task_state( svc_registers *regs )
   if (workspace.ostask.running->regs.lr == 0) PANIC;
 }
 
-void unexpected_task_return()
+void __attribute__(( naked, optimize( "O4" ) )) unexpected_task_return()
 {
   // Running in usr32
+  // Optimize attribute ensures no stack use.
   Task_EndTask();
 }
 
@@ -638,6 +639,14 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   task->regs.r[3] = regs->r[4];
   task->regs.r[4] = regs->r[5];
 
+#ifdef DEBUG__FOLLOW_OS_TASKS
+Task_LogString( "Created task ", 13 );
+Task_LogHex( (uint32_t) task );
+Task_LogString( ", starting at ", 14 );
+Task_LogHex( regs->r[0] );
+Task_LogNewLine();
+#endif
+
   // Keep the new task on the current core, in case it's a device
   // driver than needs it. Any Sleep or Yield indicates that the
   // task doesn't care what core it runs on. (Except for idle_task.)
@@ -656,6 +665,22 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
 
 OSTask *TaskOpEndTask( svc_registers *regs )
 {
+#ifdef DEBUG__FOLLOW_OS_TASKS
+Task_LogString( "Ended task ", 0 );
+Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogNewLine();
+#endif
+  OSTask *running = workspace.ostask.running;
+  OSTask *resume = running->next;
+
+  assert( resume != running || running == workspace.ostask.idle );
+
+  save_task_state( regs );
+  workspace.ostask.running = resume;
+  dll_detach_OSTask( running );
+
+  return resume;
+
 // FIXME
   regs->r[0] = 0xffffffff; // Maximum sleep
   regs->lr = unexpected_task_return;

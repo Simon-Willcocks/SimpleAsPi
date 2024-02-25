@@ -33,7 +33,7 @@ static inline void dll_new_##T( T *i ) { \
 /* Attach the item as the head of the list. (If you want it at the tail, */ \
 /* follow up with `l = l->next;`, if you want it after the head, declare */ \
 /* a list `T *tmp = l->next;`, then attach it to that list. (Remember to */ \
-/* check for an empty list!) */ \
+/* check for an empty list in that case!) */ \
 static inline void dll_attach_##T( T *i, T **l ) { \
   dll_assert( i->next == i && i->prev == i ); \
   dll_assert( i != 0 ); \

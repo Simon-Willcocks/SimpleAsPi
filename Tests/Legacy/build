@@ -16,9 +16,7 @@ INITIAL_MODULES+='FileSwitch\0ResourceFS\0'
 INITIAL_MODULES+='TerritoryManager\0Messages\0MessageTrans\0'
 INITIAL_MODULES+='UK\0'
 INITIAL_MODULES+='VFPSupport\0BASIC\0'
-#INITIAL_MODULES+='UtilityModule\0FileSwitch\0ResourceFS\0TerritoryManager\0'
-#INITIAL_MODULES+='UtilityModule\0FileSwitch\0'
-#INITIAL_MODULES+='UtilityModule\0'
+#INITIAL_MODULES+='WindowManager\0'
 
 DEFAULT_LANGUAGE=LEDBlink
 
@@ -89,6 +87,9 @@ FIRST=$( printf 0x%x $(( $( rom_object UtilityMod ) - 4 )) )
 LEGACIES="-Wl,--defsym=LegacyModulesList=$FIRST"
 LEGACIES+=" "$( symbol JTABLE )
 LEGACIES+=" "$( symbol defaultvectab )
+
+LEGACIES+=" "$( symbol VduInit )
+
 echo $LEGACIES
 echo $KERNEL_START, $KERNEL_OFFSET
 
@@ -113,6 +114,7 @@ done &&
 echo '{ 0, 0 } };' >> Generated/rom_modules.h 
 ) || exit 1 &&
 
+echo 'char const build_script[] = "Build script: '"$0"'";' >> Generated/rom_modules.h 
 echo 'char const build_options[] = "Build options: '"$*"'";' >> Generated/rom_modules.h 
 echo 'char const modcflags[] = "Build module flags: '"$MODCFLAGS"'";' >> Generated/rom_modules.h 
 
@@ -184,6 +186,8 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=log_pipe=0xfff00000 \
         -Wl,--defsym=log_pipe_top=0xfff02000 \
         -Wl,--defsym=app_memory_limit=0x30000000 \
+        -Wl,--defsym=dynamic_areas_base=0x40000000 \
+        -Wl,--defsym=dynamic_areas_top=0x50000000 \
         -Wl,--defsym=pipes_base=0x80000000 \
         -Wl,--defsym=pipes_top=0xc0000000 \
         \
@@ -203,5 +207,4 @@ strings kernel7.img -t x | grep OSIm | grep $KERNEL_OFFSET &&
 echo Seems alright &&
 
 echo Image built, disassembling &&
-# time arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump
-echo NOT!
+time arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump

@@ -50,7 +50,7 @@ enum {
   , OSTask_SwitchToCore                 // Use sparingly!
   , OSTask_Tick                         // For HAL module use only
 
-  , OSTask_MapFrameBuffer
+  , OSTask_MapFrameBuffer // Depricated, I think...
 
   , OSTask_GetLogPipe                   // For the current core
   , OSTask_LogString
@@ -383,6 +383,27 @@ uint32_t PipeOp_CreateForTransfer( uint32_t max_block )
   register uint32_t max_block_size asm ( "r1" ) = max_block;
   register uint32_t max_data asm ( "r2" ) = 0; // Unlimited
   register uint32_t allocated_mem asm ( "r3" ) = 0; // OS allocated
+
+  register uint32_t pipe asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvs R0, #0"
+        : "=r" (pipe)
+        : [swi] "i" (OSTask_PipeCreate)
+        , "r" (max_block_size)
+        , "r" (max_data)
+        , "r" (allocated_mem)
+        : "lr", "cc" );
+
+  return pipe;
+}
+
+static inline
+uint32_t PipeOp_Create( void *base, uint32_t max_block )
+{
+  register uint32_t max_block_size asm ( "r1" ) = max_block;
+  register uint32_t max_data asm ( "r2" ) = 0; // Unlimited
+  register void *allocated_mem asm ( "r3" ) = base;
 
   register uint32_t pipe asm ( "r0" );
 

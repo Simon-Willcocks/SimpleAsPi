@@ -67,6 +67,43 @@ static inline void led_off( uint32_t pin )
 void blinker( uint32_t handle, uint32_t pin,
               uint32_t on_time, uint32_t off_time )
 {
+#if 0
+  Task_LogString( "Printing a * on screen\n", 0 );
+
+  asm ( "svc 0x11a" ); // Reset text and graphics windows
+
+  for (int i = 0; i < 10; i++)
+  asm ( "svc 0x12a" ); // Printable character '*'
+
+  Task_MemoryChanged( 0xc0000000, 8 << 20 );
+
+
+
+uint32_t *screen = (void*) 0xc0000000;
+for (int y = 100; y < 200; y++) {
+  for (int x = 200; x < 400; x++) {
+    screen[x + 1920 * y] = 0x4488cc22;
+  }
+}
+  Task_MemoryChanged( 0xc0000000, 8 << 20 );
+
+  Task_LogString( "Drawing a rectangle on screen\n", 0 );
+
+  asm ( "svc 0x119" // VDU 25 (OS_Plot)
+    "\n  svc 0x104"
+    "\n  svc 0x160"
+    "\n  svc 0x107"
+    "\n  svc 0x1e8"
+    "\n  svc 0x103"
+    "\n  svc 0x165" // Rect, filled 32,32 - 1888,1000
+    "\n  svc 0x120"
+    "\n  svc 0x100"
+    "\n  svc 0x120"
+    "\n  svc 0x100" );
+
+  register char const *str asm( "r0" ) = "Hello world";
+  asm ( "svc 2" : : "r" (str) : "lr" ); // Write0
+#endif
   for (;;) {
     Task_LogString( "ON\n", 0 );
     led_on( pin );
@@ -184,6 +221,7 @@ void *memcpy(void *d, void *s, uint32_t n)
 
 void go()
 {
+  Task_LogString( "Entering blink module\n", 0 );
   register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
   register uint32_t on asm( "r1" ) = 200;
   register uint32_t off asm( "r2" ) = 100;

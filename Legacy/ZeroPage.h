@@ -220,12 +220,10 @@ struct __attribute__(( packed )) OsbyteVars {
 
   uint8_t KeyAlphabet; // Alphabet associated with current keyboard
 
-  char PrinterPrefix[sizeof( "PrinterType$" )]; // -1?
-
-  char PrinterTypeName[sizeof( "PrinterType$" )+6];
+  char PrinterTypeName[sizeof( "PrinterType$" )-1+6];
 
         // AlignSpace
-  uint8_t pad[2];
+  uint8_t pad[1];
 
   uint8_t SerialFlags[4]; // New serial flags
 
@@ -669,7 +667,7 @@ typedef struct {
   uint8_t Font[0x700]; // 7 pages of (soft) font
 
   uint32_t VduSaveArea; // Rest of raw
-} VduDriversWorkspace;
+} VduDriversWorkSpace;
 
 typedef struct vector_entry vector_entry;
 struct vector_entry {
@@ -891,8 +889,8 @@ typedef struct {
   // Vector Claim & Release tables etc
   vector_entry *VecPtrTab[96];               // Should be 7d8
   uint32_t ExceptionDump;               // +0958
-  uint8_t spare[52];
-  struct OsbyteVars OsbyteVars;
+  uint8_t spare[68]; // 68 bytes space, and 16-byte align
+  struct OsbyteVars OsbyteVars;         // fff409a0 (as at Feb 2024)
                               // (and stored in) OS_Bytes &A6,&A7. SKS
 
   uint32_t BuffInPtrs[10];      // +0a64
@@ -994,7 +992,7 @@ typedef struct {
   uint32_t Modula2_Private; //  MICK has FFC and uses it it in USR mode
   // +1000:
   union {
-    VduDriversWorkspace ws;
+    VduDriversWorkSpace ws;
     uint32_t raw[0x3000/4];
   } vdu_drivers;
   uint32_t DebuggerSpace[1024]; 

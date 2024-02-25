@@ -370,7 +370,7 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
   if (phys.section_offset == 0
    && virt.section_offset == 0
    && (mapping->pages & 0xff) == 0) {
-    // Sections, at least, no need to split
+    // Sections, maybe supersections (TODO), no need to split
     l1tt_entry entry;
 
     switch (mapping->type) {

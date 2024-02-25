@@ -366,15 +366,22 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
   // interrupt...
   ensure_changes_observable();
 
+#ifndef DEBUG__NO_TICKS
   // Automatically reloads when reaches zero
   // Interrupt cleared by writing (1 << 31) to Local_timer_write_flags
   qa7->Local_timer_control_and_status = 
       (1 << 29) | // Interrupt enable
       (1 << 28) | // Timer enable
+
 #ifdef QEMU
-      3840000; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms * 100 for qemu
+#ifdef QEMU_SLOW
+      38400000; // 19.2 MHz clock, 38.4 MHz ticks, 1s ticks, for qemu with cpu tracing
+#else
+      3840000; // 19.2 MHz clock, 38.4 MHz ticks, 100 ms ticks for qemu
+#endif
 #else
       38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
+#endif
 #endif
 
   ensure_changes_observable(); // Wrote to QA7

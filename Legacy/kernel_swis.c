@@ -23,6 +23,7 @@
 #include "legacy.h"
 #include "kernel_swis.h"
 #include "ZeroPage.h"
+#include "memory.h"
 
 extern uint8_t system_heap_base;
 extern uint8_t system_heap_top;
@@ -131,6 +132,22 @@ void setup_shared_heap()
   srd->end = &shared_heap_top - &shared_heap_base;
 }
 
+void setup_MOS_workspace()
+{
+  // Includes workspace for GSInit, etc. fa645800
+  uint32_t size = 0x100000;
+
+  memory_mapping map = {
+    .base_page = claim_contiguous_memory( size >> 12 ),
+    .pages = size >> 12,
+    .va = 0xfa600000,
+    .type = CK_MemoryRWX,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 1 };
+  map_memory( &map );
+}
+
 // Shared block of memory that's (user?) rw (x?)
 // Up to 1MiB size, and MiB aligned (for SharedCLib).
 extern uint8_t legacy_svc_stack_top;
@@ -186,8 +203,6 @@ void setup_legacy_zero_page()
   map_memory( &map );
 
   memset( &legacy_zero_page, 0, sizeof( legacy_zero_page ) );
-
-  legacy_zero_page.Proc_IMB_Range = IMB_Range;
 }
 
 void *cb_array( int num, int size )
@@ -232,13 +247,46 @@ void cba_free( cba_head *block, void *unwanted )
   }
 }
 
+void __attribute__(( noinline )) DoVduInit()
+{
+  extern void VduInit();
+  register void *r12 asm( "r12" ) = &legacy_zero_page.vdu_drivers.ws;
+  // Corrupts at least r4
+  asm ( "bl VduInit" : : "r" (r12) : "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr" );
+}
+
+uint32_t sizeofOsbyteVars = sizeof( legacy_zero_page.OsbyteVars );
+
 void fill_legacy_zero_page()
 {
+  legacy_zero_page.Proc_IMB_Range = IMB_Range;
+
+  legacy_zero_page.Page_Size = 4096;
+  legacy_zero_page.OsbyteVars.LastBREAK = 1; // 1 Power on, 2 Control reset, 0 Soft
+
+#define ZP_OFF( e ) ((uint8_t *)&legacy_zero_page.e - (uint8_t *) &legacy_zero_page)
+#define CHECK_ZP_OFFSET( e, o ) assert( ZP_OFF( e ) == o )
+#define CHECK_ZP_ALIGNED( e ) assert( (3 & ZP_OFF( e )) == 0 )
+#define CHECK_ZP_ALIGNED16( e ) assert( (15 & ZP_OFF( e )) == 0 )
+
+  CHECK_ZP_ALIGNED( OsbyteVars.SerialFlags );
+  // Look for =ZeroPage+e in the source code, find the actual instruction in the
+  // disassambly, and look at the word being loaded.
+  // Or look for e.g. LDR R0, [R3, #BuffInPtrs]
+  assert( 0xc4 == 0xa64 - 0x9a0 );
+  assert( sizeof( legacy_zero_page.OsbyteVars ) == 0xc4 ); // 0xa64 - 0x9a0 );
+  CHECK_ZP_OFFSET( OsbyteVars, 0x9a0 );
+  CHECK_ZP_OFFSET( OsbyteVars.LastBREAK, 0x9f7 );
+  CHECK_ZP_OFFSET( BuffInPtrs[0], 0xa64 );
+  CHECK_ZP_OFFSET( EnvTime[0], 0xadc );
+
   extern vector_entry defaultvectab[];
 
   for (int i = 0; i < number_of( legacy_zero_page.VecPtrTab ); i++) {
     legacy_zero_page.VecPtrTab[i] = &defaultvectab[i];
   }
+
+  DoVduInit();
 
   // Chocolate blocks (very similar to OSTask_pool, etc.)
   // Manually taken from Options and object sizes:
@@ -251,6 +299,8 @@ void fill_legacy_zero_page()
   // legacy_zero_page.ChocolateMSBlocks = cb_array( 150
 }
 
+uint32_t ZPOFF_OsbyteVars = ZP_OFF( OsbyteVars );
+uint32_t ZPOFF_BuffInPtrs = ZP_OFF( BuffInPtrs );
 // This routine is for SWIs implemented in the legacy kernel, 0-255, not in
 // modules, in ROM or elsewhere. (i.e. routines that return using SLVK.)
 void __attribute__(( noinline ))
@@ -332,6 +382,12 @@ OSTask *do_OS_Module( svc_registers *regs )
 }
 
 __attribute__(( weak ))
+OSTask *do_OS_ServiceCall( svc_registers *regs )
+{
+  return 0;
+}
+
+__attribute__(( weak ))
 OSTask *run_module_swi( svc_registers *regs, int swi )
 {
   PANIC;
@@ -343,54 +399,6 @@ bool needs_legacy_stack( uint32_t swi )
 {
   return true;
 }
-
-void do_OS_ReadDynamicArea( svc_registers *regs )
-{
-  uint32_t max = 0;
-
-  switch (regs->r[0]) {
-  case 0: // System Heap
-    {
-      extern uint8_t system_heap_base;
-      extern uint8_t system_heap_top;
-      regs->r[0] = (uint32_t) &system_heap_base;
-      regs->r[1] = &system_heap_top - &system_heap_base;
-      max = regs->r[1];
-    }
-    break;
-  default:
-    PANIC;
-  }
-
-  if (0 != (regs->r[0] & 0x80)) {
-    regs->r[2] = max;
-  }
-}
-
-void do_OS_DynamicArea( svc_registers *regs )
-{
-  PANIC;
-}
-
-void do_OS_ChangeDynamicArea( svc_registers *regs )
-{
-  PANIC;
-}
-
-void do_OS_Memory( svc_registers *regs )
-{
-  PANIC;
-}
-
-void do_OS_ValidateAddress( svc_registers *regs )
-{
-  // FIXME: Don't assume always good!
-  // Application memory, dynamic areas, system and shared heap, etc.
-  // I think it's fair to complain if the memory region stradles two
-  // logical regions.
-  regs->spsr &= ~CF;
-}
-
 
 OSTask *execute_swi( svc_registers *regs, int number )
 {
@@ -454,12 +462,14 @@ OSTask *execute_swi( svc_registers *regs, int number )
       {
       bool module_run = (legacy_regs->r[0] == 0 || legacy_regs->r[0] == 2);
       if (module_run && !new_owner) PANIC;
+      // FIXME: This returns an OSTask * (always 0, but...)
       do_OS_Module( legacy_regs );
       // If this call was successful, the serve_legacy_swis function in
       // Legacy/user.c will cause the module to start using the changed
       // register values.
       }
       break;
+    case OS_ServiceCall: do_OS_ServiceCall( legacy_regs ); break;
     case OS_ReadDynamicArea: do_OS_ReadDynamicArea( legacy_regs ); break;
     case OS_DynamicArea: do_OS_DynamicArea( legacy_regs ); break;
     case OS_ChangeDynamicArea: do_OS_ChangeDynamicArea( legacy_regs ); break;
@@ -467,12 +477,23 @@ OSTask *execute_swi( svc_registers *regs, int number )
     case OS_ValidateAddress: do_OS_ValidateAddress( legacy_regs ); break;
     // case OS_Heap: do_OS_Heap( legacy_regs ); break;
     default:
-      if (swi < 128) {
+      {
         extern uint32_t JTABLE[128];
-        uint32_t entry = JTABLE[swi];
-        run_risos_code_implementing_swi( legacy_regs, swi, entry );
+        if (swi < 128) {
+          uint32_t entry = JTABLE[swi];
+          run_risos_code_implementing_swi( legacy_regs, swi, entry );
+        }
+        else if (swi >= 256 && swi < 512) {
+          uint32_t r0 = legacy_regs->r[0];
+          uint32_t entry = JTABLE[0];
+
+          legacy_regs->r[0] = swi & 0xff;
+          run_risos_code_implementing_swi( legacy_regs, 0, entry );
+          legacy_regs->r[0] = r0;
+        }
+        else if (swi < 512) { PANIC; } // Conversion SWIs
+        else run_module_swi( legacy_regs, swi );
       }
-      else run_module_swi( legacy_regs, swi );
     }
 
     if (regs != legacy_regs) {
@@ -553,6 +574,7 @@ void __attribute__(( noreturn )) startup()
 
   setup_system_heap(); // System heap
   setup_shared_heap(); // RMA heap
+  setup_MOS_workspace(); // Hopefully soon to be removed
 
   fill_legacy_zero_page(); // Before shared.legacy.owner set
 
