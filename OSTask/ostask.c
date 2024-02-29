@@ -203,91 +203,6 @@ void __attribute__(( naked, optimize( "O4" ) )) unexpected_task_return()
   Task_EndTask();
 }
 
-static inline void put_to_sleep( OSTask **head, void *p )
-{
-  OSTask *tired = p;
-  uint32_t time = tired->regs.r[0];
-
-  OSTask *t = *head;
-  if (t == 0) {
-    *head = tired;
-  }
-  else {
-    if (t->regs.r[0] > time) {
-      // Before the first queued task
-      t->regs.r[0] -= time;
-      dll_attach_OSTask( tired, head );
-    }
-    else {
-      for (;;) {
-        if (t->regs.r[0] <= time) {
-          time -= t->regs.r[0];
-          t = t->next;
-          // Any need to look further?
-          if (time == 0) break;
-          // Is t the last entry in the list?
-          if (t->next == *head) break;
-        }
-        else {
-          // t's going to be waiting longer
-          t->regs.r[0] -= time;
-          break;
-        }
-      }
-      tired->regs.r[0] = time;
-      // Insert before t (which may be *head, in which case
-      // this will be the last item in the list)
-      dll_attach_OSTask( tired, &t );
-    }
-  }
-}
-
-//static inline 
-OSTask *wakey_wakey( OSTask **headptr, void *p )
-{
-  p = p;
-
-  OSTask *head = *headptr;
-  OSTask *t = head;
-
-  if (t == 0) return 0;
-  if (0 < --t->regs.r[0]) return 0;
-
-  OSTask *end;
-
-  do {
-    end = t;
-    t = t->next;
-  } while (t->regs.r[0] == 0 && t != head);
-
-  dll_detach_OSTasks_until( headptr, end );
-
-  return head;
-}
-
-//static inline 
-void add_woken( OSTask **headptr, void *p )
-{
-  OSTask *head = *headptr;
-  dll_insert_OSTask_list_at_head( p, headptr );
-  // I really want it at the tail... I think.
-  if (head != 0) *headptr = head;
-}
-
-//static 
-void sleeping_tasks_add( OSTask *tired )
-{
-  mpsafe_manipulate_OSTask_list( &shared.ostask.sleeping, put_to_sleep, tired );
-}
-
-//static 
-void sleeping_tasks_tick()
-{
-  OSTask *list = mpsafe_manipulate_OSTask_list_returning_item( &shared.ostask.sleeping, wakey_wakey, 0 );
-  if (list != 0)
-    mpsafe_manipulate_OSTask_list( &shared.ostask.runnable, add_woken, list );
-}
-
 DEFINE_ERROR( UnknownSWI, 0x1e6, "Unknown SWI" );
 DEFINE_ERROR( UnknownPipeSWI, 0x888, "Unknown Pipe operation" );
 DEFINE_ERROR( InvalidPipeHandle, 0x888, "Invalid Pipe handle" );
@@ -480,6 +395,7 @@ static __attribute__(( noinline )) OSTask *for_core( OSTask **head, void *p )
   return 0;
 }
 
+static inline
 OSTask * __attribute__(( noinline )) find_task_for_this_core()
 {
   OSTask **head = &shared.ostask.moving;

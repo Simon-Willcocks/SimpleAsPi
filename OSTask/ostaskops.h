@@ -235,7 +235,11 @@ static inline
 void Task_LogString( char const *string, uint32_t length )
 {
   if (length == 0) {
-    while (string[length] != '\0') length++;
+    char const *p = string;
+    while (*p != '\0') {
+      p ++;
+    }
+    length = p - string;
   }
 
   register char const *s asm ( "r0" ) = string;

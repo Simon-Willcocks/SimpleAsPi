@@ -229,3 +229,6 @@ OSTask *TaskOpLockClaim( svc_registers *regs );
 OSTask *TaskOpLockRelease( svc_registers *regs );
 
 void sanity_check();
+
+void sleeping_tasks_add( OSTask *tired );
+void sleeping_tasks_tick();
