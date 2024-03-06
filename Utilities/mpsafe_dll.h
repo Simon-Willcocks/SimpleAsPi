@@ -31,6 +31,7 @@ static inline void mpsafe_insert_##T##_at_head( T **head, T *item ) \
     } \
     else if (old == 0) { \
       if (0 == change_word_if_equal( (uint32_t*) head, 0, (uint32_t) item )) { \
+        push_writes_to_cache(); \
         signal_event(); return; \
       } \
     } \
@@ -39,6 +40,7 @@ static inline void mpsafe_insert_##T##_at_head( T **head, T *item ) \
       dll_attach_##T( item, &old ); \
       uint32_t one = change_word_if_equal( (uint32_t*) head, 1, (uint32_t) old ); \
       dll_assert( 1 != one ); one = one; \
+      push_writes_to_cache(); \
       signal_event(); return; \
     } \
   } \
@@ -55,6 +57,7 @@ static inline void mpsafe_insert_##T##_after_head( T **head, T *item ) \
     } \
     else if (old == 0) { \
       if (0 == change_word_if_equal( (uint32_t*) head, 0, (uint32_t) item )) { \
+        push_writes_to_cache(); \
         signal_event(); return; \
       } \
     } \
@@ -64,53 +67,56 @@ static inline void mpsafe_insert_##T##_after_head( T **head, T *item ) \
       dll_attach_##T( item, &tail ); \
       uint32_t one = change_word_if_equal( (uint32_t*) head, 1, (uint32_t) old ); \
       dll_assert( 1 != one ); one = one; \
+      push_writes_to_cache(); \
       signal_event(); return; \
     } \
   } \
 } \
  \
-static inline T *mpsafe_manipulate_##T##_list_returning_item( T **head, T *(*update)( T** a, void *p ), void *p ) \
+static inline T *mpsafe_manipulate_##T##_list_returning_item( T *volatile *head, T *(*update)( T** a, void *p ), void *p ) \
 { \
   for (;;) { \
+      push_writes_to_cache(); \
+      ensure_changes_observable(); \
     T *head_item = *head; \
-    uint32_t uhead_item = (uint32_t) head_item; \
-    if (uhead_item == 1) { \
+    uint32_t ui = (uint32_t) head_item; \
+    if (ui == 1) { \
       /* Another core is manipulating the list, try again later */ \
       wait_for_event(); \
     } \
-    else if (uhead_item == change_word_if_equal( (uint32_t*) head, uhead_item, 1 )) { \
-      /* Replaced head pointer with 1, can work on list safely. (May be empty!) */ \
+    else if (ui == change_word_if_equal( (uint32_t*) head, ui, 1 )) { \
+      /* Replaced head pointer with 1, can work on list safely. */\
+      /* The list may be empty! */ \
       T *result = update( &head_item, p ); \
       ensure_changes_observable(); \
       *head = head_item; /* Release list */ \
-      ensure_changes_observable(); \
+      push_writes_to_cache(); \
       signal_event(); \
       return result; \
     } \
   } \
   return 0; \
 } \
-static inline void mpsafe_manipulate_##T##_list( T **head, void (*update)( T** a, void *p ), void *p ) \
+static inline void mpsafe_manipulate_##T##_list( T *volatile *head, void (*update)( T** a, void *p ), void *p ) \
 { \
-  uint32_t *list = (uint32_t*) head; \
-  bool done = false; \
-  while (!done) { \
-    push_writes_to_cache(); /* Ensure we can see updates made by other cores */ \
+  for (;;) { \
+      push_writes_to_cache(); \
+      ensure_changes_observable(); \
     T *head_item = *head; \
-    uint32_t uhead_item = (uint32_t) head_item; \
-    if (uhead_item == 1) { \
+    uint32_t ui = (uint32_t) head_item; \
+    if (ui == 1) { \
       /* Another core is manipulating the list, try again later */ \
       wait_for_event(); \
     } \
-    else if (uhead_item == change_word_if_equal( list, uhead_item, 1 )) { \
+    else if (ui == change_word_if_equal( (uint32_t*) head, ui, 1 )) { \
       /* Replaced head pointer with 1, can work on list safely. */ \
       /* The list may be empty! */ \
       update( &head_item, p ); \
       ensure_changes_observable(); \
       *head = head_item; /* Release list */ \
-      ensure_changes_observable(); \
+      push_writes_to_cache(); \
       signal_event(); \
-      done = true; \
+      return; \
     } \
   } \
 } \

@@ -123,11 +123,13 @@ struct OSTaskSlot {
 };
 
 struct __attribute__(( packed, aligned( 4 ) )) OSTask {
+  // Order of the next 4 items fixed for assembler code
   svc_registers regs;
   uint32_t banked_sp_usr; // Only stored when leaving usr or sys mode
   uint32_t banked_lr_usr; // Only stored when leaving usr or sys mode
-  int32_t resumes; // Signed: -1 => blocked
   OSTaskSlot *slot;
+
+  int reserved; // was resumes, but I don't think I need that functionality
 
   union {
     OSTask *controller;

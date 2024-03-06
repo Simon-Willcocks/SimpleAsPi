@@ -145,9 +145,30 @@ app_memory_block block_containing( uint32_t va )
   return result;
 }
 
+static char *send_number( char *p, uint32_t n, char c )
+{
+  static char const hex[] = "0123456789abcdef";
+  for (int i = 28; i >= 0; i-=4) {
+    *p++ = hex[0xf & (n >> i)];
+  }
+  if (c != '\0') *p++ = c;
+}
+
 bool ask_slot( uint32_t va, uint32_t fault )
 {
   app_memory_block block = block_containing( va );
+
+  if (0 != workspace.ostask.log_pipe) {
+    char string[50];
+    char *p = string;
+    p = send_number( p, fault, ' ' );
+    p = send_number( p, va, ' ' );
+    p = send_number( p, block.page_base, ' ' );
+    p = send_number( p, block.pages, ' ' );
+    p = send_number( p, block.va_page, '\n' );
+    svc_registers regs = { (uint32_t) string, p - string };
+    TaskOpLogString( &regs );
+  }
 
   memory_mapping map = {
     .base_page = block.page_base,

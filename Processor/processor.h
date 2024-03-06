@@ -54,7 +54,11 @@ static inline void signal_event()
 
 static inline void wait_for_event()
 {
+#ifndef DEBUG__NO_WFE
   asm ( "wfe" );
+#else
+  for (int i = 0; i < 100; i++) asm ( "" :: "r" (i) );
+#endif
 }
 
 uint32_t number_of_cores();
@@ -74,7 +78,7 @@ void RAM_may_have_changed( uint32_t va, uint32_t size );
 // Change the word at `word' to the value `to' if it contained `from'.
 // Returns the original content of word (== from, if changed successfully)
 static inline
-uint32_t change_word_if_equal( uint32_t *word, uint32_t from, uint32_t to )
+uint32_t change_word_if_equal( uint32_t volatile *word, uint32_t from, uint32_t to )
 {
   uint32_t failed = true;
   uint32_t value;
@@ -116,7 +120,7 @@ uint32_t change_word_if_equal( uint32_t *word, uint32_t from, uint32_t to )
 // See Barrier_Litmus_Tests_and_Cookbook_A08, section 7
 
 static inline
-bool core_claim_lock( uint32_t *lock, uint32_t value )
+bool core_claim_lock( uint32_t volatile *lock, uint32_t value )
 {
   for (;;) {
     uint32_t core = value;
@@ -133,6 +137,9 @@ void core_release_lock( uint32_t volatile *lock )
   ensure_changes_observable();
   *lock = 0;
   push_writes_to_cache();
+  signal_event();
+  signal_event();
+  signal_event();
   signal_event();
 }
 

@@ -102,7 +102,7 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     // In case the initialisation kicked off some tasks, let them run!
     // Legacy modules might have set callbacks, they'll have been run
     // by the time we get here. (Modules are not permitted to call
-    // Yield in their initialisation code, svc mode.)
+    // Yield in their svc mode initialisation code.)
     Task_Yield();
   }
 

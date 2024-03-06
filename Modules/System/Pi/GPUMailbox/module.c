@@ -174,6 +174,8 @@ void response_manager( uint32_t handle, workspace *ws )
   register uint32_t num asm ( "r0" ) = 65;
   asm ( "svc 0x1000" : : "r" (num) );
 
+  Task_LogString( "Claimed GPU interrupt\n", 0 );
+
   // Get ready to handle responses before accepting requests
 
   ws->response_task = handle;

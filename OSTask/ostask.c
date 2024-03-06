@@ -166,10 +166,24 @@ void __attribute__(( naked, noreturn )) idle_task()
   // idle OSTask, it will not return until an OSTask has become runnable
   // (and that one yields or blocks).
   asm ( "svc %[yield]"
+    "\n  add %[tmp], %[tmp], #1"
+    "\n  cmp %[tmp], #1024"
+    "\n  bne idle_task"
+
+    "\n0:"
+    "\n  ldr %[tmp], [%[uart], #0x18]"
+    "\n  and %[tmp], #0x88"
+    "\n  cmp %[tmp], #0x80"
+    "\n  moveq %[tmp], #'I'"
+    "\n  streq %[tmp], [%[uart]]"
     "\n  b idle_task"
+
+    "\n  svc %[yield]"
+    "\n  b 0b"
     :
     : [yield] "i" (OSTask_Yield)
-    , "r" (0x44) );
+    , [uart] "r" (0xfffff000)
+    , [tmp] "r" (0) );
 }
 
 void __attribute__(( naked )) reset_handler()
@@ -1061,7 +1075,7 @@ void __attribute__(( naked )) svc_handler()
       // This should detect if the C portion of this function gets
       // complex enough that the code generator needs stack.
       "\n.ifne .-svc_handler"
-      "\n  .error \"Kernel_default_svc compiled code includes instructions before srsdb\""
+      "\n  .error \"svc_handler compiled code includes instructions before srsdb\""
       "\n.endif"
 
       "\n  srsdb sp!, #0x13 // Store return address and SPSR (SVC mode)"
@@ -1218,3 +1232,105 @@ static void setup_processor_vectors()
   asm ( "msr sp_irq, %[stack]" : : [stack] "r" ((&(workspace.ostask.irq_stack)) + 1) );
   asm ( "msr sp_fiq, %[stack]" : : [stack] "r" ((&(workspace.ostask.fiq_stack)) + 1) );
 }
+
+#include "bcm_uart.h"
+
+void __attribute__(( noinline )) send_number( uint32_t n, char c )
+{
+  UART volatile * const uart = (void*) 0xfffff000;
+  char const hex[] = "0123456789abcdef";
+
+  while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" ); }
+
+  for (int i = 28; i >= 0; i-=4)
+    uart->data = hex[0xf & (n >> i)];
+
+  if (c != '\0') uart->data = c;
+}
+
+OSTask *__attribute__(( noinline )) c_prefetch_handler( OSTask *running )
+{
+  OSTask *resume = running->next;
+
+  // Also includes Breakpoints.
+  UART volatile * const uart = (void*) 0xfffff000;
+  while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" ); }
+  uart->data = '[';
+  send_number( (uint32_t) running, ']' );
+  uart->data = '\n';
+  send_number( running->regs.lr, '\n' );
+
+  uint32_t *p = &running->regs;
+  for (int i = 0; i < 17; i++) {
+    send_number( p[i], ((i & 3) == 0) ? '\n' : ' ' );
+  }
+  uart->data = '\n';
+
+  // For now, just cut the task loose...
+  // TODO: Put it in a queue to be handled (call signal code, etc.)
+
+  assert( resume != running );
+
+  dll_detach_OSTask( running );
+
+  if (0 == (resume->regs.spsr & 15)) {
+    asm ( "msr sp_usr, %[sp]"
+      "\n  msr lr_usr, %[lr]"
+        :
+        : [sp] "r" (resume->banked_sp_usr)
+        , [lr] "r" (resume->banked_lr_usr) );
+  }
+
+  map_slot( resume->slot );
+
+  return resume;
+}
+
+void __attribute__(( naked )) prefetch_handler()
+{
+  // Tasks with a prefetch exception cannot continue to run without
+  // help, so don't bother storing the state on the stack, drop it
+  // straight into the OSTask...
+
+  asm volatile (
+    "\n.ifne .-prefetch_handler"
+    "\n  .error \"prefetch_handler compiled code includes instructions before srsdb\""
+    "\n.endif"
+    "\n  srsdb sp!, #0x17 // Store fail address and SPSR (Abt mode)"
+  );
+
+  register OSTask **head asm ( "lr" ) = &workspace.ostask.running;
+  register OSTask *running;
+
+  asm volatile (
+    "\n.ifne .-prefetch_handler-8" // 1 instruction to set lr
+    "\n  .error \"prefetch_handler check generated code\""
+    "\n.endif"
+    "\n  ldr lr, [lr]"
+    "\n  stmia lr!, {r0-r12}"
+    "\n  ldm sp!, {r0-r1}"
+    "\n  mrs r2, sp_usr"
+    "\n  mrs r3, lr_usr"
+    "\n  stmia lr!, {r0-r3}"
+    "\n  sub %[running], lr, %[off]"
+    : [running] "=r" (running)
+    , "=r" (head) // Corrupted
+    : "r" (head)
+    , [off] "i" (offset_of( OSTask, slot )) );
+
+  if (running != workspace.ostask.running) {
+    running = ((uint32_t) workspace.ostask.running - (uint32_t) running);
+  }
+  workspace.ostask.running = c_prefetch_handler( running );
+
+  register svc_registers *lr asm ( "lr" ) = &workspace.ostask.running->regs;
+
+  asm (
+    "\n  ldm lr!, {r0-r12}"
+    "\n  rfeia lr // Restore execution and SPSR"
+    :
+    : "r" (lr) );
+
+  __builtin_unreachable();
+}
+

@@ -542,6 +542,16 @@ leds( 22 );
 
       // It might also come in useful if we name interrupt sources etc.
 
+      {
+        svc_registers regs;
+
+        Task_GetRegisters( client.task_handle, &regs );
+
+        Task_LogString( "Claiming interrupt ", 0 );
+        Task_LogSmallNumber( regs.r[0] );
+        Task_LogNewLine();
+      }
+
       Task_SwitchToCore( client.core );
       Task_ReleaseTask( client.task_handle, 0 );
       break;

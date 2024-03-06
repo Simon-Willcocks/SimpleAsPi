@@ -204,7 +204,8 @@ static inline uint32_t bcd( char c )
   return c - '0';
 }
 
-static void Service_ModulePostInit( module *module )
+static
+void Service_ModulePostInit( module *module )
 {
 #ifdef DEBUG__SHOW_SERVICE_CALLS
   Task_LogString( "Service_ModulePostInit: ", 24 );
@@ -216,19 +217,22 @@ static void Service_ModulePostInit( module *module )
   char const *title = title_string( module->header );
   uint32_t bcd_version = 0;
   char const *help = help_string( module->header );
-  while (*help != '\t' && *help != '\0') help++;
-  while (*help == '\t') help++;
-  while (*help == ' ' && *help != '\0') help++;
-  while (*help == ' ' && *help != '\0') help++;
-  while (*help != '\0' && *help != '.') {
-    bcd_version = (bcd_version << 4) + bcd( *help++ );
-  }
-  if (*help == '.') {
-    bcd_version = (bcd_version << 4) + bcd( help[1] );
-    bcd_version = (bcd_version << 4) + bcd( help[2] );
-  }
-  else {
-    bcd_version = (bcd_version << 8);
+
+  if (help != 0) {
+    while (*help != '\t' && *help != '\0') help++;
+    while (*help == '\t') help++;
+    while (*help == ' ' && *help != '\0') help++;
+    while (*help == ' ' && *help != '\0') help++;
+    while (*help != '\0' && *help != '.') {
+      bcd_version = (bcd_version << 4) + bcd( *help++ );
+    }
+    if (*help == '.') {
+      bcd_version = (bcd_version << 4) + bcd( help[1] );
+      bcd_version = (bcd_version << 4) + bcd( help[2] );
+    }
+    else {
+      bcd_version = (bcd_version << 8);
+    }
   }
 
   register module_header* header asm( "r0" ) = module->header;
@@ -248,14 +252,14 @@ static inline
 error_block *run_initialisation_code( const char *env, module *m,
                                       uint32_t instance )
 {
+  uint32_t *code = init_code( m->header );
+
+  if (code == 0) return 0;
+
   // Modules may initialise other modules during their initialisation.
   module *old_in_init = shared.module.in_init;
 
   shared.module.in_init = m;
-
-  uint32_t *code = init_code( m->header );
-
-  if (code == 0) return 0;
 
 #ifdef DEBUG__SHOW_MODULES
   Task_LogString( "Init: ", 6 );
@@ -286,7 +290,9 @@ error_block *run_initialisation_code( const char *env, module *m,
       , "r" (private_word)
       , "r" (_instance)
       , "r" (environment)
-      : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9" );
+      : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "memory" );
+      // Note, without "memory", the optimiser assumes shared.module.in_init
+      // cannot be changed by the code and doesn't bother updating it.
 
   // No changes to the registers by the module are of any interest,
   // so avoid corrupting any by simply not storing them

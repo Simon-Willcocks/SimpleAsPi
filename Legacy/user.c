@@ -29,7 +29,7 @@ static void __attribute__(( naked )) run_swi( uint32_t task, svc_registers *regs
     , [swi] "i" (OS_CallASWIR12 | Xbit) );
 
   // The above should never return.
-  for (;;) asm ( "udf #0" );
+  for (;;) asm ( "udf #99" );
 }
 
 void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )

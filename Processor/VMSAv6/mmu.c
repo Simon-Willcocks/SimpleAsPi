@@ -344,7 +344,10 @@ static l2tt_entry const dev_page = { .small_page = 1, .XN = 1 };
 
 void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mapping )
 {
-  if (mapping->pages == 0) PANIC;
+  if (mapping->pages == 0) {
+    asm volatile ( "" : : "r" (mapping->base_page), "r" (mapping->va) );
+    PANIC;
+  }
 
   bool reclaimed = core_claim_lock( &shared.mmu.lock, workspace.core + 1 );
 
@@ -784,6 +787,19 @@ void create_default_translation_tables( uint32_t memory )
     }
   }
 
+#ifdef DEBUG__EMERGENCY_UART_ACCESS
+  // Emergency UART access. (Assumes it's all set up by the time it's used)
+  {
+    arm32_ptr p = { .rawp = &workspace };
+    // Set AF
+    // No usr access:
+    // l2tt_entry entry = { .raw = 0x3f201413 };
+    // With usr32 access
+    l2tt_entry entry = { .raw = 0x3f201000 | 0b10000110011 };
+    pages[0xff] = entry;
+  }
+#endif
+
   push_writes_to_cache();
 }
 
@@ -828,7 +844,20 @@ void enable_page_level_mapping()
   }
 }
 
-static memory_fault_handler find_handler( uint32_t fa )
+// Real hardware reports errors type 0x007, at fa 0x80000000+
+// Real hardware reports errors type 0x807, at fa 0x80000000+
+static bool strange_handler( uint32_t fa, uint32_t ft )
+{
+/*
+  extern void send_number( uint32_t n, char c );
+
+  send_number( fa, ' ' );
+  send_number( ft, '\n' );
+*/
+  return true;
+}
+
+static __attribute__(( noinline )) memory_fault_handler find_handler( uint32_t fa )
 {
   arm32_ptr va = { .raw = fa };
   l1tt_entry l1 = translation_table.entry[va.section];
@@ -839,18 +868,12 @@ static memory_fault_handler find_handler( uint32_t fa )
     {
       l2tt *table = mapped_table( l1.table );
       l2tt_entry l2 = table->entry[va.page];
-      if (l2.type != 0) PANIC;
+      if (l2.type != 0) return strange_handler; // PANIC;
       return l2.handler;
     }
   default: PANIC;
   }
   return 0;
-}
-
-void __attribute__(( naked )) prefetch_handler()
-{
-  // Also includes Breakpoints.
-  for (;;) { asm ( "wfi" ); }
 }
 
 static bool __attribute__(( noinline )) handle_data_abort()

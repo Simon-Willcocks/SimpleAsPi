@@ -24,7 +24,7 @@ typedef struct __attribute__(( packed, aligned( 256 ) )) {
   uint32_t line_control;                        // 0x2c
   uint32_t control;                             // 0x30
   uint32_t interrupt_fifo_level_select;         // 0x34
-  uint32_t interrupt_mask_set_clear;            // 0x38
+  uint32_t interrupt_mask;                      // 0x38
   uint32_t raw_interrupt_status;                // 0x3c
   uint32_t masked_interrupt_status;             // 0x40
   uint32_t interrupt_clear;                     // 0x44
@@ -35,4 +35,12 @@ typedef struct __attribute__(( packed, aligned( 256 ) )) {
   uint32_t integration_test_output;             // 0x88
   uint32_t test_data;                           // 0x8c
 } UART;
+
+// Flags @ 0x18
+enum { UART_Busy = 1 << 3,
+       UART_RxEmpty = 1 << 4,
+       UART_TxFull = 1 << 5,
+       UART_RxFull = 1 << 6,
+       UART_TxEmpty = 1 << 7
+     };
 

@@ -19,15 +19,17 @@
 // Overlays?
 
 // How about this:
-//  The application doesn't need to worry about where its window is being displayed.
-//  On return from GetRectangle, the frame buffer/output sprite can be anywhere.
-//  If you want to triple buffer, create a window ... no, bad idea
+//  The application doesn't need to worry about where its window is
+//  being displayed.
+//  On return from GetRectangle, the frame buffer/output sprite can
+//  be anywhere.
 
 // Could the main frame buffer be a single pixel?
 
-// Map the frame buffer into Slot memory, create pipes for other tasks to write to.
-// SpaceFilled pushes to the cache. Always "fill" the whole thing (or never do, leave
-// it to the Wimp or some such).
+// Map the frame buffer into Slot memory, create pipes for other tasks 
+// to write to.
+// SpaceFilled pushes to the cache. Always "fill" the whole thing (or
+// never do, leave it to the Wimp or some such).
 
 
 #include "CK_types.h"
@@ -35,7 +37,7 @@
 
 typedef struct workspace workspace;
 
-#define MODULE_CHUNK "0"
+#define MODULE_CHUNK "0x20c0"
 
 const unsigned module_flags = 1;
 // Bit 0: 32-bit compatible
@@ -63,11 +65,8 @@ static inline void push_writes_to_device()
 }
 
 struct workspace {
-  uint32_t pa;
-  uint32_t fb_physical_address;
-  uint32_t fb_size;
-  uint32_t graphics_driver_id;
-  uint32_t stack[63];
+  uint32_t queue;
+  uint32_t stack[61];
 };
 
 void open_display( uint32_t handle, workspace *ws )
@@ -166,7 +165,7 @@ void open_display( uint32_t handle, workspace *ws )
   // Map into local memory
   uint32_t *screen = (void *) (2 << 20);
 
-  // screen = Task_MapFrameBuffer( base_page, pages );
+  screen = Task_MapFrameBuffer( base_page, pages );
   Task_MapDevicePages( screen, base_page, pages );
 
   for (int y = 0; y < 1080; y++) {
@@ -179,9 +178,22 @@ void open_display( uint32_t handle, workspace *ws )
 
   Task_LogString( "Display ready\n", 0 );
 
+  screen = (void*) 0xc0000000;
+  for (int y = 0; y < 1080; y++) {
+    for (int x = 0; x < 1920; x++) {
+      screen[1920 * y + x] = 0xf0406080;
+    }
+  }
+
+  Task_MemoryChanged( screen, pages << 12 );
+
   for (;;) {
-    // Handle requests for access to FB
-    Task_Sleep( 100 );
+    queued_task client = Task_QueueWait( ws->queue );
+    // There's only one thing that gets requested, so far, and that's
+    // a "Wait for the display to be mapped at 0xc0000000" SWI
+    Task_ReleaseTask( client.task_handle, 0 );
+    Task_LogString( "Released the waiting task.", 0 );
+    Task_LogNewLine();
   }
 }
 
@@ -195,6 +207,15 @@ void __attribute__(( noinline )) c_init( workspace **private,
   // external hardware!
   workspace *ws = rma_claim( sizeof( workspace ) );
   *private = ws;
+
+  ws->queue = Task_QueueCreate();
+
+  swi_handlers handlers = { };
+  for (int i = 0; i < 16; i++) {
+    handlers.action[i].queue = ws->queue;
+  }
+
+  Task_RegisterSWIHandlers( &handlers );
 
   register void *start asm( "r0" ) = open_display;
   register uint32_t sp asm( "r1" ) = aligned_stack( ws + 1 );

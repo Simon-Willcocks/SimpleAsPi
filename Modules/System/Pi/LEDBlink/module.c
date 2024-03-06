@@ -105,10 +105,10 @@ for (int y = 100; y < 200; y++) {
   asm ( "svc 2" : : "r" (str) : "lr" ); // Write0
 #endif
   for (;;) {
-    Task_LogString( "ON\n", 0 );
+    Task_LogString( "ON ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
     led_on( pin );
     Task_Sleep( on_time );
-    Task_LogString( "OFF\n", 0 );
+    Task_LogString( "OFF ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
     led_off( pin );
     Task_Sleep( off_time );
   }
@@ -222,10 +222,19 @@ void *memcpy(void *d, void *s, uint32_t n)
 void go()
 {
   Task_LogString( "Entering blink module\n", 0 );
-  register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
+  {
+  register uint32_t pin asm( "r0" ) = 22; // 22 green 27 orange
   register uint32_t on asm( "r1" ) = 200;
   register uint32_t off asm( "r2" ) = 100;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
+  }
+
+  {
+  register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
+  register uint32_t on asm( "r1" ) = 95;
+  register uint32_t off asm( "r2" ) = 55;
+  asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
+  }
 
   for (;;) Task_Sleep( 10000 );
 }

@@ -128,11 +128,17 @@ void core_debug_task( uint32_t handle, int core, workspace *ws, uint32_t pipe )
   }
 }
 
+void hitit( uint32_t handle )
+{
+  for (;;) {
+    Task_Sleep( 1000 );
+    while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" : : "r"(i) );  }
+    uart->data = '+';
+  }
+}
+
 void send_to_uart( char const *string, uint32_t length )
 {
-#ifndef QEMU
-  return; // Testing 19/1/2024 seems to fail on real hardware
-#else
   for (int i = 0; i < length; i++) {
     // Send to UART (this should work on qemu, but not on real hardware;
     // that needs to wait for ready to send interrupts
@@ -140,18 +146,98 @@ void send_to_uart( char const *string, uint32_t length )
     // problem.
     // The real thing will also have to claim the appropriate GPIO pins
     // and set the alternate functions.
+    while (0 != (uart->flags & (UART_Busy | UART_TxFull))) { for (int i = 0; i < 1000; i++) asm ( "" : : "r"(i) ); }
     uart->data = string[i];
   }
-#endif
 }
+
+// Replace this GPIO stuff with SWIs to:
+//  claim pins 8 & 10 (GPIO 14 & 15)
+//  Set their state to Alt0
+#include "Devices/bcm_gpio.h"
+
+GPIO volatile *const gpio  = (void*) 0x6000;
+
+static inline void setup_pins()
+{
+  uint32_t page = 0x3f200000 >> 12;
+  Task_MapDevicePages( gpio, page, 1 );
+
+  set_state( gpio, 14, GPIO_Alt0 );
+  set_state( gpio, 15, GPIO_Alt0 );
+}
+
+
+// Ensure the GPIO pins are allocated to the serial port outside
+// this routine.
+
+// freq is the reference clock frequency
+static inline
+void initialise_PL011_uart( UART volatile *uart, uint32_t freq, uint32_t baud )
+{
+  // TODO: block when the FIFO is full, wait for interrupts, etc.
+
+  // Disable UART
+  uart->control &= ~1;
+  asm ( "dsb" );
+
+  // Wait for current byte to be transmitted/received
+
+  while (0 != (uart->flags & UART_Busy)) { }
+
+  // UART clock is clock 2, rather than use the mailbox interface for
+  // this test, put init_uart_clock=3000000 in config.txt
+
+  uint32_t const ibrd = freq / (16 * baud);
+  // The top 6 bits of the fractional part...
+  uint32_t const fbrdx2 = ((8 * freq) / baud) & 0x7f;
+  // rounding off...
+  uint32_t const fbrd = (fbrdx2 + 1) / 2;
+
+  uart->integer_baud_rate_divisor = ibrd;
+  uart->fractional_baud_rate_divisor = fbrd;
+
+  uint32_t const eight_bits = (3 << 5);
+  uint32_t const fifo_enable = (1 << 4);
+  uint32_t const parity_enable = (1 << 1);
+  uint32_t const even_parity = parity_enable | (1 << 2);
+  uint32_t const odd_parity = parity_enable | (0 << 2);
+  uint32_t const one_stop_bit = 0;
+  uint32_t const two_stop_bits = (1 << 3);
+
+  uart->line_control = (eight_bits | one_stop_bit | fifo_enable);
+
+  uart->interrupt_mask = 0;
+
+  uint32_t const transmit_enable = (1 << 8);
+  uint32_t const receive_enable = (1 << 9);
+  uint32_t const uart_enable = 1;
+
+  // No interrupts, for the time being, transmit only
+  uart->control = uart_enable | transmit_enable;
+  asm ( "dsb" );
+}
+
 
 void start_log( uint32_t handle, workspace *ws )
 {
   // This location should be passed to the final driver module by the HAL
+  // Not really. The serial port should be taken out of this altogether
   uint32_t uart_page = 0x3f201000 >> 12;
   Task_MapDevicePages( uart, uart_page, 1 );
 
-  send_to_uart( "Starting", 9 );
+  setup_pins();
+
+  // Should read or set the clock frequency, but this value is set
+  // in config.txt, for now.
+  initialise_PL011_uart( uart, 3000000, 115200 );
+
+
+  send_to_uart( "Starting\n", 10 );
+
+//  UART volatile * const uart = (void*) 0xfffff000;
+  while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" ); }
+  uart->data = 'T';
 
   ws->output_pipe = PipeOp_CreateForTransfer( 4096 );
 
@@ -202,6 +288,25 @@ void start_log( uint32_t handle, workspace *ws )
   }
 
   Task_LogString( "Log starting\n", 13 );
+
+
+    {
+    uint32_t const stack_size = 256;
+    uint8_t *stack = rma_claim( stack_size );
+
+      // THIS IS A HACK FIXME and delete asap...
+      register void *start asm( "r0" ) = hitit;
+      register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
+
+      register uint32_t handle asm( "r0" );
+
+      asm volatile ( "svc %[swi]" // volatile in case we ignore output
+        : "=r" (handle)
+        : [swi] "i" (OSTask_Create)
+        , "r" (start)
+        , "r" (sp)
+        : "lr", "cc" );
+    }
 
   for (;;) {
     PipeSpace data = PipeOp_WaitForData( ws->output_pipe, 1 );

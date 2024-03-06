@@ -56,6 +56,7 @@ void __attribute__(( naked, noreturn )) _start()
   uint32_t core = get_core_number();
 
 #ifdef DEBUG__SINGLE_CORE
+#warning "SINGLE CORE"
   if (core != 0) for (;;) asm ( "wfi" );
 #endif
 

@@ -13,6 +13,20 @@
  * limitations under the License.
  */
 
+// This module handles the GraphicsV interface to the RISC OS kernel.
+// The plan is to have a more general DisplayManager module and modules
+// for individual platforms' displays.
+// Bitmaps (including displays and regions) will be mapped into slot memory
+// as required.
+
+// For the time being, until the Wimp can be modified (maybe the Plot,
+// Draw, and Font modules, too), provides one display on one screen at
+// one resolution. Mapped at one, shared, location.
+
+// There is horrible collusion between BCM2835Display, Legacy/memory.c,
+// Task_MapFrameBuffer, and this module to map the one bitmap at 0xc0000000,
+// globally.
+
 #include "CK_types.h"
 #include "ostaskops.h"
 
@@ -46,9 +60,6 @@ static inline void push_writes_to_device()
 }
 
 struct workspace {
-  uint32_t pa;
-  uint32_t fb_physical_address;
-  uint32_t fb_size;
   uint32_t graphics_driver_id;
   uint32_t stack[63];
 };
@@ -79,117 +90,23 @@ void open_display( uint32_t handle, workspace *ws )
 {
   Task_LogString( "Opening BCM2835 display\n", 0 );
 
-  uint32_t space_on_stack[30];
+  Task_Sleep( 1000 );
 
-  uint32_t mr = (uint32_t) space_on_stack;
-  mr = (mr + 15) & ~15;
-  uint32_t *mailbox_request = (void*) mr;
-
-  // Order is important, at least for QEMU, I think
-
-  int i = 0;
-  mailbox_request[i++] = 26 * 4; // Message buffer size
-  mailbox_request[i++] = 0; // request
-  mailbox_request[i++] = 0x00048004;  // Set virtual (buffer) width/height
-  mailbox_request[i++] = 8;
-  mailbox_request[i++] = 0;
-  mailbox_request[i++] = 1920;
-#ifdef QEMU
-  mailbox_request[i++] = 1092; // 12 invisible pixels to make the buffer almost 8MiB
-#else
-  mailbox_request[i++] = 1080; // Real hardware doesn't like the above trick
-#endif
-  mailbox_request[i++] = 0x00048003; // Set physical (display) width/height
-  mailbox_request[i++] = 8;
-  mailbox_request[i++] = 0;
-  mailbox_request[i++] = 1920;
-  mailbox_request[i++] = 1080;
-  mailbox_request[i++] = 0x00048005; // Set depth
-  mailbox_request[i++] = 4;
-  mailbox_request[i++] = 0;
-  uint32_t *bits_per_pixel = mailbox_request + i;
-  mailbox_request[i++] = 32;
-  mailbox_request[i++] = 0x00048006; // Pixel order
-  mailbox_request[i++] = 4;
-  mailbox_request[i++] = 0;
-  mailbox_request[i++] = 0; // 0: BGR, 1: RGB
-  mailbox_request[i++] = 0x00040001, // Allocate buffer
-  mailbox_request[i++] = 8;
-  mailbox_request[i++] = 0;
-  uint32_t *frame_buffer = mailbox_request + i;
-  mailbox_request[i++] = 2 << 20;
-  uint32_t *frame_buffer_size = mailbox_request + i;
-  mailbox_request[i++] = 0;
-  mailbox_request[i++] = 0; // No more tags
-
-  // A better approach would be to create a pipe over the data and pass
-  // that to the server; it can then get a physical address from the
-  // local end of the pipe. Being allowed to specify random physical
-  // addresses is a bad idea.
-  uint32_t pa = Task_PhysicalFromVirtual( mailbox_request, *mailbox_request );
-
-  Task_LogString( "BCM2835 display opening\n", 0 );
-
-  register uint32_t req asm( "r0" ) = pa;
-  register error_block *error asm( "r0" );
+  register error_block const *error asm ( "r0" );
   asm volatile (
-      "svc #0x21088" // Channel 8
+      "svc #0x220c0" // Wait for the display to be mapped at 0xc0000000
   "\n  movvc r0, #0"
-      : "=r" (error)
-      : "r" (req)
-      : "lr", "cc", "memory" );
+      : "=r" (error) : : "cc" );
 
   if (error != 0) {
-    Task_LogString( "BCM2835 GPU Mailbox not responding ", 0 );
+    Task_LogString( "BCM2835 display not opened\n", 0 );
     return;
   }
-  // Make sure we can see what the GPU wrote
-  // This can be shown to be essential by commenting it out and
-  // checking if the value of mailbox_request[1] is non-zero
-  Task_MemoryChanged( mailbox_request, *mailbox_request );
-
-  Task_LogString( "BCM2835 display response ", 0 );
-  Task_LogHex( mailbox_request[1] );
-  Task_LogNewLine();
-
-  if (0 == mailbox_request[1]) {
-    return;
-  }
-
-  Task_LogString( "BCM2835 display open, base ", 0 );
-  Task_LogHex( *frame_buffer );
-  Task_LogString( ", size ", 0 );
-  Task_LogHex( *frame_buffer_size );
-
-  // Correct for something... Returns an address between 0xc0000000
-  // and 0xd0000000, but needs to be accessed with lower physical
-  // addresses. I can't remember why this is needed!
-
-  ws->fb_physical_address = (0x3fffffff & *frame_buffer);
-  ws->fb_size = *frame_buffer_size;
 
   GraphicsV_DeviceReady( ws->graphics_driver_id );
 
   Task_LogString( "GraphicsV device ready\n", 0 );
-/*
-  // Before I go, set the mode...
-  Task_LogString( "Setting screen mode...\n", 0 );
-  register uint32_t *set asm( "r0" ) = 0;
-  register uint32_t *mode asm( "r1" ) = msb;
-  asm ( "svc %[swi]" : : [swi] "i" (OS_ScreenMode), "r" (set), "r" (mode) );
-  Task_LogString( "Set screen mode.\n", 0 );
 
-  Task_MemoryChanged( fb, *frame_buffer_size );
-
-  Task_LogString( "Memory changed...\n", 0 );
-
-  asm ( "svc 0x110" ); // CLG
-  Task_LogString( "1\n", 0 );
-  asm ( "svc 0x11a" ); // Restore default windows
-  Task_LogString( "2\n", 0 );
-  asm ( "svc 0x12a" ); // *
-  Task_LogString( "3\n", 0 );
-*/
   Task_EndTask();
 }
 
@@ -289,8 +206,8 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
   case 9:
     WriteS( "Framestore information " ); // Framestore information 	FG 	SVC
     {
-      regs[0] = workspace->fb_physical_address;
-      regs[1] = workspace->fb_size;
+      regs[0] = 0xfbfbfbfb;
+      regs[1] = msb[1] * msb[2] * (1 << msb[3]) / 8;
     }
     break;
   case 10:

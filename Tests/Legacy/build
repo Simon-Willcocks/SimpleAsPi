@@ -1,13 +1,13 @@
 #! /bin/bash -
 
 SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART:System/DoNothing
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART:System/Pi/Legacy/BCM2835GrV
 
 echo Modules: ${MODULES//:/ }
 
 # Be careful not to include the same module twice!
 # At least until it will be safely coped with.
-INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0'
+INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0BCM2835GrV\0'
 
 INITIAL_MODULES+='LogToUART\0'
 
