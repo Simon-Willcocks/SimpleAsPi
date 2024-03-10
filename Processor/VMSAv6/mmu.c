@@ -900,6 +900,33 @@ static bool __attribute__(( noinline )) handle_data_abort()
   return handler( fa, ft );
 }
 
+void __attribute__(( noinline )) signal_data_abort()
+{
+  uint32_t fa = fault_address();
+  uint32_t ft = data_fault_type();
+
+  extern void send_number( uint32_t n, char c );
+
+  send_number( (uint32_t) workspace.ostask.running, ' ' );
+  send_number( fa, ' ' );
+  send_number( ft, '\n' );
+
+  extern uint32_t OSTask_free_pool;
+  uint32_t *p = &OSTask_free_pool;
+
+  for (int i = 0; i < 16; i++) {
+    for (int t = 0; t < 22; t++) {
+      send_number( p[i * 22 + t], t == 21 ? '\n' : ' ' );
+    }
+  }
+  p = &fa;
+  for (int i = 0; i < 16; i++) {
+    send_number( p[i], '\n' );
+  }
+
+  for (;;) {}
+}
+
 void __attribute__(( naked )) data_abort_handler()
 {
   asm volatile (
@@ -909,7 +936,7 @@ void __attribute__(( naked )) data_abort_handler()
       );
 
   if (!handle_data_abort()) {
-    PANIC;
+    signal_data_abort();
   }
 
   asm volatile ( "pop { "C_CLOBBERED" }"
