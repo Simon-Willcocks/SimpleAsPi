@@ -44,8 +44,8 @@ NO_swi_names;
 NO_swi_decoder;
 NO_messages_file;
 
-const char title[] = "PiMailbox";
-const char help[] = "PiMailbox\t0.01 (" CREATION_DATE ")";
+const char title[] = "GPUMailbox";
+const char help[] = "GPUMailbox\t0.01 (" CREATION_DATE ")";
 
 static inline void push_writes_to_device()
 {
