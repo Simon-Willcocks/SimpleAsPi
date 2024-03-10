@@ -366,7 +366,7 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
   // interrupt...
   ensure_changes_observable();
 
-#ifndef DEBUG__NO_TICKS
+#ifndef DEBUG__NO_TICKER
   // Automatically reloads when reaches zero
   // Interrupt cleared by writing (1 << 31) to Local_timer_write_flags
   qa7->Local_timer_control_and_status = 
@@ -427,36 +427,9 @@ void start_ticker()
 
 //////////////////////////////////////////////////
 
-#include "bcm_gpio.h"
-
-GPIO volatile *const gpio = (void*) 0x2000;
-
 static inline void push_writes_to_device()
 {
   asm ( "dsb" );
-}
-
-static inline void led_on( uint32_t pin )
-{
-  gpio->gpset[pin / 32] = 1 << (pin & 31);
-  push_writes_to_device();
-}
-
-static inline void led_off( uint32_t pin )
-{
-  gpio->gpclr[pin / 32] = 1 << (pin & 31);
-  push_writes_to_device();
-}
-
-void leds( int pin )
-{
-return;
-  for (int n = 0; n < 10; n++) {
-    led_off( pin );
-    for (int i = 0; i < 0x1000000; i++) asm ( "" );
-    led_on( pin );
-    for (int i = 0; i < 0x1000000; i++) asm ( "" );
-  }
 }
 
 void irq_manager( uint32_t handle, workspace *ws )
@@ -466,13 +439,6 @@ void irq_manager( uint32_t handle, workspace *ws )
 
   Task_MapDevicePages( qa7, qa7_page, 1 );
   Task_MapDevicePages( gpu, gpu_page, 1 );
-
-  Task_MapDevicePages( gpio, 0x3f200, 1 );
-
-  set_state( gpio, 22, GPIO_Output );
-  set_state( gpio, 27, GPIO_Output );
-  push_writes_to_device();
-leds( 27 );
 
   // One IRQ task per core
   for (int i = 0; i < ws->cores.total; i++) {
@@ -518,7 +484,6 @@ leds( 27 );
     if (handle != ws->tasks[i].core_irq_task) asm ( "bkpt 10" );
   }
 
-leds( 22 );
   Task_EnablingInterrupts();
 
 #ifndef DEBUG__NO_TICKER
@@ -527,6 +492,9 @@ leds( 22 );
 #warning "Sleep ticker disabled"
 #endif
 
+  // Note: This loop is running with interrupts disabled, so that the
+  // core requesting the services aren't interruptable by the interrupt
+  // they just enabled.
   for (;;) {
     queued_task client = Task_QueueWait( ws->queue );
 
