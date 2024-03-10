@@ -52,7 +52,7 @@ typedef struct module module;
 
 static inline bool is_queue( swi_action action )
 {
-  return (action.code & 3) == 1;
+  return (action.queue & 3) == 1;
 }
 
 struct module {
@@ -362,38 +362,6 @@ OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )
   return 0;
 }
 
-void run_action( svc_registers *regs, uint32_t code, module *m )
-{
-  // CKernel SWI handlers take:
-  //   r0-r9 from the caller
-  //   r12   pointer to private word
-  //   r11   undefined (no longer the SWI number; each one has its own code)
-  //   r13   svc stack
-  //   r14   return address
-  //
-  // May change r0-r9, flags, for the caller, corrupt r10-r12, r14.
-  // New rule: condition flags are never inputs to (new) SWIs
-  // (Honestly, I don't think there are SWIs that use them as inputs.)
-  register uint32_t *private asm( "r12" ) = &m->private_word;
-  register uint32_t c asm ( "r12" ) = code;
-  register svc_registers *r asm ( "r11" ) = regs;
-  asm volatile (
-    "\n  push {r11}"
-    "\n  ldmia r11, {r0-r9}"
-    "\n  blx r12"
-    "\n  pop {r11}"
-    "\n  stmia r11, {r0-r9}"
-    "\n  mrs r0, cpsr"
-    "\n  str r0, [r11, %[psr]]"
-    :
-    : "r" (r)
-    , "r" (c)
-    , "r" (private)
-    , [psr] "i" (offset_of( svc_registers, spsr ))
-    : "lr", "cc", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"
-  );
-}
-
 uint32_t swi_handler( module_header *h )
 {
   uint32_t result = h->offset_to_swi_handler;
@@ -403,7 +371,6 @@ uint32_t swi_handler( module_header *h )
 
 static void run_swi_handler_code( svc_registers *regs, uint32_t svc, module *m )
 {
-  // Like run_action, except calling a single routine for all SWIs.
   register uint32_t non_kernel_code asm( "r14" ) = swi_handler( m->header );
   register uint32_t *private_word asm( "r12" ) = &m->private_word;
   register uint32_t svc_index asm( "r11" ) = svc & 0x3f;
@@ -450,7 +417,13 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
       return Error_UnknownSWI( regs );
     }
     else {
-      run_action( regs, action.code, m );
+      OSTask *running = workspace.ostask.running;
+      action.code( regs, (void*) m->private_word,
+                   workspace.core, ostask_handle( running ) );
+      if (running != workspace.ostask.running) {
+        // SetController was called
+        return workspace.ostask.running;
+      }
     }
   }
   else {
@@ -479,7 +452,12 @@ module_header *find_named_module( char const *name )
       header = find_module_in_list( mod_name, &LegacyModulesList );
     }
   }
-  else PANIC; // Look in filesystems
+  else {
+    Task_LogString( "Module ", 0 );
+    Task_LogString( name, 0 );
+    Task_LogString( " not found\n", 0 );
+    PANIC; // Look in filesystems
+  }
 
   if (header == 0) PANIC; // Not found in ROM
 
