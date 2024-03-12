@@ -49,6 +49,9 @@ void __attribute__(( naked, noreturn )) _start()
     "\n.endif"
   );
 
+uint32_t *p = (void*) 0x600000;
+// asm to stop call to memset without a stack
+//while (p < (void*) 0x10000000) { *p++ = 0x66666666; asm ( "" ); }
   // Core 0 is always present, its workspace is always at the top of the
   // initial memory, a core can find the top of the initial memory by
   // adding (core+1) * CORE_WORKSPACE to its core workspace.

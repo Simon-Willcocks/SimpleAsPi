@@ -598,7 +598,6 @@ bool check_global_table( uint32_t va, uint32_t fault )
 
       if (l1.type == 0) {
         if (check_global_table == l1.handler) {
-          PANIC;
           return false;
         }
         else
@@ -911,6 +910,15 @@ void __attribute__(( noinline )) signal_data_abort()
   send_number( fa, ' ' );
   send_number( ft, '\n' );
 
+  arm32_ptr va = { .raw = fa };
+  l1tt_entry l1 = translation_table.entry[va.section];
+  send_number( l1.raw, '\n' );
+  if (1 == l1.type) {
+    l2tt *table = mapped_table( l1.table );
+    l2tt_entry l2 = table->entry[va.page];
+    send_number( l2.raw, '\n' );
+  }
+
   extern uint32_t OSTask_free_pool;
   uint32_t *p = &OSTask_free_pool;
 
@@ -920,7 +928,7 @@ void __attribute__(( noinline )) signal_data_abort()
     }
   }
   p = &fa;
-  for (int i = 0; i < 16; i++) {
+  for (int i = 0; i < 30; i++) {
     send_number( p[i], '\n' );
   }
 
@@ -936,6 +944,8 @@ void __attribute__(( naked )) data_abort_handler()
       );
 
   if (!handle_data_abort()) {
+    asm ( "pop { "C_CLOBBERED" }"
+      "\n  push { r0-r12, lr }" );
     signal_data_abort();
   }
 

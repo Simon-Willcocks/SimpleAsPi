@@ -158,6 +158,7 @@ uint32_t map_device_pages( uint32_t va,
                            uint32_t page_base,
                            uint32_t pages );
 uint32_t app_memory_top( uint32_t top );
+void map_first_slot();
 void map_slot( OSTaskSlot *new );
 
 #include "heap.h"

@@ -115,9 +115,9 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 
   // Make this running code into an OSTask
   workspace.ostask.running = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
-  workspace.ostask.running->slot = shared.ostask.first;
 
-  map_slot( workspace.ostask.running->slot );
+  workspace.ostask.running->slot = shared.ostask.first;
+  map_first_slot();
 
   if (first) {
     // Create a separate idle OSTask
@@ -166,24 +166,9 @@ void __attribute__(( naked, noreturn )) idle_task()
   // idle OSTask, it will not return until an OSTask has become runnable
   // (and that one yields or blocks).
   asm ( "svc %[yield]"
-    "\n  add %[tmp], %[tmp], #1"
-    "\n  cmp %[tmp], #1024"
-    "\n  bne idle_task"
-
-    "\n0:"
-    "\n  ldr %[tmp], [%[uart], #0x18]"
-    "\n  and %[tmp], #0x88"
-    "\n  cmp %[tmp], #0x80"
-    "\n  moveq %[tmp], #'I'"
-    "\n  streq %[tmp], [%[uart]]"
     "\n  b idle_task"
-
-    "\n  svc %[yield]"
-    "\n  b 0b"
     :
-    : [yield] "i" (OSTask_Yield)
-    , [uart] "r" (0xfffff000)
-    , [tmp] "r" (0) );
+    : [yield] "i" (OSTask_Yield) );
 }
 
 void __attribute__(( naked )) reset_handler()
@@ -194,7 +179,9 @@ void __attribute__(( naked )) reset_handler()
 void __attribute__(( naked )) undefined_instruction_handler()
 {
   // Return to the next instruction. It's useful as a debugging tool
-  // to insert asm ( "udf 1" ) to see the registers at that point.
+  // to insert e.g. asm ( "udf 1" ) to see the registers at that point.
+  // Note: udf #0 is sometimes inserted by the compiler, if it knows
+  // an instruction will fail, like if (p == 0) *p = 12;
   asm volatile (
         "srsdb sp!, #0x1b // Store return address and SPSR (UND mode)"
     "\n  rfeia sp! // Restore execution and SPSR"
@@ -302,6 +289,27 @@ OSTask *TaskOpChangeController( svc_registers *regs )
     if (new_controller == 0) PANIC;
     release->controller = new_controller;
   }
+  return 0;
+}
+
+OSTask *TaskOpSetController( svc_registers *regs )
+{
+  OSTask *running = workspace.ostask.running;
+  OSTask *controller = ostask_from_handle( regs->r[1] );
+  svc_registers *swi_regs = (void*) regs->r[0];
+
+  if (controller == 0) PANIC;
+  if (running->controller != 0) PANIC;
+  if (0 == (regs->spsr & 0x80)) PANIC;
+
+  running->controller = controller;
+
+  save_task_state( swi_regs );
+  workspace.ostask.running = running->next;
+  dll_detach_OSTask( running );
+
+  // Return 0 to ensure the code resumes after this SWI, even
+  // though the original task is detached.
   return 0;
 }
 
@@ -574,6 +582,8 @@ Task_LogString( "Created task ", 13 );
 Task_LogHex( (uint32_t) task );
 Task_LogString( ", starting at ", 14 );
 Task_LogHex( regs->r[0] );
+Task_LogString( ", in slot ", 0 );
+Task_LogHex( task->slot );
 Task_LogNewLine();
 #endif
 
@@ -755,6 +765,15 @@ OSTask *TaskOpMapDevicePages( svc_registers *regs )
   uint32_t virt = regs->r[0];
   uint32_t page_base = regs->r[1];
   uint32_t pages = regs->r[2];
+#ifdef DEBUG__LOG_SLOT_MEMORY
+Task_LogString( "Mapping ", 0 );
+Task_LogHex( page_base << 12 );
+Task_LogString( " at ", 4 );
+Task_LogHex( virt );
+Task_LogString( " in ", 4 );
+Task_LogHex( (uint32_t) workspace.ostask.running->slot );
+Task_LogNewLine();
+#endif
   regs->r[0] = map_device_pages( virt, page_base, pages );
   return 0;
 }
@@ -866,8 +885,8 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_ChangeController:
     resume = TaskOpChangeController( regs );
     break;
-  case OSTask_GetTaskHandle:
-    regs->r[0] = ostask_handle( running );
+  case OSTask_SetController:
+    resume = TaskOpSetController( regs );
     break;
   case OSTask_Cores:
     {

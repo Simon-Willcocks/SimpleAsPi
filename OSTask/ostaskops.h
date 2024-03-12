@@ -35,8 +35,8 @@ enum {
   , OSTask_RelinquishControl            // Resume controlling task
   , OSTask_ReleaseTask                  // Resume controlled task
   , OSTask_ChangeController             // Pass the controlled task to another
+  , OSTask_SetController                // Allow another task to control me
 
-  , OSTask_GetTaskHandle                // Current task - also passed to code
   , OSTask_LockClaim            // 0x310
   , OSTask_LockRelease
 
@@ -106,7 +106,7 @@ void Task_EndTask()
 
 typedef union swi_action swi_action;
 union swi_action {
-  uint32_t code;
+  void (*code)( svc_registers *regs, void *ws, int core, uint32_t task );
   uint32_t queue;
 };
 
@@ -167,6 +167,26 @@ void *Task_MapDevicePages( void volatile *va, uint32_t base_page, uint32_t pages
     : "lr", "cc" );
 
   return (void*) va;
+}
+
+static inline
+uint32_t Task_SetAppMemoryTop( uint32_t new_top )
+{
+  register uint32_t top asm ( "r0" ) = new_top;
+
+  asm volatile ( "svc %[swi]"
+    : "=r" (top)
+    : [swi] "i" (OSTask_AppMemoryTop)
+    , "r" (top)
+    : "lr", "cc" );
+
+  return top;
+}
+
+static inline
+uint32_t Task_ReadAppTop()
+{
+  return Task_SetAppMemoryTop( 0 );
 }
 
 static inline
@@ -722,6 +742,24 @@ error_block *Task_ChangeController( uint32_t client, uint32_t controller )
       : [swi] "i" (OSTask_ChangeController)
       , "r" (h)
       , "r" (replacement)
+      : "lr", "cc" );
+
+  return error;
+}
+
+static inline
+error_block *Task_SetController( svc_registers *regs, uint32_t controller )
+{
+  register svc_registers *r asm ( "r0" ) = regs;
+  register uint32_t c asm ( "r1" ) = controller;
+  register error_block *error asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OSTask_SetController)
+      , "r" (r)
+      , "r" (c)
       : "lr", "cc" );
 
   return error;

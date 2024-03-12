@@ -7,9 +7,11 @@ echo Modules: ${MODULES//:/ }
 
 # Be careful not to include the same module twice!
 # At least until it will be safely coped with.
-INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0BCM2835GrV\0'
+INITIAL_MODULES='QA7\0'
 
 INITIAL_MODULES+='LogToUART\0'
+INITIAL_MODULES+='LEDBlink\0'
+INITIAL_MODULES+='GPUMailbox\0BCM2835Display\0BCM2835GrV\0'
 
 INITIAL_MODULES+='UtilityModule\0'
 INITIAL_MODULES+='FileSwitch\0ResourceFS\0'

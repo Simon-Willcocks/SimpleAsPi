@@ -54,6 +54,7 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
   // library (which isn't going to work in ROM modules, is it?).
   // Compile ROM modules as fixed location, but check there's no .data segment
   // TODO
+  // This might not be a problem any more, I've stopped using -fPIE, afaics
   asm ( "mov %[m], #0"
     "\n0:"
     "\n  ldrb lr, [%[s], %[m]]"
@@ -77,7 +78,7 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     char *p = mod;
     do {
       *p++ = *s++;
-    } while (*s != '\0');
+    } while (*s >= ' ');
     *p++ = '\n'; // Terminator
     s++;
 
