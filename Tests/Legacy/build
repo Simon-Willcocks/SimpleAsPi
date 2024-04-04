@@ -1,7 +1,7 @@
 #! /bin/bash -
 
 SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART:System/Pi/Legacy/BCM2835GrV
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/Pi/Legacy/BCM2835GrV
 
 echo Modules: ${MODULES//:/ }
 
@@ -9,15 +9,18 @@ echo Modules: ${MODULES//:/ }
 # At least until it will be safely coped with.
 INITIAL_MODULES='QA7\0'
 
-INITIAL_MODULES+='LogToUART\0'
+INITIAL_MODULES+='LogToScreen\0'
 INITIAL_MODULES+='LEDBlink\0'
-INITIAL_MODULES+='GPUMailbox\0BCM2835Display\0BCM2835GrV\0'
+#INITIAL_MODULES+='GPUMailbox\0BCM2835GrV\0'
+INITIAL_MODULES+='GPUMailbox\0BCM2835Display\0'
 
 INITIAL_MODULES+='UtilityModule\0'
-INITIAL_MODULES+='FileSwitch\0ResourceFS\0'
-INITIAL_MODULES+='TerritoryManager\0Messages\0MessageTrans\0'
-INITIAL_MODULES+='UK\0'
-INITIAL_MODULES+='VFPSupport\0BASIC\0'
+INITIAL_MODULES+='FileCore\0'
+#INITIAL_MODULES+='FileSwitch\0'
+#INITIAL_MODULES+='ResourceFS\0'
+#INITIAL_MODULES+='TerritoryManager\0Messages\0MessageTrans\0'
+#INITIAL_MODULES+='UK\0'
+#INITIAL_MODULES+='VFPSupport\0BASIC\0'
 #INITIAL_MODULES+='WindowManager\0'
 
 DEFAULT_LANGUAGE=LEDBlink
@@ -91,6 +94,8 @@ LEGACIES+=" "$( symbol JTABLE )
 LEGACIES+=" "$( symbol defaultvectab )
 
 LEGACIES+=" "$( symbol VduInit )
+
+LEGACIES+=" "$( symbol HardFont )
 
 echo $LEGACIES
 echo $KERNEL_START, $KERNEL_OFFSET
@@ -167,7 +172,7 @@ arm-none-eabi-gcc-9.2.1 \
         $LEGACIES \
         -I Generated Generated/*.o \
         romimage_end.c \
-        -Wl,--defsym=legacy_svc_stack_top=0xfa280000 \
+        -Wl,--defsym=legacy_svc_stack_top=0xfa208000 \
         -Wl,--defsym=legacy_zero_page=0xfff40000 \
         \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \

@@ -83,6 +83,8 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     s++;
 
     Task_LogString( command, p - command );
+    Task_Yield();
+
     register uint32_t load asm ( "r0" ) = 1; // RMLoad
     register char const *module asm ( "r1" ) = command;
     register error_block *error asm ( "r0" );
@@ -104,8 +106,11 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
     // Legacy modules might have set callbacks, they'll have been run
     // by the time we get here. (Modules are not permitted to call
     // Yield in their svc mode initialisation code.)
-    Task_Yield();
+
+    // Task_Yield(); Moved to after the LogString and after the loop
   }
+
+  Task_Yield();
 
   char const entering[] = "Entering default language: " DEFAULT_LANGUAGE "\n";
   Task_LogString( entering, sizeof( entering ) - 1 );

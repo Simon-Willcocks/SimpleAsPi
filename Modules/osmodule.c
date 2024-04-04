@@ -254,7 +254,10 @@ error_block *run_initialisation_code( const char *env, module *m,
 {
   uint32_t *code = init_code( m->header );
 
-  if (code == 0) return 0;
+  if (code == 0) {
+    Task_LogString( "No initialisation code\n", 23 );
+    return 0;
+  }
 
   // Modules may initialise other modules during their initialisation.
   module *old_in_init = shared.module.in_init;

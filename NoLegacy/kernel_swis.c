@@ -146,8 +146,6 @@ void __attribute__(( noreturn )) startup()
   // Running with multi-tasking enabled. This routine gets called
   // just once.
 
-  enable_page_level_mapping();
-
   setup_system_heap(); // System heap
   setup_shared_heap(); // RMA heap
 

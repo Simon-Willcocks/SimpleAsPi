@@ -207,23 +207,56 @@ void setup_legacy_zero_page()
 
 void *cb_array( int num, int size )
 {
-  uint32_t container_size = size + 4;
+  uint32_t container_size = size + 4; // Object + size and free flag
   uint32_t alloc_size = num * container_size + sizeof( cba_head );
 
   cba_head *result = system_heap_allocate( alloc_size );
   if (result == (void*) 0xffffffff) return 0;
 
+  // FIXME: Remove this; it's to try to trace a bug visible on real
+  // hardware that accesses memory at 0x55555555 (uninitialised RAM)
+  uint32_t *p = (void *) result;
+  for (int i = 0; i < alloc_size / 4; i++) {
+    p[i] = 0x77665544;
+  }
+
+  // Word following the cba_head
   uint32_t *blocks = &(result[1].total);
 
   result->total = num;
   result->container_size = container_size;
   result->first_free = blocks;
 
-  uint32_t free_and_id = 0x80000000;
+  uint32_t offset = sizeof( cba_head );
+  uint32_t words = container_size / 4;
   for (int i = 0; i < num; i++) {
-    blocks[i * container_size / 4] = free_and_id;
-    free_and_id += container_size;
+#ifdef DEBUG__LOG_CB_ARRAYS
+  if (i < 5) {
+  Task_LogHex( (uint32_t) &blocks[i * words] );
+  Task_LogString( " ", 1 );
+  Task_LogHex( offset );
+  Task_LogString( " ", 1 );
+  Task_LogHex( (uint32_t) (&blocks[(i + 1) * words]) );
+  Task_LogNewLine();
   }
+#endif
+    blocks[i * words] = 0x80000000 | offset;
+    // Address of next block
+    blocks[i * words + 1] = (uint32_t) (&blocks[(i + 1) * words]);
+    offset += container_size;
+  }
+  uint32_t last = num - 1;
+  blocks[last * words + 1] = 0;
+
+#ifdef DEBUG__LOG_CB_ARRAYS
+  Task_LogString( "Created CB array of ", 0 );
+  Task_LogSmallNumber( num );
+  Task_LogString( " entries of ", 0 );
+  Task_LogSmallNumber( size );
+  Task_LogString( " bytes at ", 0 );
+  Task_LogHex( (uint32_t) result );
+  Task_LogNewLine();
+#endif
 
   return result;
 }
@@ -243,6 +276,7 @@ void cba_free( cba_head *block, void *unwanted )
     block->first_free = container;
   }
   else {
+    PANIC; // Should work, still untested
     system_heap_free( unwanted );
   }
 }
@@ -290,13 +324,22 @@ void fill_legacy_zero_page()
 
   // Chocolate blocks (very similar to OSTask_pool, etc.)
   // Manually taken from Options and object sizes:
-  legacy_zero_page.ChocolateCBBlocks = cb_array( 32, 12 );
+  // Callbacks
+  legacy_zero_page.ChocolateCBBlocks = cb_array( 32, sizeof(callback_entry) );
+  // Vectors
   legacy_zero_page.ChocolateSVBlocks = cb_array( 128, sizeof(vector_entry) );
+  // Tickers
   legacy_zero_page.ChocolateTKBlocks = cb_array( 32, 20 );
   // I think I'm taking control of the functions these arrays support...
+  // module ROM blocks
   // legacy_zero_page.ChocolateMRBlocks = cb_array( 150
+  // module Active blocks
   // legacy_zero_page.ChocolateMABlocks = cb_array( 150
+  // module SWI Hash blocks
   // legacy_zero_page.ChocolateMSBlocks = cb_array( 150
+  legacy_zero_page.ChocolateMRBlocks = (void*) 0xbadbad01;
+  legacy_zero_page.ChocolateMABlocks = (void*) 0xbadbad02;
+  legacy_zero_page.ChocolateMSBlocks = (void*) 0xbadbad03;
 }
 
 uint32_t ZPOFF_OsbyteVars = ZP_OFF( OsbyteVars );
@@ -418,6 +461,20 @@ OSTask *execute_swi( svc_registers *regs, int number )
   if (swi == OS_CallASWIR12
    || swi == OS_CallASWI) {
     PANIC; // I think the legacy implementation loops forever...
+  }
+
+  if (number != 0x1001) { // Not timer tick
+  Task_LogString( "SWI: ", 5 );
+  Task_LogHex( number );
+  Task_LogNewLine();
+  Task_LogHex( regs->r[0] );
+  Task_LogString( " ", 1 );
+  Task_LogHex( regs->r[1] );
+  Task_LogString( " ", 1 );
+  Task_LogHex( regs->r[2] );
+  Task_LogString( " ", 1 );
+  Task_LogHex( regs->r[3] );
+  Task_LogNewLine();
   }
 
   // Assumes all kernel SWIs need the legacy stack FIXME
@@ -566,8 +623,6 @@ void __attribute__(( noreturn )) startup()
 {
   // Running with multi-tasking enabled. This routine gets called
   // just once.
-
-  enable_page_level_mapping();
 
   setup_legacy_svc_stack();
   setup_legacy_zero_page();

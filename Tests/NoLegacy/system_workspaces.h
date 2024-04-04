@@ -40,5 +40,5 @@ typedef struct {
   workspace_module module;
 } core_workspace;
 
-extern shared_workspace shared;
-extern core_workspace workspace;
+extern shared_workspace volatile shared;
+extern core_workspace volatile workspace;

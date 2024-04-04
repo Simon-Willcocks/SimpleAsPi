@@ -24,7 +24,7 @@ typedef struct __attribute__(( packed, aligned( 256 ) )) {
   uint32_t       Core_timer_access_LS_32_bits; // Access first when reading/writing 64 bits.
   uint32_t       Core_timer_access_MS_32_bits;
   uint32_t       Local_Interrupt_routing0;
-  uint32_t       Local_Interrupts_routing1;
+  uint32_t       DEPRICATED_Local_Interrupts_routing1;
   uint32_t       Axi_outstanding_counters;
   uint32_t       Axi_outstanding_IRQ;
   uint32_t       Local_timer_control_and_status;

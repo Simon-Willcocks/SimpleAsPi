@@ -86,6 +86,11 @@ const char help[] = "BCM QA7\t\t0.01 (" CREATION_DATE ")";
 static QA7 volatile *const qa7 = (void*) 0x7000;
 static GPU volatile *const gpu = (void*) 0x6000;
 
+static inline void push_writes_to_device()
+{
+  asm ( "dsb" );
+}
+
 // Multi-processing primitives. No awareness of OSTasks.
 
 // Change the word at `word' to the value `to' if it contained `from'.
@@ -122,22 +127,30 @@ uint32_t change_word_if_equal( uint32_t *word, uint32_t from, uint32_t to )
   return value;
 }
 
-static inline
-void release_irq_tasks( uint32_t active, uint32_t *irq_tasks )
+void __attribute__(( noinline )) release_irq_tasks( uint32_t active, uint32_t *irq_tasks )
 {
+  uint32_t *waiting = irq_tasks;
   while (active != 0) {
     if (0 != (1 & active)) {
-      uint32_t task = *irq_tasks;
-      if (task == 0) asm ( "bkpt 6" );
-      *irq_tasks = 0;
-      Task_ReleaseTask( task, 0 );
+      uint32_t task = *waiting;
+      if (task != 0) {
+        *waiting = 0;
+        Task_ReleaseTask( task, 0 );
+      }
+      else {
+        uint32_t volatile *u = (void*) 0xfffff000;
+        while (1) {
+          for (int i = 0; i < 0x100000; i++) asm ( "" ); 
+          *u = '@' + (waiting - irq_tasks);
+        }
+      }
     }
-    irq_tasks++;
+    waiting++;
     active = active >> 1;
   }
 }
 
-void release_gpu_handlers( workspace *ws )
+static void release_gpu_handlers( workspace *ws )
 {
   // Bits 10, 11, 12, 13 & 14 are IRQ 7, 9, 10, 18 & 19
   static uint32_t const mapping1[] = {
@@ -285,6 +298,35 @@ void release_gpu_handlers( workspace *ws )
   ensure_changes_observable();
 }
 
+// Hopefully no stack at all...
+__attribute__(( optimize( "O4" ), naked, noreturn ))
+void core_mailbox_task( uint32_t handle, uint32_t core )
+{
+  Task_EnablingInterrupts();
+  qa7->Core_Mailboxes_Interrupt_control[core] = 1;
+  int count = 0;
+
+  for (;;) {
+    if ((count++ & 0xfff) == 0) *(uint32_t*) 0xfffff000 = '0' + core;
+
+    register uint32_t num asm ( "r0" ) = 0x84; // Mailbox 0 interrupt
+    asm ( "svc 0x1001" : : "r" (num) );
+
+    qa7->Core_write_clear[core].Mailbox[0] = 0xffffffff;
+  }
+}
+
+static inline
+void nudge_other_cores( uint32_t core, uint32_t n )
+{
+  int c = core;
+  for (int i = 1; i < n; i++) {
+    if (c == 0) c = n;
+    --c;
+    qa7->Core_write_set[c].Mailbox[0] = 1;
+  }
+}
+
 void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 {
   core_info cores = Task_Cores();
@@ -293,11 +335,6 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
   uint32_t *core_irq_tasks = &ws->tasks[core].task[0];
 
   Task_EnablingInterrupts();
-
-  // Release the creating task to start generating interrupts on this
-  // core. Even if that task is running on a different core, this core
-  // is running with interrupts disabled, so there's no race condition.
-  ws->tasks[core].core_irq_task = handle;
 
   if (0 == change_word_if_equal( &ws->gpu_handler, 0, handle )) {
     Task_LogString( "Claiming GPU interrupts\n", 0 );
@@ -312,6 +349,11 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 
     ensure_changes_observable();
   }
+
+  // Release the creating task to start generating interrupts on this
+  // core. Even if that task is running on a different core, this core
+  // is running with interrupts disabled, so there's no race condition.
+  ws->tasks[core].core_irq_task = handle;
 
   for (;;) {
     Task_WaitForInterrupt();
@@ -336,6 +378,8 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
     }
 
     release_irq_tasks( interrupts, core_irq_tasks );
+
+    nudge_other_cores( core, cores.total );
   }
 }
 
@@ -380,7 +424,8 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
       3840000; // 19.2 MHz clock, 38.4 MHz ticks, 100 ms ticks for qemu
 #endif
 #else
-      38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
+//      38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
+      384000; // 19.2 MHz clock, 38.4 MHz ticks, 10 ms (1cs)
 #endif
 #endif
 
@@ -392,15 +437,17 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
     register uint32_t irq asm ( "r0" ) = irq_number;
     asm ( "svc 0x1001" : : "r" (irq) );
 
-    // Clear interrupt flag
-    qa7->Local_timer_write_flags = (1 << 31);
-
     // There's only one place in each system that calls this,
     // so there's no point in putting it into ostaskops.h
     asm ( "svc %[swi]"
       :
       : [swi] "i" (OSTask_Tick)
       : "lr", "cc" );
+
+    // Clear interrupt flag
+    // Doing this after the tick in case it takes longer than expected
+    qa7->Local_timer_write_flags = (1 << 31);
+    push_writes_to_device();
   }
 }
 
@@ -427,11 +474,6 @@ void start_ticker()
 
 //////////////////////////////////////////////////
 
-static inline void push_writes_to_device()
-{
-  asm ( "dsb" );
-}
-
 void irq_manager( uint32_t handle, workspace *ws )
 {
   uint32_t qa7_page = 0x40000000 >> 12;
@@ -451,6 +493,22 @@ void irq_manager( uint32_t handle, workspace *ws )
     // once).
 
     Task_SwitchToCore( i );
+
+    if (0) {
+    register void *start asm( "r0" ) = core_mailbox_task;
+    register uint32_t sp asm( "r1" ) = 0x000bad00; // Unused, but must be 8-byte aligned (eabi)
+    register uint32_t r1 asm( "r2" ) = i;
+
+    register uint32_t handle asm( "r0" );
+
+    asm volatile ( "svc %[swi]" // volatile in case we ignore output
+      : "=r" (handle)
+      : [swi] "i" (OSTask_Create)
+      , "r" (start)
+      , "r" (sp)
+      , "r" (r1)
+      : "lr", "cc" );
+    }
 
     register void *start asm( "r0" ) = core_irq_task;
     register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );

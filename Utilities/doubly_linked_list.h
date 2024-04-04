@@ -34,7 +34,7 @@ static inline void dll_new_##T( T *i ) { \
 /* follow up with `l = l->next;`, if you want it after the head, declare */ \
 /* a list `T *tmp = l->next;`, then attach it to that list. (Remember to */ \
 /* check for an empty list in that case!) */ \
-static inline void dll_attach_##T( T *i, T **l ) { \
+static inline void dll_attach_##T( T *i, T * volatile*l ) { \
   dll_assert( i->next == i && i->prev == i ); \
   dll_assert( i != 0 ); \
   T *head = *l; \
@@ -61,7 +61,7 @@ static inline void dll_detach_##T( T *i ) { \
  \
 /* Move the item from list 1 to list 2 (which should be pointers \
    to the head of the list). */ \
-static inline void dll_move_##T( T *i, T **l1, T **l2 ) { \
+static inline void dll_move_##T( T *i, T * volatile*l1, T * volatile*l2 ) { \
   if ((*l1) == i) { \
     (*l1) = i->next; \
     if ((*l1) == i) { \
@@ -79,7 +79,7 @@ static inline void dll_move_##T( T *i, T **l1, T **l2 ) { \
  \
 /* Replace item 1 with item 2 in whatever list it may be in. */ \
 /* If item 1 was the head of the list, the head of the list will be item 2 */\
-static inline void dll_replace_##T( T *i1, T *i2, T **l ) { \
+static inline void dll_replace_##T( T *i1, T *i2, T * volatile*l ) { \
   dll_assert( i1 != i2 ); \
   dll_assert( i2->next == i2 ); \
   dll_assert( i2->prev == i2 ); \
@@ -99,7 +99,7 @@ static inline void dll_replace_##T( T *i1, T *i2, T **l ) { \
   } \
 } \
 /* Detatch all the items between the head and last from the list */ \
-static inline void dll_detach_##T##s_until( T **l, T *last ) { \
+static inline void dll_detach_##T##s_until( T * volatile*l, T *last ) { \
   T *first = *l; \
   if (last->next == first) { \
     /* Removing whole list */ \
@@ -114,7 +114,7 @@ static inline void dll_detach_##T##s_until( T **l, T *last ) { \
     first->prev = last; \
   } \
 } \
-static inline void dll_insert_##T##_list_at_head( T *insert, T **l ) { \
+static inline void dll_insert_##T##_list_at_head( T *insert, T * volatile*l ) { \
   T *old_head = *l; \
   if (old_head != 0) { \
     T *old_last = old_head->prev; \

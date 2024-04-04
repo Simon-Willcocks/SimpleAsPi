@@ -157,6 +157,12 @@ void mailbox_manager( uint32_t handle, workspace *ws, uint32_t response_task )
     // Transfer control of client to reception task - check
     Task_ChangeController( client.task_handle, response_task );
 
+#ifdef DEBUG__VERBOSE_MODULES
+    Task_LogString( "Sending GPU mailbox request ", 0 );
+    Task_LogHex( req_pa );
+    Task_LogNewLine();
+#endif
+
     // Send to mailbox
     gpu->mailbox[1].value = req_pa;
 
@@ -169,12 +175,19 @@ void mailbox_manager( uint32_t handle, workspace *ws, uint32_t response_task )
 
 void response_manager( uint32_t handle, workspace *ws )
 {
+  uint32_t responses_received = 0;
+  uint32_t responses_dropped = 0;
+
   Task_LogString( "response_manager\n", 0 );
 
   register uint32_t num asm ( "r0" ) = 65;
   asm ( "svc 0x1000" : : "r" (num) );
 
-  Task_LogString( "Claimed GPU interrupt\n", 0 );
+#ifdef DEBUG__VERBOSE_MODULES
+  Task_LogString( "Claimed GPU interrupt ", 0 );
+  Task_LogSmallNumber( 65 );
+  Task_LogNewLine();
+#endif
 
   // Get ready to handle responses before accepting requests
 
@@ -228,8 +241,24 @@ void response_manager( uint32_t handle, workspace *ws )
       uint32_t response = gpu->mailbox[0].value;
       bool found = false;
 
+      asm ( "" : : "r" (++responses_received) );
+
+#ifdef DEBUG__VERBOSE_MODULES
+      Task_LogString( "GPU mailbox FIFO ", 0 );
+      Task_LogHex( response );
+      Task_LogNewLine();
+#endif
+
       for (int i = 0; i < MAX_REQUESTS && !found; i++) {
         outstanding_request req = ws->request[i];
+
+#ifdef DEBUG__VERBOSE_MODULES
+      Task_LogString( "GPU mailbox request ", 0 );
+      Task_LogHex( req.request_address );
+      Task_LogString( ", task ", 0 );
+      Task_LogHex( req.task );
+      Task_LogNewLine();
+#endif
 
         found = req.task != 0 && req.request_address == response;
 
@@ -244,8 +273,13 @@ void response_manager( uint32_t handle, workspace *ws )
         Task_LogString( ": Unexpected response ", 0 );
         Task_LogHex( response );
         Task_LogString( ", dropped\n", 0 );
+        asm ( "" : : "r" (++responses_dropped) );
       }
     }
+
+#ifdef DEBUG__VERBOSE_MODULES
+    Task_LogString( "GPU mailbox FIFO cleared\n", 0 );
+#endif
   }
 }
 

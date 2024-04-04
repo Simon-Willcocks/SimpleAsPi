@@ -48,9 +48,12 @@ enum {
   , OSTask_MemoryChanged                // Invalidates any cache
 
   , OSTask_SwitchToCore                 // Use sparingly!
-  , OSTask_Tick                         // For HAL module use only
 
-  , OSTask_MapFrameBuffer // Depricated, I think...
+  // SWI for internal use only!
+  , OSTask_Tick                         // For HAL module use only
+                                        // important task runnable
+
+  , OSTask_MapFrameBuffer // Depricated, I think... TBC
 
   , OSTask_GetLogPipe                   // For the current core
   , OSTask_LogString
@@ -74,6 +77,8 @@ enum {
   , OSTask_QueueWaitCoreAndSWI  // No implementation
 };
 
+// "memory" clobber, because the task might have moved cores by
+// the time this returns.
 static inline
 void Task_Sleep( uint32_t ms )
 {
@@ -86,13 +91,16 @@ void Task_Sleep( uint32_t ms )
   asm volatile ( "svc %[swi]"
     : "=r" (t)
     : [swi] "i" (OSTask_Sleep), "r" (t)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 }
 
 static inline
 void Task_Yield()
 {
-  asm volatile ( "svc %[swi]" : : [swi] "i" (OSTask_Yield) : "lr", "cc" );
+  asm volatile ( "svc %[swi]" 
+      :
+      : [swi] "i" (OSTask_Yield)
+      : "lr", "cc", "memory" );
 }
 
 static inline
@@ -164,7 +172,7 @@ void *Task_MapDevicePages( void volatile *va, uint32_t base_page, uint32_t pages
     , "r" (virt)
     , "r" (page)
     , "r" (number)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 
   return (void*) va;
 }
@@ -178,7 +186,7 @@ uint32_t Task_SetAppMemoryTop( uint32_t new_top )
     : "=r" (top)
     : [swi] "i" (OSTask_AppMemoryTop)
     , "r" (top)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 
   return top;
 }
@@ -195,7 +203,7 @@ void Task_EnablingInterrupts()
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_EnablingInterrupts)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 }
 
 static inline
@@ -204,7 +212,7 @@ void Task_WaitForInterrupt()
   asm ( "svc %[swi]"
     :
     : [swi] "i" (OSTask_WaitForInterrupt)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 }
 
 static inline
@@ -233,7 +241,7 @@ void *Task_MapFrameBuffer( uint32_t pa, uint32_t pages )
         : [swi] "i" (OSTask_MapFrameBuffer)
         , "r" (physical)
         , "r" (size)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   return va;
 }
@@ -246,7 +254,7 @@ uint32_t Task_GetLogPipe()
   asm volatile ( "svc %[swi]"
     : "=r" (pipe)
     : [swi] "i" (OSTask_GetLogPipe)
-    : "lr", "cc" );
+    : "lr", "cc", "memory" );
 
   return pipe;
 }
@@ -417,7 +425,7 @@ uint32_t PipeOp_CreateForTransfer( uint32_t max_block )
         , "r" (max_block_size)
         , "r" (max_data)
         , "r" (allocated_mem)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   return pipe;
 }
@@ -438,7 +446,7 @@ uint32_t PipeOp_Create( void *base, uint32_t max_block )
         , "r" (max_block_size)
         , "r" (max_data)
         , "r" (allocated_mem)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   return pipe;
 }
@@ -494,7 +502,7 @@ PipeSpace PipeOp_WaitForSpace( uint32_t write_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeWaitForSpace)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -529,7 +537,7 @@ PipeSpace PipeOp_SpaceFilled( uint32_t write_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeSpaceFilled)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -559,7 +567,7 @@ PipeSpace PipeOp_WaitForData( uint32_t read_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeWaitForData)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -594,7 +602,7 @@ PipeSpace PipeOp_DataConsumed( uint32_t read_pipe, uint32_t bytes )
         : [swi] "i" (OSTask_PipeDataConsumed)
         , "r" (pipe)
         , "r" (amount)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   PipeSpace result = { .error = error, .location = location, .available = available };
 
@@ -620,7 +628,7 @@ error_block *PipeOp_SetReceiver( uint32_t read_pipe, uint32_t new_receiver )
         : [swi] "i" (OSTask_PipeSetReceiver)
         , "r" (pipe)
         , "r" (task)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   return error;
 }
@@ -645,7 +653,7 @@ error_block *PipeOp_SetSender( uint32_t write_pipe, uint32_t new_sender )
         : [swi] "i" (OSTask_PipeSetSender)
         , "r" (pipe)
         , "r" (task)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   return error;
 }
@@ -666,7 +674,7 @@ error_block *PipeOp_NotListening( uint32_t read_pipe )
         : "=r" (error)
         : [swi] "i" (OSTask_PipeNotListening)
         , "r" (pipe)
-        : "lr", "cc" );
+        : "lr", "cc", "memory" );
 
   return error;
 }
@@ -724,7 +732,7 @@ error_block *Task_ReleaseTask( uint32_t client, svc_registers const *regs )
       : [swi] "i" (OSTask_ReleaseTask)
       , "r" (h)
       , "r" (r)
-      : "lr", "cc" );
+      : "lr", "cc", "memory" );
 
   return error;
 }
@@ -742,7 +750,7 @@ error_block *Task_ChangeController( uint32_t client, uint32_t controller )
       : [swi] "i" (OSTask_ChangeController)
       , "r" (h)
       , "r" (replacement)
-      : "lr", "cc" );
+      : "lr", "cc", "memory" );
 
   return error;
 }
@@ -760,7 +768,7 @@ error_block *Task_SetController( svc_registers *regs, uint32_t controller )
       : [swi] "i" (OSTask_SetController)
       , "r" (r)
       , "r" (c)
-      : "lr", "cc" );
+      : "lr", "cc", "memory" );
 
   return error;
 }
@@ -796,7 +804,7 @@ error_block *Task_SetRegisters( uint32_t controlled, svc_registers *regs )
       : [swi] "i" (OSTask_SetRegisters)
       , "r" (h)
       , "r" (r)
-      : "lr", "cc" );
+      : "lr", "cc", "memory" );
 
   return error;
 }
@@ -818,7 +826,7 @@ uint32_t Task_QueueCreate()
   asm volatile ( "svc %[swi]"
              : "=r" (handle)
              : [swi] "i" (OSTask_QueueCreate)
-             : "lr", "cc" );
+             : "lr", "cc", "memory" );
 
   return handle;
 }
@@ -844,7 +852,7 @@ queued_task Task_QueueWait( uint32_t queue_handle )
       , "=r" (error)
       : [swi] "i" (OSTask_QueueWait)
       , "r" (handle)
-      : "lr", "cc" );
+      : "lr", "cc", "memory" );
 
   result.task_handle = task_handle;
   result.swi = swi;

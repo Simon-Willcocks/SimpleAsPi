@@ -138,9 +138,6 @@ void core_release_lock( uint32_t volatile *lock )
   *lock = 0;
   push_writes_to_cache();
   signal_event();
-  signal_event();
-  signal_event();
-  signal_event();
 }
 
 // To satisfy the optimiser in gcc:

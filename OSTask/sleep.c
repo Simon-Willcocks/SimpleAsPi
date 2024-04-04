@@ -16,7 +16,7 @@
 #include "ostask.h"
 
 static inline 
-void put_to_sleep( OSTask **head, void *p )
+void put_to_sleep( OSTask *volatile *head, void *p )
 {
   OSTask *tired = p;
   uint32_t time = tired->regs.r[0];
@@ -56,7 +56,7 @@ void put_to_sleep( OSTask **head, void *p )
 }
 
 static inline 
-OSTask *wakey_wakey( OSTask **headptr, void *p )
+OSTask *wakey_wakey( OSTask *volatile *headptr, void *p )
 {
   p = p;
 
@@ -81,7 +81,7 @@ OSTask *wakey_wakey( OSTask **headptr, void *p )
 }
 
 static inline 
-void add_woken( OSTask **headptr, void *p )
+void add_woken( OSTask *volatile *headptr, void *p )
 {
   OSTask *head = *headptr;
 

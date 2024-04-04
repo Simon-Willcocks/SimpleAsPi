@@ -29,7 +29,14 @@ inline uint32_t __attribute__(( always_inline )) get_core_number()
 {
   uint32_t result;
   asm ( "mrc p15, 0, %[result], c0, c0, 5" : [result] "=r" (result) );
-  return ((result & 0xc0000000) != 0x80000000) ? 0 : (result & 15);
+  result = ((result & 0xc0000000) != 0x80000000) ? 0 : (result & 15);
+#ifdef DEBUG__SINGLE_CORE
+  if (result != 0) for (;;) asm ( "wfi" );
+#endif
+#ifdef DEBUG__TWO_CORES
+  if (result > 1) for (;;) asm ( "wfi" );
+#endif
+  return result;
 }
 
 static __attribute__(( noinline ))
@@ -49,19 +56,11 @@ void __attribute__(( naked, noreturn )) _start()
     "\n.endif"
   );
 
-uint32_t *p = (void*) 0x600000;
-// asm to stop call to memset without a stack
-//while (p < (void*) 0x10000000) { *p++ = 0x66666666; asm ( "" ); }
   // Core 0 is always present, its workspace is always at the top of the
   // initial memory, a core can find the top of the initial memory by
   // adding (core+1) * CORE_WORKSPACE to its core workspace.
   // Or by reading the address of top_of_boot_RAM!
   uint32_t core = get_core_number();
-
-#ifdef DEBUG__SINGLE_CORE
-#warning "SINGLE CORE"
-  if (core != 0) for (;;) asm ( "wfi" );
-#endif
 
   extern uint8_t top_of_boot_RAM;
   uint32_t top = (uint32_t) &top_of_boot_RAM;
@@ -382,5 +381,14 @@ uint32_t Cortex_A7_number_of_cores()
 
 uint32_t number_of_cores()
 {
+#ifdef DEBUG__SINGLE_CORE
+#warning "Emulating single core"
+  return 1;
+#endif
+#ifdef DEBUG__TWO_CORES
+#warning "Emulating twin cores"
+  return 2;
+#endif
+
   return Cortex_A7_number_of_cores();
 }

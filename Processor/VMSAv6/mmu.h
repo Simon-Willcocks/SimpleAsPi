@@ -43,7 +43,8 @@ typedef struct __attribute__(( packed )) {
   uint32_t map_specific:1;      // Gets swapped in and out
   uint32_t all_cores:1;         // Same physical memory on all cores
   uint32_t usr32_access:1;      // Unprivileged access allowed
-  uint32_t res:20;
+  uint32_t not_shared:1;        // Only one core will access it at a time
+  uint32_t res:19;
 } memory_mapping;
 
 #define mmu_section_size (1 << 20)
@@ -81,10 +82,11 @@ void create_default_translation_tables( uint32_t workspace );
 // Call this (once per core) when the core is running in high memory.
 void forget_boot_low_memory_mapping();
 
-// Call this (once only) when there are multiple MiBs available from
-// claim_contiguous_memory. Until this routine returns, the only
-// pages that can be mapped are in the top MiB.
-void enable_page_level_mapping();
+// Call this for each core when there are multiple MiBs available
+// from claim_contiguous_memory. Until this routine returns, the only
+// pages (as opposed to sections) that can be mapped are in the top
+// MiB.
+void mmu_establish_resources();
 
 // Default status for the whole memory map in default TTs.
 bool check_global_table( uint32_t va, uint32_t fault );

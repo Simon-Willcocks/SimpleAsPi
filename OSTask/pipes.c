@@ -238,6 +238,15 @@ void create_log_pipe()
     .all_cores = 0,
     .usr32_access = 0 };
   map_memory( &map );
+
+  char *va = map.vap;
+  va[0] = 'L';
+  va[1] = 'O';
+  va[2] = 'G';
+  va[3] = '0' + workspace.core;
+  va[4] = '\n';
+  pipe->write_index = 5;
+
   map.va += pipe->max_block_size;
   map_memory( &map );
 
@@ -304,12 +313,12 @@ bool insert_pipe_in_gap( OSTaskSlot *slot, OSPipe *pipe, bool sender )
     if (block - first + 1 >= number_of( slot->pipe_mem )) PANIC;
 
     block[0].va_page = potential_va >> 12;
-    block[0].pages = size >> 13;
+    block[0].pages = (size/2) >> 12;
     block[0].page_base = pipe->memory >> 12;
     block[0].device = 0;
     block[0].read_only = sender ? 0 : 1;
     block[1].va_page = (potential_va + size/2) >> 12;
-    block[1].pages = size >> 13;
+    block[1].pages = (size/2) >> 12;
     block[1].page_base = pipe->memory >> 12;
     block[1].device = 0;
     block[1].read_only = sender ? 0 : 1;
@@ -328,6 +337,30 @@ bool insert_pipe_in_gap( OSTaskSlot *slot, OSPipe *pipe, bool sender )
   else {
     pipe->receiver_va = potential_va;
   }
+
+#ifdef DEBUG__SHOW_PIPE_BLOCKS
+  block = first;
+  Task_LogString( "Pipe blocks in ", 0 );
+  Task_LogHex( (uint32_t) workspace.ostask.running->slot );
+  Task_LogNewLine();
+  while (block->pages != 0
+      && block - first < number_of( slot->pipe_mem )) {
+    Task_LogHex( block->va_page << 12 );
+    Task_LogString( " ", 1 );
+    Task_LogHex( block->page_base << 12 );
+    Task_LogString( " ", 1 );
+    Task_LogSmallNumber( block->pages );
+    Task_LogString( " ", 1 );
+    Task_LogSmallNumber( block->read_only );
+    Task_LogString( "\n", 1 );
+    if (block->device) PANIC;
+    block++;
+  }
+  if (sender) Task_LogString( "Set sender of ", 0 );
+  else Task_LogString( "Set receiver of ", 0 );
+  Task_LogHex( (uint32_t) pipe );
+  Task_LogNewLine();
+#endif
 
   return true;
 }

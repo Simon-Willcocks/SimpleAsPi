@@ -17,6 +17,8 @@
 #include "Processor/processor.h"
 #include "raw_memory_manager.h"
 
+extern void send_number( uint32_t n, char c );
+
 // Short descriptors implementation
 
 typedef struct {
@@ -196,6 +198,8 @@ static inline l1tt_table_entry table_entry( l2tt *table )
 
 static inline l2tt *get_free_table()
 {
+  bool reclaimed = core_claim_lock( &shared.mmu.lock, workspace.core + 1 );
+
   // Replace an invalid l1tt entry with a table so that pages can
   // be mapped into the area.
 
@@ -210,10 +214,15 @@ static inline l2tt *get_free_table()
     PANIC;
   }
   else {
+    // Last one...?
+    if (shared.mmu.free->next == shared.mmu.free) PANIC;
+
     table = shared.mmu.free->next;
 
     dll_detach_l2tt( table );
   }
+
+  if (!reclaimed) core_release_lock( &shared.mmu.lock );
 
   return table;
 }
@@ -280,10 +289,12 @@ void clear_memory_region(
     l1tt_entry l1 = translation_table.entry[virt.section];
     if (l1.type == 1) {
       // Free up table
+
       l2tt *l2 = mapped_table( l1.table );
       dll_new_l2tt( l2 );
       dll_attach_l2tt( l2, &freed );
     }
+
     translation_table.entry[virt.section++].handler = handler;
     va_pages -= 256;
   }
@@ -344,6 +355,7 @@ static l2tt_entry const dev_page = { .small_page = 1, .XN = 1 };
 
 void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mapping )
 {
+  if (mapping == 0) asm volatile ( "mov r2, lr\n  bkpt 88" );
   if (mapping->pages == 0) {
     asm volatile ( "" : : "r" (mapping->base_page), "r" (mapping->va) );
     PANIC;
@@ -364,6 +376,8 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
   arm32_ptr virt = { .raw = mapping->va };
 
   bool all_cores = mapping->all_cores;
+  bool not_shared = mapping->not_shared;
+  int shared_flag = (not_shared && !all_cores) ? 0 : 1;
 
   // First off, are we mapping pages, large pages, sections,
   // or supersections (or a mixture)?
@@ -388,8 +402,7 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
 
     uint32_t sections = mapping->pages >> 8;
 
-    if (all_cores)
-      entry.section.S = 1;
+    entry.section.S = shared_flag;
 
     if (mapping->usr32_access)
       entry.section.unprivileged_access = 1;
@@ -420,7 +433,6 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
     // Does the mapping include something bigger?
     // Are all the pages in the same section?
     // Not yet implemented!
-    extern l2tt VMSAv6_Level2_Tables[4096];
 
     // Executive decision: If the first page mapped in a global section
     // is global, the whole section will be global.
@@ -436,6 +448,17 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
     l2tt *table = 0;
     l2tt *global_table = 0;
     l1tt_entry entry = translation_table.entry[virt.section];
+
+#if 0
+// Wait until pipes are around, so the UART is enabled
+if (translation_table.entry[0x800].type != 0) {
+  bool reclaimed = core_claim_lock( &shared.ostask.lock, workspace.core + 1 );
+send_number( workspace.core, ':' );
+send_number( virt.raw, '>' );
+send_number( entry.raw, '\n' );
+  if (!reclaimed) core_release_lock( &shared.ostask.lock );
+}
+#endif
 
     if (entry.type == 0                         // No table yet
      && entry.handler == check_global_table     // Section check global
@@ -487,6 +510,7 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
       table = mapped_table( entry.table );
       if (all_cores) {
         l1tt_entry global = global_translation_table.entry[virt.section];
+        if (global.type != 1) PANIC;
         global_table = mapped_global_table( global.table );
       }
     }
@@ -506,9 +530,7 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
       PANIC;
     }
 
-    if (all_cores) {
-      page_entry.S = 1;
-    }
+    page_entry.S = shared_flag;
 
     if (mapping->usr32_access)
       page_entry.unprivileged_access = 1;
@@ -539,6 +561,7 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
   // The MMU has been configured to use the cache, so the writes don't
   // have to be flushed to RAM.
   push_writes_to_cache();
+  // ... in theory, but I'm getting stupid data aborts...
 
   if (!reclaimed) core_release_lock( &shared.mmu.lock );
 }
@@ -641,6 +664,14 @@ bool check_global_table( uint32_t va, uint32_t fault )
 
   return false;
 }
+
+inline uint32_t __attribute__(( always_inline )) get_core_number()
+{
+  uint32_t result;
+  asm ( "mrc p15, 0, %[result], c0, c0, 5" : [result] "=r" (result) );
+  return ((result & 0xc0000000) != 0x80000000) ? 0 : (result & 15);
+}
+
 
 void create_default_translation_tables( uint32_t memory )
 {
@@ -798,6 +829,27 @@ void create_default_translation_tables( uint32_t memory )
     pages[0xff] = entry;
   }
 #endif
+#if 0
+  if (get_core_number() == 0)
+  {
+    uint32_t volatile *p = (void*) 0x3f200000;
+    // GPFSEL bits 14, 15 Alt0
+    p[1] = (p[1] & ~(0b111111 << 12)) | (0b100100 << 12);
+    p = (void*) 0x3f201000;
+    p[0x30/4] &= ~1; // control
+    while (p[0x18/4] & 8) { for (int i = 0; i < 1000; i++) asm (""); }
+    p[0x24/4] = 1;
+    p[0x28/4] = 40;
+    p[0x2c/4] = 7 << 4;
+    p[0x38/4] = 0;
+    p[1] = 0x101;
+    p[0] = 'T';
+    while (p[0x18/4] & 8) { for (int i = 0; i < 1000; i++) asm (""); }
+  }
+  else {
+    for (int i = 0; i < 0x1000000; i++) asm ("");
+  }
+#endif
 
   push_writes_to_cache();
 }
@@ -816,30 +868,40 @@ void forget_boot_low_memory_mapping()
   push_writes_to_cache();
 }
 
-void enable_page_level_mapping()
+void mmu_establish_resources()
 {
   // This is probably an extreme number of tables, TODO see how 
   // many we actually need and adjust the algorithms accordingly.
   // If 1 MiB more or less becomes a problem!
 
   extern l2tt VMSAv6_Level2_Tables[4096];
+  l2tt * volatile *free = &shared.mmu.free;
 
-  shared.mmu.l2tables_phys_base = claim_contiguous_memory( 0x100 ); // 1 MiB
-  memory_mapping l2tts = {
-    .base_page = shared.mmu.l2tables_phys_base,
-    .pages = 0x100,
-    .vap = &VMSAv6_Level2_Tables,
-    .type = CK_MemoryRW,
-    .map_specific = 0,
-    .all_cores = 1,
-    .usr32_access = 0 };
-  if (l2tts.base_page == 0xffffffff) PANIC;
-  map_memory( &l2tts );
-  // for (int i = 0; i < number_of( VMSAv6_Level2_Tables ); i++) {
-  for (int i = 0; i < 64; i++) {
-    l2tt *t = &VMSAv6_Level2_Tables[i];
-    dll_new_l2tt( t );
-    dll_attach_l2tt( t, &shared.mmu.free );
+  if (0 == change_word_if_equal( (uint32_t*) &shared.mmu.free, 0, 1 )) {
+    shared.mmu.l2tables_phys_base = claim_contiguous_memory( 0x100 ); // 1 MiB
+    memory_mapping l2tts = {
+      .base_page = shared.mmu.l2tables_phys_base,
+      .pages = 0x100,
+      .vap = &VMSAv6_Level2_Tables,
+      .type = CK_MemoryRW,
+      .map_specific = 0,
+      .all_cores = 1,
+      .usr32_access = 0 };
+    if (l2tts.base_page == 0xffffffff) PANIC;
+    map_memory( &l2tts );
+    l2tt *pool = 0;
+    // for (int i = 0; i < number_of( VMSAv6_Level2_Tables ); i++) {
+    for (int i = 0; i < 64; i++) {
+      l2tt *t = &VMSAv6_Level2_Tables[i];
+      dll_new_l2tt( t );
+      dll_attach_l2tt( t, &pool );
+    }
+    *free = pool;
+  }
+  else {
+    while (*free == (l2tt *) 1) {}
+    // Ensure the pool can be seen by every core before trying to use it.
+    asm ( "" : : "r" (shared.mmu.free->entry[0].raw) );
   }
 }
 
@@ -847,12 +909,31 @@ void enable_page_level_mapping()
 // Real hardware reports errors type 0x807, at fa 0x80000000+
 static bool strange_handler( uint32_t fa, uint32_t ft )
 {
-/*
-  extern void send_number( uint32_t n, char c );
-
+#ifdef DEBUG__REPORT_STRANGE_HANDLER
+  bool reclaimed = core_claim_lock( &shared.ostask.lock, workspace.core + 1 );
+  send_number( (uint32_t) workspace.ostask.running, ' ' );
   send_number( fa, ' ' );
   send_number( ft, '\n' );
-*/
+
+  uint32_t *p = &ft;
+  for (int i = 0; i < 16; i++) 
+    send_number( p[i], '\n' );
+
+  arm32_ptr va = { .raw = fa };
+
+  l1tt_entry l1 = translation_table.entry[va.section];
+  send_number( l1.raw, ':' );
+  l2tt_entry l2 = {};
+  if (l1.raw == 1) {
+    l2tt *table = mapped_table( l1.table );
+    l2 = table->entry[va.page];
+  }
+  send_number( l2.raw, '\n' );
+
+  core_release_lock( &shared.ostask.lock );
+  //for (;;) {}
+#endif
+
   return true;
 }
 
@@ -870,7 +951,7 @@ static __attribute__(( noinline )) memory_fault_handler find_handler( uint32_t f
       if (l2.type != 0) return strange_handler; // PANIC;
       return l2.handler;
     }
-  default: PANIC;
+  default: return strange_handler; // PANIC;
   }
   return 0;
 }
@@ -899,43 +980,13 @@ static bool __attribute__(( noinline )) handle_data_abort()
   return handler( fa, ft );
 }
 
-void __attribute__(( noinline )) signal_data_abort()
+__attribute__(( weak, noinline, noreturn ))
+void signal_data_abort( svc_registers *regs, uint32_t fa, uint32_t ft )
 {
-  uint32_t fa = fault_address();
-  uint32_t ft = data_fault_type();
-
-  extern void send_number( uint32_t n, char c );
-
-  send_number( (uint32_t) workspace.ostask.running, ' ' );
-  send_number( fa, ' ' );
-  send_number( ft, '\n' );
-
-  arm32_ptr va = { .raw = fa };
-  l1tt_entry l1 = translation_table.entry[va.section];
-  send_number( l1.raw, '\n' );
-  if (1 == l1.type) {
-    l2tt *table = mapped_table( l1.table );
-    l2tt_entry l2 = table->entry[va.page];
-    send_number( l2.raw, '\n' );
-  }
-
-  extern uint32_t OSTask_free_pool;
-  uint32_t *p = &OSTask_free_pool;
-
-  for (int i = 0; i < 16; i++) {
-    for (int t = 0; t < 22; t++) {
-      send_number( p[i * 22 + t], t == 21 ? '\n' : ' ' );
-    }
-  }
-  p = &fa;
-  for (int i = 0; i < 30; i++) {
-    send_number( p[i], '\n' );
-  }
-
-  for (;;) {}
+  PANIC;
 }
 
-void __attribute__(( naked )) data_abort_handler()
+void __attribute__(( naked, noreturn )) data_abort_handler()
 {
   asm volatile (
         "  sub lr, lr, #8"
@@ -944,9 +995,15 @@ void __attribute__(( naked )) data_abort_handler()
       );
 
   if (!handle_data_abort()) {
+    register svc_registers *regs asm( "r0" );
     asm ( "pop { "C_CLOBBERED" }"
-      "\n  push { r0-r12, lr }" );
-    signal_data_abort();
+      "\n  push { r0-r12 }"
+      "\n  mov r0, sp"
+      : "=r" (regs)
+      :
+      : "r1", "r2", "r3", "ip" );
+    signal_data_abort( regs, fault_address(), data_fault_type() );
+    PANIC;
   }
 
   asm volatile ( "pop { "C_CLOBBERED" }"

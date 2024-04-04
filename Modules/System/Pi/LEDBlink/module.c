@@ -224,15 +224,15 @@ void go()
   Task_LogString( "Entering blink module\n", 0 );
   {
   register uint32_t pin asm( "r0" ) = 22; // 22 green 27 orange
-  register uint32_t on asm( "r1" ) = 200;
-  register uint32_t off asm( "r2" ) = 100;
+  register uint32_t on asm( "r1" ) = 2000;
+  register uint32_t off asm( "r2" ) = 1000;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
   }
 
   {
   register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
-  register uint32_t on asm( "r1" ) = 95;
-  register uint32_t off asm( "r2" ) = 55;
+  register uint32_t on asm( "r1" ) = 950;
+  register uint32_t off asm( "r2" ) = 550;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
   }
 

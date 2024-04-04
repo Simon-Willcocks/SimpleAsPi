@@ -126,6 +126,8 @@ Task_LogNewLine();
   }
   else if (va >= pipes_bottom && va < pipes_end) {
     int i = 0;
+    // Double-mapping is taken care of in insert_pipe_in_gap, which
+    // creates two entries with the same physical address.
 
     while (slot->pipe_mem[i].pages != 0
         && !in_range( va,
@@ -135,9 +137,27 @@ Task_LogNewLine();
 
       i++;
     }
+#ifdef DEBUG__LOG_SLOT_MEMORY
+    if (!in_range( va,
+         slot->pipe_mem[i].va_page << 12, 
+         top_of( &slot->pipe_mem[i] ) )) {
+Task_LogString( "Failed to match VA (pipe) ", 0 );
+Task_LogHex( va );
+Task_LogString( " in ", 0 );
+Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogNewLine();
+    }
+#endif
     result = slot->pipe_mem[i];
   }
   else {
+#ifdef DEBUG__LOG_SLOT_MEMORY
+Task_LogString( "VA not in app or pipe memory! ", 0 );
+Task_LogHex( va );
+Task_LogString( " in ", 0 );
+Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogNewLine();
+#endif
     memory_pages global_area = walk_global_tree( va );
 
     if (global_area.number_of_pages != 0) {
@@ -148,6 +168,19 @@ Task_LogNewLine();
     }
   }
 
+/*
+extern void __attribute__(( noinline )) send_number( uint32_t n, char c );
+
+if ((va >> 24) == 0x80) {
+send_number( (uint32_t) workspace.ostask.running, ';' );
+send_number( va, ' ' );
+send_number( result.va_page << 12, ' ' );
+send_number( result.page_base << 12, ' ' );
+send_number( result.pages, ' ' );
+send_number( result.device, ' ' );
+send_number( result.read_only, '\n' );
+}
+*/
   return result;
 }
 
@@ -167,6 +200,8 @@ bool ask_slot( uint32_t va, uint32_t fault )
     .map_specific = 1,
     .all_cores = 0,
     .usr32_access = 1 };
+
+  map.not_shared = 0; // Set to one if only one task in this slot FIXME
 
   map_memory( &map );
 

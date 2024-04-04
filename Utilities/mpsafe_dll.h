@@ -20,7 +20,7 @@
 
 #define MPSAFE_DLL_TYPE( T ) \
 DLL_TYPE( T ) \
-static inline void mpsafe_insert_##T##_at_head( T **head, T *item ) \
+static inline void mpsafe_insert_##T##_at_head( T * volatile*head, T *item ) \
 { \
   for (;;) { \
     T *old = *head; \
@@ -46,7 +46,7 @@ static inline void mpsafe_insert_##T##_at_head( T **head, T *item ) \
   } \
 } \
  \
-static inline void mpsafe_insert_##T##_after_head( T **head, T *item ) \
+static inline void mpsafe_insert_##T##_after_head( T * volatile*head, T *item ) \
 { \
   for (;;) { \
     T *old = *head; \
@@ -73,7 +73,7 @@ static inline void mpsafe_insert_##T##_after_head( T **head, T *item ) \
   } \
 } \
  \
-static inline T *mpsafe_manipulate_##T##_list_returning_item( T *volatile *head, T *(*update)( T** a, void *p ), void *p ) \
+static inline T *mpsafe_manipulate_##T##_list_returning_item( T *volatile *head, T *(*update)( T* volatile* a, void *p ), void *p ) \
 { \
   for (;;) { \
       push_writes_to_cache(); \
@@ -97,7 +97,7 @@ static inline T *mpsafe_manipulate_##T##_list_returning_item( T *volatile *head,
   } \
   return 0; \
 } \
-static inline void mpsafe_manipulate_##T##_list( T *volatile *head, void (*update)( T** a, void *p ), void *p ) \
+static inline void mpsafe_manipulate_##T##_list( T *volatile *head, void (*update)( T* volatile* a, void *p ), void *p ) \
 { \
   for (;;) { \
       push_writes_to_cache(); \
@@ -120,36 +120,34 @@ static inline void mpsafe_manipulate_##T##_list( T *volatile *head, void (*updat
     } \
   } \
 } \
-static inline T *DO_NOT_USE_detach_##T##_head( T **head, void *p ) \
+static inline T *DO_NOT_USE_detach_##T##_head( T * volatile*head, void *p ) \
 { \
   T *h = *head; \
   if (h == 0) return 0; \
-  *head = h->next; \
-  if (*head == h) { \
+  if (h->next == h) { \
     /* Already a single item list */ \
     *head = 0; \
   } \
   else { \
+    *head = h->next; \
     dll_detach_##T( h ); \
   } \
   return h; \
 } \
-static inline T *DO_NOT_USE_detach_##T( T **head, void *p ) \
+static inline T *DO_NOT_USE_detach_##T( T * volatile*head, void *p ) \
 { \
   T *i = p; \
-  if (*head == i) { \
-    *head = i->next; \
-  } \
-  if (*head == i) { \
+  if (i->next == i) { \
     *head = 0; \
   } \
   else { \
-    /* Not a single item list, not at head */ \
+    *head = i->next; \
+    /* Not a single item list */ \
     dll_detach_##T( i ); \
   } \
   return i; \
 } \
-static inline void DO_NOT_USE_insert_tail_##T( T **head, void *p ) \
+static inline void DO_NOT_USE_insert_tail_##T( T * volatile*head, void *p ) \
 { \
   if (*head == 0) { \
     *head = p; \
@@ -160,11 +158,11 @@ static inline void DO_NOT_USE_insert_tail_##T( T **head, void *p ) \
   } \
 } \
 /* Returns the old head of the list, replacing it with the next or null */ \
-static inline T *mpsafe_detach_##T##_at_head( T **head ) \
+static inline T *mpsafe_detach_##T##_at_head( T * volatile*head ) \
 { \
   return mpsafe_manipulate_##T##_list_returning_item( head, DO_NOT_USE_detach_##T##_head, 0 ); \
 } \
-static inline void mpsafe_insert_##T##_at_tail( T **head, T *item ) \
+static inline void mpsafe_insert_##T##_at_tail( T * volatile*head, T *item ) \
 { \
   mpsafe_manipulate_##T##_list( head, DO_NOT_USE_insert_tail_##T, item ); \
 }

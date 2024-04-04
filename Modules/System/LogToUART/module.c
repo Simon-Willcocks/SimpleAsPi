@@ -52,7 +52,7 @@ NO_messages_file;
 const char title[] = "LogToUART";
 const char help[] = "LogToUART\t0.01 (" CREATION_DATE ")";
 
-UART volatile *const uart  = (void*) 0x7000;
+UART volatile *const uart  = (void*) 0x4000;
 
 static inline void push_writes_to_device()
 {
@@ -66,9 +66,9 @@ void transfer_to_output( uint32_t me, PipeSpace data, workspace *ws, int core )
   bool reclaimed = Task_LockClaim( &ws->lock, me );
 
   if (!reclaimed) {
-    // You might think this would be necessary, but as long as you're sure
-    // the owner is currently 0, the first wait call will set the current
-    // task as the sender (or receiver on WaitForData).
+    // You might think SetSender would be necessary, but as long as you're
+    // sure the owner is currently 0, the first wait call will set the
+    // current task as the sender (or receiver on WaitForData).
     // PipeOp_SetSender( ws->output_pipe, me );
 
     // Colour by core number \033[01;32m
@@ -91,11 +91,29 @@ void transfer_to_output( uint32_t me, PipeSpace data, workspace *ws, int core )
 
   uint32_t i = 0;
 
+  uint32_t output_pipe = ws->output_pipe;
+
+/* confused things...
+char num[9];
+num[0] = '0' + 0xf & (data.available >> 28);
+num[1] = '0' + 0xf & (data.available >> 24);
+num[2] = '0' + 0xf & (data.available >> 20);
+num[3] = '0' + 0xf & (data.available >> 16);
+num[4] = '0' + 0xf & (data.available >> 12);
+num[5] = '0' + 0xf & (data.available >> 8);
+num[6] = '0' + 0xf & (data.available >> 4);
+num[7] = '0' + 0xf & (data.available >> 0);
+num[8] = '\n';
+send_to_uart( num, 9 );
+*/
+
   char const *s = data.location;
   do {
-    PipeSpace space = PipeOp_WaitForSpace( ws->output_pipe, data.available );
+    PipeSpace space = PipeOp_WaitForSpace( output_pipe, data.available );
     // We might get less space available than data.available if the output
     // pipe is too small. We can work with that, but this task may block...
+
+if (space.available < data.available) asm ( "bkpt 888" );
 
     while (space.available != 0 && i < data.available) {
       char *d = space.location;
@@ -103,12 +121,13 @@ void transfer_to_output( uint32_t me, PipeSpace data, workspace *ws, int core )
       while (n < space.available && i < data.available) {
         d[n++] = s[i++];
       }
-      space = PipeOp_SpaceFilled( ws->output_pipe, n );
+      space = PipeOp_SpaceFilled( output_pipe, n );
     }
   } while (i < data.available);
 
   if (!reclaimed) {
-    PipeOp_SetSender( ws->output_pipe, 0 );
+    PipeOp_SetSender( output_pipe, 0 );
+    // The next owner of the lock can be sure the sender is unset.
     Task_LockRelease( &ws->lock );
   }
 }
@@ -123,6 +142,7 @@ void core_debug_task( uint32_t handle, int core, workspace *ws, uint32_t pipe )
     PipeSpace data = PipeOp_WaitForData( pipe, 1 );
     while (data.available != 0) {
       transfer_to_output( handle, data, ws, core );
+if ((ws->lock & ~1) == handle) asm ( "bkpt 999" );
       data = PipeOp_DataConsumed( pipe, data.available );
     }
   }
@@ -130,25 +150,28 @@ void core_debug_task( uint32_t handle, int core, workspace *ws, uint32_t pipe )
 
 void hitit( uint32_t handle )
 {
+  register int n = 20;
   for (;;) {
     Task_Sleep( 1000 );
-    while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" : : "r"(i) );  }
+    while (UART_TxEmpty != (uart->flags & UART_TxEmpty)) Task_Yield();
     uart->data = '+';
+    if (--n == 0) { asm ( "bkpt 44" ); }
   }
 }
 
 void send_to_uart( char const *string, uint32_t length )
 {
+#ifdef DEBUG__NO_SEND_TO_UART
+  return;
+#else
   for (int i = 0; i < length; i++) {
-    // Send to UART (this should work on qemu, but not on real hardware;
-    // that needs to wait for ready to send interrupts
-    // Note: this is writing a whole word to the UART, could be a
-    // problem.
-    // The real thing will also have to claim the appropriate GPIO pins
-    // and set the alternate functions.
-    while (0 != (uart->flags & (UART_Busy | UART_TxFull))) { for (int i = 0; i < 1000; i++) asm ( "" : : "r"(i) ); }
+    // FIXME Yielding or sleeping breaks something!
+    while (0 != (uart->flags & UART_TxFull)) { for (int i = 0; i < 10000; i++) asm ( "" : : "r"(i) ); }
+     // 
     uart->data = string[i];
+    ensure_changes_observable();
   }
+#endif
 }
 
 // Replace this GPIO stuff with SWIs to:
@@ -207,6 +230,7 @@ void initialise_PL011_uart( UART volatile *uart, uint32_t freq, uint32_t baud )
 
   uart->line_control = (eight_bits | one_stop_bit | fifo_enable);
 
+  uart->interrupt_fifo_level_select = 0;
   uart->interrupt_mask = 0;
 
   uint32_t const transmit_enable = (1 << 8);
@@ -233,11 +257,16 @@ void start_log( uint32_t handle, workspace *ws )
   initialise_PL011_uart( uart, 3000000, 115200 );
 
 
-  send_to_uart( "Starting\n", 10 );
+  send_to_uart( "Starting\n", 9 );
+  {
+  core_info cores = Task_Cores();
+  char n = '0' + cores.total;
+  send_to_uart( &n, 1 );
+  send_to_uart( "\n", 1 );
+  }
 
 //  UART volatile * const uart = (void*) 0xfffff000;
   while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" ); }
-  uart->data = 'T';
 
   ws->output_pipe = PipeOp_CreateForTransfer( 4096 );
 
@@ -290,31 +319,32 @@ void start_log( uint32_t handle, workspace *ws )
   Task_LogString( "Log starting\n", 13 );
 
 
-    {
+  if (0) {
     uint32_t const stack_size = 256;
     uint8_t *stack = rma_claim( stack_size );
 
-      // THIS IS A HACK FIXME and delete asap...
-      register void *start asm( "r0" ) = hitit;
-      register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
+    // THIS IS A HACK FIXME and delete asap...
+    register void *start asm( "r0" ) = hitit;
+    register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
 
-      register uint32_t handle asm( "r0" );
+    register uint32_t handle asm( "r0" );
 
-      asm volatile ( "svc %[swi]" // volatile in case we ignore output
-        : "=r" (handle)
-        : [swi] "i" (OSTask_Create)
-        , "r" (start)
-        , "r" (sp)
-        : "lr", "cc" );
-    }
+    asm volatile ( "svc %[swi]" // volatile in case we ignore output
+      : "=r" (handle)
+      : [swi] "i" (OSTask_Create)
+      , "r" (start)
+      , "r" (sp)
+      : "lr", "cc" );
+  }
 
+  uint32_t output_pipe = ws->output_pipe;
   for (;;) {
-    PipeSpace data = PipeOp_WaitForData( ws->output_pipe, 1 );
+    PipeSpace data = PipeOp_WaitForData( output_pipe, 1 );
 
     while (data.available != 0) {
       char *string = data.location;
       send_to_uart( string, data.available );
-      data = PipeOp_DataConsumed( ws->output_pipe, data.available );
+      data = PipeOp_DataConsumed( output_pipe, data.available );
     }
   }
 }

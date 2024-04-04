@@ -3,18 +3,25 @@
 # Parts of the kernel
 SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:NoLegacy:Modules
 # Modules to include (HAL chooses which ones to load.)
-#MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink:System/LogToUART
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART
+#MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink:System/LogToScreen
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART
 
 echo Modules: ${MODULES//:/ }
 
 #INITIAL_MODULES='QA7\0GPUMailbox\0LEDBlink\0LogToUART\0'
 #INITIAL_MODULES='QA7\0LEDBlink\0'
-INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0GPUMailbox\0BCM2835Display\0'
-#INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0'
+#INITIAL_MODULES='QA7\0LEDBlink\0LogToUART\0GPUMailbox\0BCM2835Display\0'
+INITIAL_MODULES='QA7\0LogToScreen\0LEDBlink\0GPUMailbox\0BCM2835Display\0'
 #INITIAL_MODULES='QA7\0LEDBlink\0GPUMailbox\0BCM2835Display\0'
-DEFAULT_LANGUAGE=LEDBlink
 #DEFAULT_LANGUAGE=LogToUART
+
+INITIAL_MODULES='QA7\0'
+INITIAL_MODULES+='LEDBlink\0'
+INITIAL_MODULES+='GPUMailbox\0'
+INITIAL_MODULES+='BCM2835Display\0'
+INITIAL_MODULES+='LogToScreen\0'
+
+DEFAULT_LANGUAGE=LEDBlink
 
 # This is not a foolproof test, but it should catch some foolishness
 for i in ${INITIAL_MODULES/\\0/ } $DEFAULT_LANGUAGE ; do 
@@ -82,6 +89,8 @@ echo 'char const modcflags[] = "Build module flags: '"$MODCFLAGS"'";' >> Generat
 
 echo Modules built &&
 
+grep -r _GLOBAL_OFFSET_TABLE_ Generated/*.dump && echo Problem || true &&
+
 echo SWI chunks: &&
 
 for i in Generated/*,ffa 
@@ -141,7 +150,7 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=workspace=0xfffd0000 \
         -Wl,--defsym=shared=0xfffe0000 \
         -Wl,--section-start=.init=0xfc000000 \
-        -Wl,--section-start=.text=0xfc002000 \
+        -Wl,--section-start=.text=0xfc003000 \
         &&
 arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&
 

@@ -90,10 +90,6 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   if (first)
   {
     shared.ostask.number_of_cores = number_of_cores();
-#ifdef DEBUG__SINGLE_CORE
-    shared.ostask.number_of_cores = 1;
-    assert( core == 0 );
-#endif
 
     extern uint8_t top_of_boot_RAM;
     extern uint8_t top_of_minimum_RAM;
@@ -117,12 +113,16 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   workspace.ostask.running = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
 
   workspace.ostask.running->slot = shared.ostask.first;
+workspace.ostask.running->reserved = workspace.core << 24;
   map_first_slot();
+
+  mmu_establish_resources();
 
   if (first) {
     // Create a separate idle OSTask
     workspace.ostask.idle = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
     workspace.ostask.idle->regs.lr = (uint32_t) idle_task;
+workspace.ostask.idle->reserved = 0xf0000000 | workspace.core << 24;
 
     uint32_t cpsr;
     asm ( "mrs %[cpsr], cpsr" : [cpsr] "=r" (cpsr) );
@@ -134,12 +134,19 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
     dll_attach_OSTask( workspace.ostask.idle, &workspace.ostask.running );
     workspace.ostask.running = workspace.ostask.running->next;
 
+#ifdef DEBUG__FOLLOW_OS_TASKS
+Task_LogString( "Initial idle task ", 18 );
+Task_LogHex( (uint32_t) workspace.ostask.idle );
+Task_LogNewLine();
+#endif
+
     startup();
   }
   else {
     // Become the idle OSTask
     workspace.ostask.idle = workspace.ostask.running;
     workspace.ostask.idle->slot = shared.ostask.first;
+workspace.ostask.idle->reserved = 0xf0000000 | workspace.core << 24;
 
     // Before we start scheduling tasks from other cores, ensure the shared
     // memory areas that memory_fault_handlers might use are mapped into this
@@ -389,7 +396,7 @@ OSTask *TaskOpSetRegisters( svc_registers *regs )
   return 0;
 }
 
-static __attribute__(( noinline )) OSTask *for_core( OSTask **head, void *p )
+static __attribute__(( noinline )) OSTask *for_core( OSTask *volatile *head, void *p )
 {
   OSTask *first = *head;
   OSTask *t = first;
@@ -420,7 +427,7 @@ static __attribute__(( noinline )) OSTask *for_core( OSTask **head, void *p )
 static inline
 OSTask * __attribute__(( noinline )) find_task_for_this_core()
 {
-  OSTask **head = &shared.ostask.moving;
+  OSTask *volatile *head = &shared.ostask.moving;
 
   // Single word reads are atomic
   if (*head == 0) return 0; // 99.999% of the time
@@ -432,62 +439,62 @@ OSTask * __attribute__(( noinline )) find_task_for_this_core()
 
 OSTask *IdleTaskYield( svc_registers *regs )
 {
-  OSTask *running = workspace.ostask.running;
-  OSTask *resume = running->next;
-
   // Special case; the idle task never leaves its core.
-  // If there's another task already in the running list,
-  // run it.
-  // If it's alone, it will pull a task from either the
-  // queue of tasks for this core, or from the general
-  // runnable list.
+  // Pull a task from either the queue of tasks for this core, 
+  // or from the general runnable list.
 
-  if (resume == running) {
-    // No other running tasks on this core, pull first from
-    // tasks that called SwitchToCore (almost always empty).
-    resume = find_task_for_this_core();
+  OSTask *resume = find_task_for_this_core();
 
-    // If we got a task, it was requesting this core, right?
-    assert( resume == 0 || resume->regs.r[0] == workspace.core );
-
-    if (resume == 0) {
-      // Pull from general runnable list
-      resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
-
-      if (resume != 0) {
+  if (resume != 0) {
 #ifdef DEBUG__LOG_OS_TASKS
-        Task_LogString( "Running ", 0 );
-        if (resume == workspace.ostask.idle)
-          Task_LogString( "idle task ", 0 );
-        Task_LogHex( (uint32_t) resume );
-        Task_LogString( " on core ", 0 );
-        Task_LogSmallNumber( workspace.core );
-        Task_LogNewLine();
+    Task_LogString( "Picked up ", 0 );
+    Task_LogHex( (uint32_t) resume );
+    Task_LogString( " for core ", 0 );
+    Task_LogSmallNumber( workspace.core );
+    Task_LogNewLine();
 #endif
-      }
-    }
-    else {
+    // If we got a task, it was requesting this core, right?
+    assert( resume->regs.r[0] == workspace.core );
+  }
+
+  if (resume == 0 && shared.ostask.runnable != 0) {
+    // Pull from general runnable list, if anything in it.
+    // The above check is mp-safe, because we'll receive an envent
+    // notification if anyone adds to the list.
+    resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
+
+    if (resume != 0) {
+resume->reserved = workspace.core << 28;
 #ifdef DEBUG__LOG_OS_TASKS
-      Task_LogString( "Picked up ", 0 );
+      Task_LogString( "Running ", 0 );
+      if (resume == workspace.ostask.idle)
+        Task_LogString( "idle task ", 0 );
       Task_LogHex( (uint32_t) resume );
-      Task_LogString( " for core ", 0 );
+      Task_LogString( " on core ", 0 );
       Task_LogSmallNumber( workspace.core );
       Task_LogNewLine();
 #endif
-      assert( resume->regs.r[0] == workspace.core );
     }
   }
 
-  if (resume != 0) {
+  if (resume == 0
+   && workspace.ostask.running == workspace.ostask.idle) {
+    // Pause, then drop back to idle task (interrupts enabled),
+    // after which the runnable list will be checked again.
+    //wait_for_event();
+  }
+  else if (resume != 0) {
+    // resume has been taken from another list
+
     save_task_state( regs );
 
     dll_attach_OSTask( resume, &workspace.ostask.running );
     // Now resume and idle are in the list (resume at the head)
   }
-  else {
-    // Pause, then drop back to idle task (interrupts enabled),
-    // after which the runnable list will be checked again.
-    wait_for_event();
+  else { // workspace.ostask.running != workspace.ostask.idle
+    // Don't bother saving the idle task's state, it doesn't use it
+    resume = workspace.ostask.running->next;
+    workspace.ostask.running = resume;
   }
 
   return resume;
@@ -553,11 +560,12 @@ Task_LogNewLine();
 
 OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
 {
-  OSTask *running = workspace.ostask.running;
-  OSTask *task = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
-
+  // Check parameters BEFORE allocating resources.
   if ((regs->r[1] & 7) != 0)
     return Error_InvalidInitialStack( regs );
+
+  OSTask *running = workspace.ostask.running;
+  OSTask *task = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
 
   assert( task->next == task || task->prev == task );
 
@@ -583,7 +591,7 @@ Task_LogHex( (uint32_t) task );
 Task_LogString( ", starting at ", 14 );
 Task_LogHex( regs->r[0] );
 Task_LogString( ", in slot ", 0 );
-Task_LogHex( task->slot );
+Task_LogHex( (uint32_t) task->slot );
 Task_LogNewLine();
 #endif
 
@@ -591,7 +599,7 @@ Task_LogNewLine();
   // driver than needs it. Any Sleep or Yield indicates that the
   // task doesn't care what core it runs on. (Except for idle_task.)
   // TODO: decide whether blocking on a lock should maintain core
-  // or not.
+  // or not. (Currently chosen not 29/3/2024.)
   OSTask *next = running->next;
   dll_attach_OSTask( task, &next );
 
@@ -600,6 +608,7 @@ Task_LogNewLine();
   // If running yields, the most recently created task will run instead
   assert( running->next == task );
 
+task->reserved = regs->lr;
   return 0;
 }
 
@@ -917,6 +926,7 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     resume = TaskOpSwitchToCore( regs );
     break;
   case OSTask_Tick:
+    // Woken tasks go into the runnable list
     sleeping_tasks_tick();
     break;
   case OSTask_MapFrameBuffer:
@@ -1137,7 +1147,8 @@ void __attribute__(( naked, noreturn )) irq_handler()
     PROVE_OFFSET( banked_sp_usr, OSTask, 15 * 4 );
     PROVE_OFFSET( banked_lr_usr, OSTask, 16 * 4 );
 
-    register OSTask **running asm ( "lr" ) = &workspace.ostask.running;
+    register OSTask *volatile *head asm ( "lr" ) = &workspace.ostask.running;
+    register OSTask *interrupted asm ( "lr" );
     asm volatile (
         "\n  ldr lr, [lr]       // lr -> running"
         "\n  stm lr!, {r0-r12}  // lr -> lr/spsr"
@@ -1145,14 +1156,11 @@ void __attribute__(( naked, noreturn )) irq_handler()
         "\n  stm lr!, { r0, r1 }// lr -> banked_sp_usr"
         "\n  tst r1, #0xf"
         "\n  stmeq lr, { sp, lr }^ // Does not update lr, so..."
-        "\n  sub %[task], lr, #15*4 // restores its value, in either case"
-        : [task] "=r" (interrupted_task)
-        , "=r" (running)
-        : "r" (running)
+        "\n  sub lr, lr, #15*4 // restores its value, in either case"
+        : "=r" (interrupted)
+        : "r" (head)
         ); // Calling task state saved, except for SVC sp & lr
-    asm volatile ( "" : : "r" (running) );
-    // lr really, really used (Oh! Great Optimiser, please don't assume
-    // it's still pointing to workspace.ostask.running, I beg you!)
+    interrupted_task = interrupted;
   }
 
   svc_registers *regs = &interrupted_task->regs;
@@ -1168,6 +1176,13 @@ void __attribute__(( naked, noreturn )) irq_handler()
   // The interrupted task stays on this core, this shouldn't take long!
 
   if (irq_task == 0) PANIC;
+
+  // So that the runnable list will be checked once the interrupts have
+  // been handled, we make sure the idle task is run first.
+  // Is this sufficient? Maybe the core should always pick up runnable
+  // tasks until the list is empty before returning to the interrupted
+  // task that may not sleep or yield much.
+  workspace.ostask.running = workspace.ostask.idle;
 
   // New head of core's running list
   dll_attach_OSTask( irq_task, &workspace.ostask.running );
@@ -1259,7 +1274,9 @@ void __attribute__(( noinline )) send_number( uint32_t n, char c )
   UART volatile * const uart = (void*) 0xfffff000;
   char const hex[] = "0123456789abcdef";
 
-  while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" ); }
+  while (UART_TxEmpty != (uart->flags & UART_TxEmpty)) { for (int i = 0; i < 10000; i++) asm ( "" );
+    while (UART_TxEmpty != (uart->flags & UART_TxEmpty)) { for (int i = 0; i < 1000; i++) asm ( "" ); }
+  }
 
   for (int i = 28; i >= 0; i-=4)
     uart->data = hex[0xf & (n >> i)];
@@ -1271,6 +1288,8 @@ OSTask *__attribute__(( noinline )) c_prefetch_handler( OSTask *running )
 {
   OSTask *resume = running->next;
 
+  bool reclaimed = lock_ostask();
+
   // Also includes Breakpoints.
   UART volatile * const uart = (void*) 0xfffff000;
   while (UART_TxEmpty != (uart->flags & (UART_Busy | UART_TxEmpty))) { for (int i = 0; i < 1000; i++) asm ( "" ); }
@@ -1280,10 +1299,45 @@ OSTask *__attribute__(( noinline )) c_prefetch_handler( OSTask *running )
   send_number( running->regs.lr, '\n' );
 
   uint32_t *p = &running->regs;
-  for (int i = 0; i < 17; i++) {
-    send_number( p[i], ((i & 3) == 0) ? '\n' : ' ' );
+  for (int i = 0; i < 22; i++) {
+    send_number( p[i], (i == 12 || i == 21) ? '\n' : ' ' );
   }
   uart->data = '\n';
+
+  send_number( (uint32_t) workspace.ostask.running, '-' );
+  send_number( (uint32_t) shared.ostask.runnable, '-' );
+  send_number( (uint32_t) shared.ostask.blocked, '-' );
+  send_number( (uint32_t) shared.ostask.moving, '-' );
+  send_number( (uint32_t) shared.ostask.sleeping, '\n' );
+  send_number( 0xff5ff9d8, ' ' );
+  send_number( (uint32_t) ostask_from_handle( *(uint32_t*) 0xff5ff9d8 ), '\n' );
+
+  p = (void*) &OSTask_free_pool;
+
+  for (int i = 0; i < 28; i++) {
+    send_number( 0xff100000 + i * 88, ' ' );
+    for (int t = 0; t < 22; t++) {
+      send_number( p[i * 22 + t], t == 21 ? '\n' : ' ' );
+    }
+  }
+
+  {
+  p = (uint32_t *) shared.ostask.pipes;
+  if (p != 0) {
+    do {
+      send_number( p[12], 'w' );
+      send_number( p[13], 'r' );
+      send_number( p[6], ' ' );
+      send_number( p[5], ' ' ); // receiver
+      send_number( p[3], 's' );
+      send_number( p[2], '\n' ); // sender
+      p = (void*) p[0];
+    } while (p != (void*) shared.ostask.pipes);
+  }
+  }
+
+  // Doesn't matter if reclaimed, let other cores have a go
+  core_release_lock( &shared.ostask.lock );
 
   // For now, just cut the task loose...
   // TODO: Put it in a queue to be handled (call signal code, etc.)
@@ -1318,7 +1372,7 @@ void __attribute__(( naked )) prefetch_handler()
     "\n  srsdb sp!, #0x17 // Store fail address and SPSR (Abt mode)"
   );
 
-  register OSTask **head asm ( "lr" ) = &workspace.ostask.running;
+  register OSTask *volatile *head asm ( "lr" ) = &workspace.ostask.running;
   register OSTask *running;
 
   asm volatile (
@@ -1353,3 +1407,62 @@ void __attribute__(( naked )) prefetch_handler()
   __builtin_unreachable();
 }
 
+ __attribute__(( noinline, noreturn ))
+void signal_data_abort( svc_registers *regs, uint32_t fa, uint32_t ft )
+{
+  // This routine horribly assumes a load of stuff, but will be replaced
+  // by a much better system TODO
+
+  send_number( (uint32_t) workspace.ostask.running, ' ' );
+  send_number( fa, ' ' );
+  send_number( ft, '\n' );
+
+  save_task_state( regs );
+
+  extern uint32_t translation_table[];
+
+  uint32_t l1 = translation_table[fa >> 20];
+  send_number( l1, '\n' );
+
+  uint32_t *p = (void*) &OSTask_free_pool;
+
+  for (int i = 0; i < 16; i++) {
+    for (int t = 0; t < 22; t++) {
+      send_number( p[i * 22 + t], t == 21 ? '\n' : ' ' );
+    }
+  }
+
+  OSTask *running = workspace.ostask.running;
+  OSTask *resume = running->next;
+
+  if (0 == (resume->regs.spsr & 15)) {
+      asm ( "msr sp_usr, %[sp]"
+        "\n  msr lr_usr, %[lr]"
+          :
+          : [sp] "r" (resume->banked_sp_usr)
+          , [lr] "r" (resume->banked_lr_usr) );
+  }
+
+  map_slot( resume->slot );
+
+  assert( running != running->next );
+  dll_detach_OSTask( running );
+
+  workspace.ostask.running = resume;
+
+  // Reset the abort stack pointer
+  asm (
+      "add sp, %[regs], %[size]"
+      :
+      : [regs] "r" (regs)
+      , [size] "i" (sizeof( svc_registers )) );
+
+  register svc_registers *lr asm ( "lr" ) = &resume->regs;
+  asm (
+      "\n  ldm lr!, {r0-r12}"
+      "\n  rfeia lr // Restore execution and SPSR"
+      :
+      : "r" (lr) );
+
+  __builtin_unreachable();
+}

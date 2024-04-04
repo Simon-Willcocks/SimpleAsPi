@@ -74,7 +74,7 @@ void heap_initialise( void *base, uint32_t size )
   h->free->size = size - sizeof( heap );
 }
 
-static inline free_heap_block *first_fit( free_heap_block **head, void *p )
+static inline free_heap_block *first_fit( free_heap_block *volatile *head, void *p )
 {
   // Size has already been adjusted for header size;
   // allocate exactly that many bytes (or a bit more if the

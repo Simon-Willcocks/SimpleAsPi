@@ -343,9 +343,6 @@ void __attribute__(( noreturn )) startup()
   // Running with multi-tasking enabled. This routine gets called
   // just once.
 
-  enable_page_level_mapping();
-  if (shared.mmu.free == 0) PANIC;
-
   setup_system_heap();
   setup_shared_heap();
 

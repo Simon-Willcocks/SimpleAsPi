@@ -162,11 +162,7 @@ void open_display( uint32_t handle, workspace *ws )
   // Map whole MiBs
   pages = (pages + 0xff) & ~0xff;
 
-  // Map into local memory
-  uint32_t *screen = (void *) (2 << 20);
-
-  screen = Task_MapFrameBuffer( base_page, pages );
-  Task_MapDevicePages( screen, base_page, pages );
+  uint32_t *screen = Task_MapFrameBuffer( base_page, pages );
 
   for (int y = 0; y < 1080; y++) {
     for (int x = 0; x < 1920; x++) {
@@ -178,14 +174,16 @@ void open_display( uint32_t handle, workspace *ws )
 
   Task_LogString( "Display ready\n", 0 );
 
-  screen = (void*) 0xc0000000;
+  // screen = (void*) 0xc0000000;
   for (int y = 0; y < 1080; y++) {
     for (int x = 0; x < 1920; x++) {
-      screen[1920 * y + x] = 0xf0406080;
+      screen[1920 * y + x] = 0xf040f080;
     }
   }
 
   Task_MemoryChanged( screen, pages << 12 );
+
+  Task_LogString( "Screen coloured\n", 0 );
 
   for (;;) {
     queued_task client = Task_QueueWait( ws->queue );
