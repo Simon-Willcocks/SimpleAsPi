@@ -210,3 +210,18 @@ static inline void *rma_claim( uint32_t bytes )
   return memory;
 }
 
+// If the linker complains about "undefined reference to `memcpy'",
+// simply include the following instruction in a function that's
+// guaranteed not to be optimized out:
+//  asm ( "" : : "m" (memcpy) ); // Force a non-line copy of memcpy
+
+static inline
+void *memcpy(void *d, void *s, uint32_t n)
+{
+  uint8_t const *src = s;
+  uint8_t *dest = d;
+  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
+  // to calling this function!
+  for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
+  return d;
+}

@@ -328,13 +328,3 @@ void __attribute__(( naked )) init()
   asm ( "pop { pc }" );
 }
 
-void *memcpy(void *d, void *s, uint32_t n)
-{
-  uint8_t const *src = s;
-  uint8_t *dest = d;
-  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
-  // to calling this function!
-  for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
-  return d;
-}
-

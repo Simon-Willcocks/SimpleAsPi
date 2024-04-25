@@ -112,6 +112,8 @@ void open_display( uint32_t handle, workspace *ws )
   mailbox_request[i++] = 0;
   mailbox_request[i++] = 0; // No more tags
 
+  Task_FlushCache( mailbox_request, *mailbox_request );
+
   // A better approach would be to create a pipe over the data and pass
   // that to the server; it can then get a physical address from the
   // local end of the pipe. Being allowed to specify random physical
@@ -136,7 +138,7 @@ void open_display( uint32_t handle, workspace *ws )
   // Make sure we can see what the GPU wrote
   // This can be shown to be essential by commenting it out and
   // checking if the value of mailbox_request[1] is non-zero
-  Task_MemoryChanged( mailbox_request, *mailbox_request );
+  Task_InvalidateCache( mailbox_request, *mailbox_request );
 
   Task_LogString( "BCM2835 display response ", 0 );
   Task_LogHex( mailbox_request[1] );
@@ -170,7 +172,7 @@ void open_display( uint32_t handle, workspace *ws )
     }
   }
 
-  Task_MemoryChanged( screen, pages << 12 );
+  Task_FlushCache( screen, pages << 12 );
 
   Task_LogString( "Display ready\n", 0 );
 
@@ -181,7 +183,7 @@ void open_display( uint32_t handle, workspace *ws )
     }
   }
 
-  Task_MemoryChanged( screen, pages << 12 );
+  Task_FlushCache( screen, pages << 12 );
 
   Task_LogString( "Screen coloured\n", 0 );
 
@@ -244,12 +246,3 @@ void __attribute__(( naked )) init()
   asm ( "pop { pc }" );
 }
 
-void *memcpy(void *d, void *s, uint32_t n)
-{
-  uint8_t const *src = s;
-  uint8_t *dest = d;
-  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
-  // to calling this function!
-  for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
-  return d;
-}

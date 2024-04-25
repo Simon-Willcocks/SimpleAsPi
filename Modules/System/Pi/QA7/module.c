@@ -379,7 +379,7 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 
     release_irq_tasks( interrupts, core_irq_tasks );
 
-    nudge_other_cores( core, cores.total );
+    // nudge_other_cores( core, cores.total );
   }
 }
 
@@ -424,8 +424,7 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
       3840000; // 19.2 MHz clock, 38.4 MHz ticks, 100 ms ticks for qemu
 #endif
 #else
-//      38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
-      384000; // 19.2 MHz clock, 38.4 MHz ticks, 10 ms (1cs)
+      38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
 #endif
 #endif
 
@@ -690,15 +689,4 @@ void __attribute__(( naked )) init()
 
   asm ( "pop { pc }" );
 }
-
-void *memcpy(void *d, void *s, uint32_t n)
-{
-  uint8_t const *src = s;
-  uint8_t *dest = d;
-  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
-  // to calling this function!
-  for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
-  return d;
-}
-
 

@@ -209,34 +209,27 @@ void __attribute__(( naked )) init()
   asm ( "pop { pc }" );
 }
 
-void *memcpy(void *d, void *s, uint32_t n)
-{
-  uint8_t const *src = s;
-  uint8_t *dest = d;
-  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
-  // to calling this function!
-  for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
-  return d;
-}
-
 void go()
 {
   Task_LogString( "Entering blink module\n", 0 );
-  {
+  if (1) {
   register uint32_t pin asm( "r0" ) = 22; // 22 green 27 orange
   register uint32_t on asm( "r1" ) = 2000;
   register uint32_t off asm( "r2" ) = 1000;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
   }
 
-  {
+  if (1) {
   register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
   register uint32_t on asm( "r1" ) = 950;
   register uint32_t off asm( "r2" ) = 550;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
   }
 
-  for (;;) Task_Sleep( 10000 );
+  for (;;) {
+    Task_Sleep( 1000 );
+    Task_LogString( "Some time has passed\n", 0 );
+  }
 }
 
 void start()
