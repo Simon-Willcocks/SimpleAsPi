@@ -268,12 +268,20 @@ void cba_free( cba_head *block, void *unwanted )
   uint32_t *container = unwanted;
   container --;
   if (container >= bottom
-   && container < top
-   && 0 == (0x80000000 & *container)
-   && &bottom[*container / 4] == container) {
-    *container |= 0x80000000;
-    container[1] = (uint32_t) block->first_free;
-    block->first_free = container;
+   && container < top) {
+    if (0 == (0x80000000 & *container)) {
+      if (&bottom[(*container - sizeof( cba_head )) / 4] == container) {
+        *container |= 0x80000000;
+        container[1] = (uint32_t) block->first_free;
+        block->first_free = container;
+      }
+      else {
+        PANIC; // Invalid unwanted, not the start of a container.
+      }
+    }
+    else {
+      PANIC; // Invalid unwanted, already free
+    }
   }
   else {
     PANIC; // Should work, still untested
@@ -462,7 +470,7 @@ OSTask *execute_swi( svc_registers *regs, int number )
    || swi == OS_CallASWI) {
     PANIC; // I think the legacy implementation loops forever...
   }
-
+#ifdef DEBUG__SHOW_LEGACY_SWIS
   if (number != 0x1001) { // Not timer tick
   Task_LogString( "SWI: ", 5 );
   Task_LogHex( number );
@@ -476,6 +484,7 @@ OSTask *execute_swi( svc_registers *regs, int number )
   Task_LogHex( regs->r[3] );
   Task_LogNewLine();
   }
+#endif
 
   // Assumes all kernel SWIs need the legacy stack FIXME
   if (!needs_legacy_stack( swi )) {
@@ -548,7 +557,7 @@ OSTask *execute_swi( svc_registers *regs, int number )
           run_risos_code_implementing_swi( legacy_regs, 0, entry );
           legacy_regs->r[0] = r0;
         }
-        else if (swi < 512) { PANIC; } // Conversion SWIs
+        else if (swi < 512) { asm( "udf 1" : : "r" (regs->lr) ); PANIC; } // Conversion SWIs
         else run_module_swi( legacy_regs, swi );
       }
     }
