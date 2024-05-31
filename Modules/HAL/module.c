@@ -45,28 +45,13 @@ const char help[] = "RasPi3 HAL\t0.01 (" CREATION_DATE ")";
 
 void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 {
-  char command[64];
-  char *mod;
-  // -fPIE does insane stuff with strings, copying the rodata string
-  // to the stack so that I can copy it onto the stack from the wrong
-  // address...
-  // I think the offset tables are supposed to be fixed up by the standard
-  // library (which isn't going to work in ROM modules, is it?).
-  // Compile ROM modules as fixed location, but check there's no .data segment
-  // TODO
-  // This might not be a problem any more, I've stopped using -fPIE, afaics
-  asm ( "mov %[m], #0"
-    "\n0:"
-    "\n  ldrb lr, [%[s], %[m]]"
-    "\n  cmp lr, #0"
-    "\n  strb lr, [%[d], %[m]]"
-    "\n  addne %[m], %[m], #1"
-    "\n  bne 0b"
-    "\n  add %[m], %[d], %[m]"
-    : [m] "=&r" (mod)
-    : [s] "r" ("System:Modules.")
-    , [d] "r" (command)
-    : "lr" );
+  static char const base[] = "System:Modules.";
+  char command[128];
+  char *mod = command;
+  char const *b = base;
+  while (*b != 0) {
+    *mod++ = *b++;
+  }
 
   // INITIAL_MODULES provided by build script.
   // Must be a single string consiting of nul-terminated module
@@ -95,7 +80,7 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
       : [swi] "i" (OS_Module), "r" (load), "r" (module)
       : "cc", "memory" );
     // "memory" is required because the SWI accesses memory
-    // (the module name). Without it, the final *p = '\0'; may
+    // (the module name). Without it, the final *p = '\n'; may
     // be delayed until after the SWI is called.
 
     if (error != 0) {
