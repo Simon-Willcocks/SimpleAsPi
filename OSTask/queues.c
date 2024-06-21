@@ -131,6 +131,7 @@ OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
     regs->r[0] = ostask_handle( head );
     regs->r[1] = head->swi.offset;
     regs->r[2] = head->swi.core;
+    assert( 0xff1 == ((uint32_t) running) >> 20 );
     head->controller = running;
   }
 
@@ -191,6 +192,7 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
   }
 
   if (matched_handler) {
+    assert( 0xff1 == ((uint32_t) matched_handler) >> 20 );
     // Schedule the handler, giving it control over caller
     // It should run on this core, so as to implement the SWI
     // functionality asap

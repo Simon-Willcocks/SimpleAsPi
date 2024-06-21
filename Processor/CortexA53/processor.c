@@ -101,6 +101,59 @@ void __attribute__(( naked, noreturn )) _start()
   call_boot_with_stack_in_high_memory( core );
 }
 
+#ifdef DEBUG__EMERGENCY_UART_ACCESS
+#include "bcm_uart.h"
+
+static inline
+void initialise_PL011_uart( UART volatile *uart, uint32_t freq, uint32_t baud )
+{
+  // FIXME remove this delay, intended to let the other core run in qemu,
+  // like I suspect is happening in real hardware
+  for (int i = 0; i < 0x1000000; i++) asm ( "" );
+
+  // Disable UART
+  uart->control &= ~1;
+  asm ( "dsb" );
+
+  // Wait for current byte to be transmitted/received
+
+  while (0 != (uart->flags & UART_Busy)) { }
+  // UART clock is clock 2, rather than use the mailbox interface for
+  // this test, put init_uart_clock=3000000 in config.txt
+
+  uint32_t const ibrd = freq / (16 * baud);
+  // The top 6 bits of the fractional part...
+  uint32_t const fbrdx2 = ((8 * freq) / baud) & 0x7f;
+  // rounding off...
+  uint32_t const fbrd = (fbrdx2 + 1) / 2;
+
+  uart->integer_baud_rate_divisor = ibrd;
+  uart->fractional_baud_rate_divisor = fbrd;
+
+  uint32_t const eight_bits = (3 << 5);
+  uint32_t const fifo_enable = (1 << 4);
+  uint32_t const parity_enable = (1 << 1);
+  uint32_t const even_parity = parity_enable | (1 << 2);
+  uint32_t const odd_parity = parity_enable | (0 << 2);
+  uint32_t const one_stop_bit = 0;
+  uint32_t const two_stop_bits = (1 << 3);
+
+  uart->line_control = (eight_bits | one_stop_bit | fifo_enable);
+
+  uart->interrupt_mask = 0;
+
+  uint32_t const transmit_enable = (1 << 8);
+  uint32_t const receive_enable = (1 << 9);
+  uint32_t const uart_enable = 1;
+
+  // No interrupts, for the time being, transmit only
+  uart->control = uart_enable | transmit_enable;
+  asm ( "dsb" );
+  uart->data = 'I';
+  while (0 != (uart->flags & UART_Busy)) { }
+}
+#endif
+
 static __attribute__(( noinline, noreturn ))
 void call_boot_with_stack_in_high_memory( uint32_t core )
 {
@@ -115,7 +168,11 @@ void call_boot_with_stack_in_high_memory( uint32_t core )
     // "Reclaimed", if arrived here, this must be core 0
     // and other cores are either blocked waiting for the
     // lock or haven't got to it yet.
-    memset( &shared, 0, sizeof( shared ) );
+    memset( (void*) &shared, 0, sizeof( shared ) );
+#ifdef DEBUG__EMERGENCY_UART_ACCESS
+  // Emergency UART access.
+  initialise_PL011_uart( 0xfffff000, 3000000, 115200 );
+#endif
   }
   core_release_lock( plock );
 
@@ -123,7 +180,7 @@ void call_boot_with_stack_in_high_memory( uint32_t core )
   // are unclaimed.
 
   // Clear the core workspace before starting to use it for the stack
-  memset( &workspace, 0, sizeof( workspace ) );
+  memset( (void*) &workspace, 0, sizeof( workspace ) );
 
   // This ensures that the jump to the routine is not relative.
   register void *hi asm( "lr" ) = boot_with_stack;
@@ -318,7 +375,8 @@ void push_writes_out_of_cache( uint32_t va, uint32_t size )
     asm ( "mcr p15, 0, %[va], c7, c10, 1" : : [va] "r" (i) );
   }
 
-  //set_way_no_CCSIDR2();
+  // FIXME: This shouldn't be needed...
+  set_way_no_CCSIDR2();
 }
 
 void RAM_may_have_changed( uint32_t va, uint32_t size )
@@ -332,6 +390,8 @@ void RAM_may_have_changed( uint32_t va, uint32_t size )
   }
 
   asm ( "dmb sy" );
+  // FIXME: This shouldn't be needed...
+  set_way_no_CCSIDR2();
 }
 
 static void Cortex_A7_set_smp_mode()

@@ -421,9 +421,7 @@ static bool in_legacy_stack()
   return sp_section == (legacy_base >> 20);
 }
 
-// If no other subsystem wants to handle modules, use the legacy code
-__attribute__(( weak ))
-OSTask *do_OS_Module( svc_registers *regs )
+OSTask *legacy_do_OS_Module( svc_registers *regs )
 {
   extern uint32_t JTABLE[128];
 
@@ -432,9 +430,31 @@ OSTask *do_OS_Module( svc_registers *regs )
   return 0;
 }
 
+// If no other subsystem wants to handle modules, use the legacy code
+__attribute__(( weak ))
+OSTask *do_OS_Module( svc_registers *regs )
+{
+  return legacy_do_OS_Module( regs );
+}
+
 __attribute__(( weak ))
 OSTask *do_OS_ServiceCall( svc_registers *regs )
 {
+  return 0;
+}
+
+OSTask *do_OS_PlatformFeatures( svc_registers *regs )
+{
+  switch (regs->r[0]) {
+  case 0:
+    regs->r[0] = 0x80107ff9; // Taken from a running Rpi3
+    regs->r[1] = 0;
+    break;
+  default:
+    regs->r[0] = 0;
+    regs->r[1] = 0xbadf00d;
+    PANIC;
+  }
   return 0;
 }
 
@@ -541,6 +561,7 @@ OSTask *execute_swi( svc_registers *regs, int number )
     case OS_ChangeDynamicArea: do_OS_ChangeDynamicArea( legacy_regs ); break;
     case OS_Memory: do_OS_Memory( legacy_regs ); break;
     case OS_ValidateAddress: do_OS_ValidateAddress( legacy_regs ); break;
+    case OS_PlatformFeatures: do_OS_PlatformFeatures( legacy_regs ); break;
     // case OS_Heap: do_OS_Heap( legacy_regs ); break;
     default:
       {
@@ -689,6 +710,11 @@ void __attribute__(( naked, noreturn )) ResumeLegacy()
   register uint32_t **legacy_sp asm( "lr" ) = &shared.legacy.sp;
   asm ( "ldr sp, [lr]"
 
+    "\n  push { r0 }"
+    "\n  ldr r0, [sp, #4]"
+    "\n  str r0, [lr]"
+    "\n  pop { r0, lr }" // Don't care about the lr value, but adds 8 to sp
+
     "\n  cpsie i"
     "\n  pop { lr, pc }"
     :
@@ -701,6 +727,7 @@ void interrupting_privileged_code( OSTask *task )
   // We need to be able to get the task back to the state it was in when
   // interrupted, without corrupting anything.
   uint32_t svc_lr;
+  uint32_t old_legacy_sp = shared.legacy.sp;
   asm ( "mrs %[sp], sp_svc"
     "\n  mrs %[lr], lr_svc"
     "\n  msr sp_svc, %[reset_sp]"
@@ -711,10 +738,14 @@ void interrupting_privileged_code( OSTask *task )
   // TODO: Check here if the legacy stack is exhausted. If it is, there's
   // probably an interrupt that's stuck on incorrectly, I think.
 
-  shared.legacy.sp -= 2;
-  shared.legacy.sp[0] = svc_lr;
-  shared.legacy.sp[1] = task->regs.lr;
+  shared.legacy.sp -= 3;
+  shared.legacy.sp[0] = old_legacy_sp;
+  shared.legacy.sp[1] = svc_lr;
+  shared.legacy.sp[2] = task->regs.lr;
+
+  // Now, when the task resumes, make it run our code to restore the 
+  // privileged state.
   task->regs.lr = (uint32_t) ResumeLegacy;
-  // Don't let the ResumeLegacy routine be interrupted!
+  // Don't let the ResumeLegacy routine be interrupted while that's happening!
   task->regs.spsr |= 0x80;
 }

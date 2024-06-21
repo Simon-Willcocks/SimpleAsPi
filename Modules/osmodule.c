@@ -438,28 +438,28 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
   return 0;
 }
 
-module_header *find_named_module( char const *name )
+char const *extract_module_name( char const *name )
 {
-  module_header *header = 0;
-
   while (*name == ' ') name++;
 
   char const *rom_path = "System:Modules.";
   char const *mod_name = name;
   while (*mod_name == *rom_path) { mod_name++; rom_path++; }
-  bool search_rom = (*rom_path == '\0');
+  return mod_name;
+}
 
-  if (search_rom) {
-    header = find_module_in_rom( mod_name );
+module_header *find_named_module( char const *name )
+{
+  module_header *header = 0;
+
+  header = find_module_in_rom( name );
+  if (header == 0) {
+    header = find_module_in_list( name, &LegacyModulesList );
     if (header == 0) {
-      header = find_module_in_list( mod_name, &LegacyModulesList );
+      Task_LogString( "Module ", 0 );
+      Task_LogString( name, 0 );
+      Task_LogString( " not found\n", 0 );
     }
-  }
-  else {
-    Task_LogString( "Module ", 0 );
-    Task_LogString( name, 0 );
-    Task_LogString( " not found\n", 0 );
-    PANIC; // Look in filesystems
   }
 
   if (header == 0) PANIC; // Not found in ROM
@@ -472,11 +472,13 @@ module_header *load_named_module( char const *name )
   // Find a module with the given name; if it's on a filesystem,
   // load it into RMA, just after the file's length.
 
-  module_header *header = find_named_module( name );
+  char const *const module_name = extract_module_name( name );
+
+  module_header *header = find_named_module( module_name );
 
   if (header == 0) PANIC;
 
-  // TODO: Load a module from a file system
+  // TODO: Load the module from a file system
 
   return header;
 }
@@ -573,19 +575,40 @@ OSTask *do_OS_ServiceCall( svc_registers *regs )
   return 0;
 }
 
+static uint32_t osmodule24( uint32_t size, uint32_t align )
+{
+  extern uint8_t shared_heap_base;
+  extern uint8_t shared_heap_top;
+
+  register uint32_t command asm ( "r0" ) = 7;
+  register void *heap asm ( "r1" ) = &shared_heap_base;
+  register uint32_t alignment asm ( "r2" ) = align;
+  register uint32_t bytes asm ( "r3" ) = size;
+  register uint32_t mem asm ( "r2" );      // OUT
+  asm ( "svc %[swi]"
+    : "=r" (mem)
+    : [swi] "i" (OS_Heap), "r" (command), "r" (heap), "r" (bytes)
+    , "r" (alignment)
+    : "lr", "cc" );
+  return mem;
+}
+
+extern OSTask *legacy_do_OS_Module( svc_registers *regs );
+
 OSTask *do_OS_Module( svc_registers *regs )
 {
   error_block *error = 0;
-  char const *name = (void*) regs->r[1];
+  char const *const name = (void*) regs->r[1];
 
   switch (regs->r[0]) {
   case 0: // RMRun
     {
-      module *m = find_initialised_module( name );
+      char const *const module_name = extract_module_name( name );
+      module *m = find_initialised_module( module_name );
       if (m == 0) {
         error = load_and_initialise( name );
         if (error != 0) break;
-        m = find_initialised_module( name );
+        m = find_initialised_module( module_name );
         if (m == 0) PANIC; // Any error already reported
       }
       void *start = start_code( m->header );
@@ -602,16 +625,6 @@ OSTask *do_OS_Module( svc_registers *regs )
     break;
   case 1: // RMLoad
     error = load_and_initialise( name );
-    break;
-  case 6: // Claim
-    regs->r[2] = (uint32_t) shared_heap_allocate( regs->r[3] );
-
-    if (regs->r[2] == 0xffffffff) {
-      return Error_NoRoomInRMA( regs );
-    }
-    break;
-  case 7: // Free
-    shared_heap_free( (void*) regs->r[2] );
     break;
   case 18: // Extract module information
     {
@@ -653,9 +666,10 @@ OSTask *do_OS_Module( svc_registers *regs )
     break;
   case 2: // RMEnter
   case 3: // RMReinit
-  default:
     PANIC;
     break;
+  default:
+    return legacy_do_OS_Module( regs );
   }
 
   if (error != 0) {

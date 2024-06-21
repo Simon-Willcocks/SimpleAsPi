@@ -223,7 +223,8 @@ void __attribute__(( noinline )) c_init( workspace **private,
 
   register uint32_t handle asm( "r0" );
 
-  asm volatile ( "svc %[swi]" // volatile in case we ignore output
+  // This module doesn't access hardware, so no need to spawn the task
+  asm volatile ( "svc %[swi]" // volatile because we ignore output
     : "=r" (handle)
     : [swi] "i" (OSTask_Create)
     , "r" (start)

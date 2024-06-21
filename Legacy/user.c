@@ -48,6 +48,7 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     uint32_t r12 = regs.r[12];
     uint32_t lr = regs.lr;
 
+#ifdef DEBUG__SHOW_LEGACY_SWIS
     Task_LogString( "Legacy SWI ", 11 );
     Task_LogHex( client.swi );
     Task_LogNewLine();
@@ -55,18 +56,23 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
       Task_LogHex( regs.r[i] );
       Task_LogString( i == 9 ? "\n" : " ", 1 );
     }
+#endif
 
     regs.r[11] = handle;
     regs.r[12] = client.swi;
     regs.lr = (uint32_t) run_swi;
 
+asm ( "udf #99" : : "r" (lr) );
     *owner = client.task_handle;
     Task_RunThisForMe( client.task_handle, &regs );
+asm ( "udf #99" : : "r" (lr) );
     *owner = 0;
 
+#ifdef DEBUG__SHOW_LEGACY_SWIS
     Task_LogString( "Legacy SWI ", 11 );
     Task_LogHex( client.swi );
     Task_LogString( " ended\n", 7 );
+#endif
 
     Task_GetRegisters( client.task_handle, &regs );
 

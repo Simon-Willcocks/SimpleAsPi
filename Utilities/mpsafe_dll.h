@@ -153,6 +153,7 @@ static inline void DO_NOT_USE_insert_tail_##T( T * volatile*head, void *p ) \
     *head = p; \
   } \
   else { \
+    if (0) asm ( "bkpt #5" ); \
     dll_attach_##T( p, head ); \
     *head = (*head)->next; \
   } \

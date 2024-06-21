@@ -344,6 +344,10 @@ void start_log( uint32_t handle, workspace *ws )
     while (data.available != 0) {
       char *string = data.location;
       send_to_uart( string, data.available );
+      if (string[0] == 'p' && string[1] == 'g') asm ( "bkpt 1" );
+      if (string[1] == 'p' && string[2] == 'g') asm ( "bkpt 1" );
+      if (string[2] == 'p' && string[3] == 'g') asm ( "bkpt 1" );
+      if (string[3] == 'p' && string[4] == 'g') asm ( "bkpt 1" );
       data = PipeOp_DataConsumed( output_pipe, data.available );
     }
   }

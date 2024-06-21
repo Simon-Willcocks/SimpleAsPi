@@ -39,7 +39,7 @@ DLL_TYPE( dynamic_area )
 static dynamic_area *find_da( uint32_t num )
 {
   dynamic_area *da = shared.legacy.dynamic_areas;
-  if (da == 0) PANIC;
+  if (da == 0) return 0;
 
   while (da->number != num &&
          da->next != shared.legacy.dynamic_areas)
@@ -53,17 +53,10 @@ static dynamic_area *find_da( uint32_t num )
 void do_OS_ReadDynamicArea( svc_registers *regs )
 {
   uint32_t max = 0;
+  uint32_t number = regs->r[0];
+  if (number < 256 && number >= 128) number -= 128;
 
-  switch (regs->r[0]) {
-  case 0: // System Heap
-    {
-      extern uint8_t system_heap_base;
-      extern uint8_t system_heap_top;
-      regs->r[0] = (uint32_t) &system_heap_base;
-      regs->r[1] = &system_heap_top - &system_heap_base;
-      max = regs->r[1];
-    }
-    break;
+  switch (number) {
   case -1: // Application space
     {
       extern uint8_t app_memory_limit;
@@ -74,13 +67,38 @@ void do_OS_ReadDynamicArea( svc_registers *regs )
       regs->r[2] = size;
     }
     break;
+  case 0: // System Heap
+    {
+      extern uint8_t system_heap_base;
+      extern uint8_t system_heap_top;
+      regs->r[0] = (uint32_t) &system_heap_base;
+      regs->r[1] = &system_heap_top - &system_heap_base;
+      max = regs->r[1];
+    }
+    break;
+  case 1: // RMA
+    {
+      extern uint8_t shared_heap_base;
+      extern uint8_t shared_heap_top;
+
+      regs->r[0] = (uint32_t) &shared_heap_base;
+      regs->r[1] = &shared_heap_top - &shared_heap_base;
+      max = regs->r[1];
+    }
+    break;
   default:
     {
       dynamic_area *da = find_da( regs->r[0] );
 
-      regs->r[0] = da->va_start;
-      regs->r[1] = da->current_size;
-      regs->r[2] = da->max_size;
+      if (da != 0) {
+        if (regs->r[0] > 127)
+          regs->r[2] = da->max_size;
+        regs->r[0] = da->va_start;
+        regs->r[1] = da->current_size;
+      }
+      else {
+        asm ( "bkpt 6" ); // TODO appropriate error message
+      }
     }
     break;
   }
@@ -181,6 +199,7 @@ void do_OS_ChangeDynamicArea( svc_registers *regs )
 {
   // TODO whole pages
   dynamic_area *da = find_da( regs->r[0] );
+  if (da == 0) PANIC;
   da->current_size += regs->r[1];
   if (0 > (int32_t) regs->r[1]) {
     regs->r[1] = -regs->r[1];
@@ -205,6 +224,8 @@ void do_OS_Memory( svc_registers *regs )
     {
       // 0x2200 converts the logical address to physical
       // But why is it called in the kernel?? Essentially ignoring for now
+      // Kernel/s/vdu/vdudriver Line 201. Getting physical address of 256 byte
+      // cursor blocks (six times over).
       if (flags != 0x22) asm ( "bkpt 1" );
 
       struct __attribute__(( packed )) {
@@ -213,7 +234,9 @@ void do_OS_Memory( svc_registers *regs )
         uint32_t physical_address;
       } *page_blocks = (void*) regs->r[1];
 
-      Task_LogString( "Virtual to physical addresses\n", 0 );
+      Task_LogString( "Virtual to physical addresses (", 0 );
+      Task_LogHex( regs->lr );
+      Task_LogString( ")\n", 2 );
       for (int i = 0; i < regs->r[2]; i++) {
         Task_LogHex( page_blocks[i].physical_page );
         Task_LogString( " ", 1 );
@@ -236,6 +259,13 @@ void do_OS_Memory( svc_registers *regs )
       uint32_t bytes = regs->r[2];
 
       uint32_t base = 0xc0000000;
+
+      bool bufferable = 0 != (flags & 1);
+      bool cacheable = 0 != (flags & 2);
+      int policy = (flags >> 2) & 7;
+      bool double_map = 0 != (flags & 16);
+      bool set_access_privileges = 0 != (flags & 17);
+      int access_privileges = (flags >> 16) & 15;
 
   Task_LogString( "OS_Memory MapInIOPermanent, flags ", 0 );
   Task_LogHex( flags );
@@ -273,7 +303,7 @@ void do_OS_Memory( svc_registers *regs )
       }
 */
 uint32_t *screen = (void*) base;
-uint32_t colour = 0x12345678;
+uint32_t colour = 0x12845678;
 for (int y = 0; y < 1080; y++) {
   for (int x = 0; x < 1920; x++) {
     screen[x + 1920 * y] = colour++;

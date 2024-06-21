@@ -357,7 +357,7 @@ void __attribute__(( optimize( "O1" ) )) map_memory( memory_mapping const *mappi
 {
   if (mapping == 0) asm volatile ( "mov r2, lr\n  bkpt 88" );
   if (mapping->pages == 0) {
-    asm volatile ( "" : : "r" (mapping->base_page), "r" (mapping->va) );
+    asm volatile ( "mov r12, lr" : : "r" (mapping->base_page), "r" (mapping->va) );
     PANIC;
   }
 
@@ -475,6 +475,8 @@ send_number( entry.raw, '\n' );
       // No? Then we'll make the table in a mo...
     }
 
+    bool new_table = (entry.type == 0);
+
     if (entry.type == 0) {
       // Don't have a handy shared table (or we don't want to share a table)
       // So, make our own
@@ -487,8 +489,6 @@ send_number( entry.raw, '\n' );
       }
 
       entry.table = table_entry( table );
-
-      translation_table.entry[virt.section] = entry;
 
       if (handler == check_global_table) {
         if (all_cores) { // We're going to share the table
@@ -551,7 +551,20 @@ send_number( entry.raw, '\n' );
       page_entry.page_base++;
       virt.page++;
     }
+
+    push_writes_to_cache();
+
+    if (new_table) {
+      translation_table.entry[virt.section] = entry;
+      push_writes_to_cache();
+    }
   }
+
+  asm ( "DSB"
+    "\n  MCR p15, 0, r0, c8, c7, 0 // TLBIALL"  // Overkill - does it get rid of strange_handler?
+    "\n  MCR p15, 0, r0, c7, c5, 6 // BPIALL"
+    "\n  DSB"
+    "\n  ISB" );
 
   // I misunderstood the meaning of the top bits in a supersection; all
   // entries that are for a supersection must have the same bits 20-31,
@@ -561,7 +574,10 @@ send_number( entry.raw, '\n' );
   // The MMU has been configured to use the cache, so the writes don't
   // have to be flushed to RAM.
   push_writes_to_cache();
+  ensure_changes_observable();
+  set_way_no_CCSIDR2();
   // ... in theory, but I'm getting stupid data aborts...
+  // Apparently fixed by the TLBIALL, above.
 
   if (!reclaimed) core_release_lock( &shared.mmu.lock );
 }
@@ -671,7 +687,6 @@ inline uint32_t __attribute__(( always_inline )) get_core_number()
   asm ( "mrc p15, 0, %[result], c0, c0, 5" : [result] "=r" (result) );
   return ((result & 0xc0000000) != 0x80000000) ? 0 : (result & 15);
 }
-
 
 void create_default_translation_tables( uint32_t memory )
 {
@@ -820,13 +835,14 @@ void create_default_translation_tables( uint32_t memory )
 #ifdef DEBUG__EMERGENCY_UART_ACCESS
   // Emergency UART access. (Assumes it's all set up by the time it's used)
   {
-    arm32_ptr p = { .rawp = &workspace };
     // Set AF
     // No usr access:
     // l2tt_entry entry = { .raw = 0x3f201413 };
     // With usr32 access
     l2tt_entry entry = { .raw = 0x3f201000 | 0b10000110011 };
     pages[0xff] = entry;
+
+    push_writes_to_cache();
   }
 #endif
 #if 0
@@ -924,7 +940,7 @@ static bool strange_handler( uint32_t fa, uint32_t ft )
   l1tt_entry l1 = translation_table.entry[va.section];
   send_number( l1.raw, ':' );
   l2tt_entry l2 = {};
-  if (l1.raw == 1) {
+  if (l1.type == 1) {
     l2tt *table = mapped_table( l1.table );
     l2 = table->entry[va.page];
   }
@@ -1005,6 +1021,13 @@ void __attribute__(( naked, noreturn )) data_abort_handler()
     signal_data_abort( regs, fault_address(), data_fault_type() );
     PANIC;
   }
+
+  asm ( "DSB"
+    "\n  MCR p15, 0, r0, c8, c7, 0 // TLBIALL"  // Overkill - does it get rid of strange_handler? Yes!
+    // But check_global still fails...
+    "\n  MCR p15, 0, r0, c7, c5, 6 // BPIALL"
+    "\n  DSB"
+    "\n  ISB" );
 
   asm volatile ( "pop { "C_CLOBBERED" }"
     "\n  rfeia sp! // Restore execution and SPSR" );

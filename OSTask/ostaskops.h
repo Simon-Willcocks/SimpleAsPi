@@ -45,7 +45,9 @@ enum {
 
   , OSTask_PhysicalFromVirtual          // For device drivers
                                         // (Also flushes the cache)
-  , OSTask_MemoryChanged                // Invalidates any cache
+  , OSTask_InvalidateCache              // Area of RAM may have been changed
+  , OSTask_FlushCache                   // Ensure changes are visible to
+                                        // external hardware.
 
   , OSTask_SwitchToCore                 // Use sparingly!
 
@@ -894,14 +896,29 @@ uint32_t Task_PhysicalFromVirtual( void const *va, uint32_t length )
 }
 
 static inline
-uint32_t Task_MemoryChanged( void const *va, uint32_t length )
+uint32_t Task_InvalidateCache( void const *va, uint32_t length )
 {
   register void const *v asm( "r0" ) = va;
   register uint32_t l asm( "r1" ) = length;
   register uint32_t p asm( "r0" );
   asm volatile ( "svc %[swi]"
       : "=r" (p)
-      : [swi] "i" (OSTask_MemoryChanged)
+      : [swi] "i" (OSTask_InvalidateCache)
+      , "r" (v)
+      , "r" (l)
+      : "lr", "cc", "memory" );
+  return p;
+}
+
+static inline
+uint32_t Task_FlushCache( void const *va, uint32_t length )
+{
+  register void const *v asm( "r0" ) = va;
+  register uint32_t l asm( "r1" ) = length;
+  register uint32_t p asm( "r0" );
+  asm volatile ( "svc %[swi]"
+      : "=r" (p)
+      : [swi] "i" (OSTask_FlushCache)
       , "r" (v)
       , "r" (l)
       : "lr", "cc", "memory" );

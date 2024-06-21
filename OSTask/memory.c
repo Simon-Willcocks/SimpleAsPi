@@ -151,13 +151,6 @@ Task_LogNewLine();
     result = slot->pipe_mem[i];
   }
   else {
-#ifdef DEBUG__LOG_SLOT_MEMORY
-Task_LogString( "VA not in app or pipe memory! ", 0 );
-Task_LogHex( va );
-Task_LogString( " in ", 0 );
-Task_LogHex( (uint32_t) workspace.ostask.running );
-Task_LogNewLine();
-#endif
     memory_pages global_area = walk_global_tree( va );
 
     if (global_area.number_of_pages != 0) {
@@ -166,21 +159,19 @@ Task_LogNewLine();
       result.va_page = global_area.virtual_base >> 12;
       result.page_base = global_area.base_page;
     }
+#ifdef DEBUG__LOG_SLOT_MEMORY
+    else {
+Task_LogString( "VA not in app, pipe or global memory! ", 0 );
+Task_LogHex( va );
+Task_LogString( " in ", 0 );
+Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogString( " on core ", 0 );
+Task_LogSmallNumber( workspace.core );
+Task_LogNewLine();
+    }
+#endif
   }
 
-/*
-extern void __attribute__(( noinline )) send_number( uint32_t n, char c );
-
-if ((va >> 24) == 0x80) {
-send_number( (uint32_t) workspace.ostask.running, ';' );
-send_number( va, ' ' );
-send_number( result.va_page << 12, ' ' );
-send_number( result.page_base << 12, ' ' );
-send_number( result.pages, ' ' );
-send_number( result.device, ' ' );
-send_number( result.read_only, '\n' );
-}
-*/
   return result;
 }
 

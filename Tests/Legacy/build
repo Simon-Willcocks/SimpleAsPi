@@ -1,7 +1,9 @@
 #! /bin/bash -
 
 SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/Pi/Legacy/BCM2835GrV
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART:System/Pi/Legacy/BCM2835GrV
+
+#:System/Pi/PL011UART
 
 echo Modules: ${MODULES//:/ }
 
@@ -9,18 +11,22 @@ echo Modules: ${MODULES//:/ }
 # At least until it will be safely coped with.
 INITIAL_MODULES='QA7\0'
 
-INITIAL_MODULES+='LogToScreen\0'
+#INITIAL_MODULES+='GPUMailbox\0BCM2835Display\0'
+# This initialises the UART...
+#INITIAL_MODULES+='PL011UART\0'
+# Needed by...
+INITIAL_MODULES+='LogToUART\0'
 INITIAL_MODULES+='LEDBlink\0'
-#INITIAL_MODULES+='GPUMailbox\0BCM2835GrV\0'
-INITIAL_MODULES+='GPUMailbox\0BCM2835Display\0'
+INITIAL_MODULES+='GPUMailbox\0BCM2835Display\0BCM2835GrV\0'
 
 INITIAL_MODULES+='UtilityModule\0'
+INITIAL_MODULES+='ScreenModes\0'
 INITIAL_MODULES+='FileCore\0'
-#INITIAL_MODULES+='FileSwitch\0'
-#INITIAL_MODULES+='ResourceFS\0'
-#INITIAL_MODULES+='TerritoryManager\0Messages\0MessageTrans\0'
-#INITIAL_MODULES+='UK\0'
-#INITIAL_MODULES+='VFPSupport\0BASIC\0'
+INITIAL_MODULES+='FileSwitch\0'
+INITIAL_MODULES+='ResourceFS\0'
+INITIAL_MODULES+='TerritoryManager\0Messages\0MessageTrans\0'
+INITIAL_MODULES+='UK\0'
+INITIAL_MODULES+='VFPSupport\0BASIC\0'
 #INITIAL_MODULES+='WindowManager\0'
 
 DEFAULT_LANGUAGE=LEDBlink
@@ -150,6 +156,9 @@ done | sort | uniq -c | grep -v -e '00000000$' -e '\<1\>' && exit 2
 # RiscOS/BuildSys/Components/ROOL/ file needs to be changed.
 ###
 
+# RMA (shared_heap) starts at AplWorkMaxSize, 512MiB, but no obvious symbol
+# to extract from build.
+
 dd if=RISCOS.img of=/tmp/RISCOS.used bs=$(( 0x$KERNEL_OFFSET )) skip=1 &&
 $OBJCOPY -I binary -O elf32-littlearm -B armv7 \
         --redefine-sym _binary__tmp_RISCOS_used_start=_romimage_start \
@@ -187,12 +196,12 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=VMSAv6_Level2_Tables=0xff300000 \
         -Wl,--defsym=system_heap_base=0x30000000 \
         -Wl,--defsym=system_heap_top=0x30100000 \
-        -Wl,--defsym=shared_heap_base=0xff500000 \
-        -Wl,--defsym=shared_heap_top=0xff600000 \
+        -Wl,--defsym=shared_heap_base=0x20000000 \
+        -Wl,--defsym=shared_heap_top=0x20100000 \
         \
         -Wl,--defsym=log_pipe=0xfff00000 \
         -Wl,--defsym=log_pipe_top=0xfff02000 \
-        -Wl,--defsym=app_memory_limit=0x30000000 \
+        -Wl,--defsym=app_memory_limit=0x20000000 \
         -Wl,--defsym=dynamic_areas_base=0x40000000 \
         -Wl,--defsym=dynamic_areas_top=0x50000000 \
         -Wl,--defsym=pipes_base=0x80000000 \
@@ -205,7 +214,7 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=workspace=0xfffd0000 \
         -Wl,--defsym=shared=0xfffe0000 \
         -Wl,--section-start=.init=0xfc000000 \
-        -Wl,--section-start=.text=0xfc002000 \
+        -Wl,--section-start=.text=0xfc003000 \
         -Wl,--section-start=.romimage=$KERNEL_START \
         &&
 arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&

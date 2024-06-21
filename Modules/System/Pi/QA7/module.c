@@ -139,7 +139,7 @@ void __attribute__(( noinline )) release_irq_tasks( uint32_t active, uint32_t *i
       }
       else {
         uint32_t volatile *u = (void*) 0xfffff000;
-        while (1) {
+        {
           for (int i = 0; i < 0x100000; i++) asm ( "" ); 
           *u = '@' + (waiting - irq_tasks);
         }
@@ -337,7 +337,9 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
   Task_EnablingInterrupts();
 
   if (0 == change_word_if_equal( &ws->gpu_handler, 0, handle )) {
-    Task_LogString( "Claiming GPU interrupts\n", 0 );
+    Task_LogString( "Claiming GPU interrupts, core ", 0 );
+    Task_LogSmallNumber( core );
+    Task_LogNewLine();
 
     // This core is claiming the GPU interrupts
     gpu->disable_irqs1 = 0xffffffff;
@@ -430,7 +432,9 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
 
   ensure_changes_observable(); // Wrote to QA7
 
-  Task_LogString( "Waiting for first QA7 timer interrupt\n", 0 );
+  Task_LogString( "Waiting for QA7 timer interrupts, core ", 0 );
+  Task_LogSmallNumber( core );
+  Task_LogNewLine();
 
   for (;;) {
     register uint32_t irq asm ( "r0" ) = irq_number;
@@ -619,7 +623,7 @@ void irq_manager( uint32_t handle, workspace *ws )
         if (req < 32) { // GPU interrupt, word 1
           gpu->enable_irqs1 = (1 << req);
         }
-        else if (req < 64) { // GPU interrupt, word 1
+        else if (req < 64) { // GPU interrupt, word 2
           gpu->enable_irqs2 = (1 << (req - 32));
         }
         else if (req < 72) { // GPU interrupt, base

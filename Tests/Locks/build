@@ -3,20 +3,12 @@
 # Parts of the kernel
 SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:NoLegacy:Modules
 # Modules to include (HAL chooses which ones to load.)
-#MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink:System/LogToScreen
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART
+MODULES=HAL:System/Pi/QA7:System/TestLocks
 
 echo Modules: ${MODULES//:/ }
 
-INITIAL_MODULES='QA7\0'
-INITIAL_MODULES+='LEDBlink\0'
-INITIAL_MODULES+='GPUMailbox\0'
-INITIAL_MODULES+='BCM2835Display\0'
-
-INITIAL_MODULES+='LogToUART\0'
-#INITIAL_MODULES+='LogToScreen\0'
-
-DEFAULT_LANGUAGE=LEDBlink
+INITIAL_MODULES='QA7\0TestLocks\0'
+DEFAULT_LANGUAGE=TestLocks
 
 # This is not a foolproof test, but it should catch some foolishness
 for i in ${INITIAL_MODULES/\\0/ } $DEFAULT_LANGUAGE ; do 
@@ -84,8 +76,6 @@ echo 'char const modcflags[] = "Build module flags: '"$MODCFLAGS"'";' >> Generat
 
 echo Modules built &&
 
-grep -r _GLOBAL_OFFSET_TABLE_ Generated/*.dump && echo Problem || true &&
-
 echo SWI chunks: &&
 
 for i in Generated/*,ffa 
@@ -116,7 +106,7 @@ arm-none-eabi-gcc-9.2.1 \
         romimage_end.c \
         \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
-        -Wl,--defsym=top_of_minimum_RAM=0x10000000 \
+        -Wl,--defsym=top_of_minimum_RAM=0x2000000 \
         \
         -Wl,--defsym=OSTask_free_pool=0xff100000 \
         -Wl,--defsym=OSTaskSlot_free_pool=0xff200000 \
@@ -132,9 +122,9 @@ arm-none-eabi-gcc-9.2.1 \
         \
         -Wl,--defsym=log_pipe=0xfff00000 \
         -Wl,--defsym=log_pipe_top=0xfff02000 \
-        -Wl,--defsym=app_memory_limit=0x3000000 \
+        -Wl,--defsym=app_memory_limit=0x30000000 \
         -Wl,--defsym=pipes_base=0x80000000 \
-        -Wl,--defsym=pipes_top=0x81000000 \
+        -Wl,--defsym=pipes_top=0xc0000000 \
         -Wl,--defsym=frame_buffers_base=0xc0000000 \
         -Wl,--defsym=frame_buffers_top=0xe0000000 \
         \

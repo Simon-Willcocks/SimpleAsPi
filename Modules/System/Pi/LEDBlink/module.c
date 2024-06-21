@@ -105,12 +105,13 @@ for (int y = 100; y < 200; y++) {
   asm ( "svc 2" : : "r" (str) : "lr" ); // Write0
 #endif
   for (;;) {
-    Task_LogString( "ON ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
+    // Task_LogString( "ON ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
     led_on( pin );
     Task_Sleep( on_time );
-    Task_LogString( "OFF ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
+    // Task_LogString( "OFF ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
     led_off( pin );
     Task_Sleep( off_time );
+    asm ( "swi 0x12a" );
   }
 }
 
@@ -214,21 +215,28 @@ void go()
   Task_LogString( "Entering blink module\n", 0 );
   if (1) {
   register uint32_t pin asm( "r0" ) = 22; // 22 green 27 orange
-  register uint32_t on asm( "r1" ) = 2000;
-  register uint32_t off asm( "r2" ) = 1000;
+  register uint32_t on asm( "r1" ) = 200;
+  register uint32_t off asm( "r2" ) = 100;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
   }
 
   if (1) {
   register uint32_t pin asm( "r0" ) = 27; // 22 green 27 orange
-  register uint32_t on asm( "r1" ) = 950;
-  register uint32_t off asm( "r2" ) = 550;
+  register uint32_t on asm( "r1" ) = 95;
+  register uint32_t off asm( "r2" ) = 55;
   asm ( "svc 0x1040" : : "r" (pin), "r" (on), "r" (off) );
   }
 
   for (;;) {
-    Task_Sleep( 1000 );
-    Task_LogString( "Some time has passed\n", 0 );
+    for (int i = 0;i < 100; i++) {
+      Task_Sleep( 50 );
+      Task_LogString( "Time has passed\n", 0 );
+    }
+    Task_Sleep( 500 );
+    Task_LogString( "A lot of time has passed\n", 0 );
+  }
+  for (;;) {
+    asm ( "bkpt 1" );
   }
 }
 

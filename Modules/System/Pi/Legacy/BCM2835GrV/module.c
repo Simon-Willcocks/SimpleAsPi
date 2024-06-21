@@ -90,8 +90,6 @@ void open_display( uint32_t handle, workspace *ws )
 {
   Task_LogString( "Opening BCM2835 display\n", 0 );
 
-  Task_Sleep( 1000 );
-
   register error_block const *error asm ( "r0" );
   asm volatile (
       "svc #0x220c0" // Wait for the display to be mapped at 0xc0000000
@@ -118,15 +116,18 @@ void open_display( uint32_t handle, workspace *ws )
 
 typedef enum { HANDLER_PASS_ON, HANDLER_INTERCEPTED, HANDLER_FAILED } handled;
 
-static void GraphicsV_ReadItems( uint32_t item, uint32_t *buffer, uint32_t len )
+static uint32_t GraphicsV_ReadItem( uint32_t item, uint32_t *buffer, uint32_t len )
 {
+  if (len == 0) return -4;
+
   switch (item) {
   case 4:
     {
-      for (int i = 0; i < len; i++) {
-        WriteS( "GraphicsV control list item: " ); WriteNum( buffer[i] );
+      if (len >= 4) {
+        buffer[0] = -1;
       }
-    asm ( "bkpt %[line]" : : [line] "i" (__LINE__) );
+
+      return len - 4;
     }
     break;
   default:
@@ -206,7 +207,8 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
   case 9:
     WriteS( "Framestore information " ); // Framestore information 	FG 	SVC
     {
-      regs[0] = 0xfbfbfbfb;
+      regs[0] = 0xfb000000; // Should cause a memory fault if it ever gets used
+      // FIXME
       regs[1] = msb[1] * msb[2] * (1 << msb[3]) / 8;
     }
     break;
@@ -235,7 +237,8 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     WriteS( "List pixel formats " );
     break; // List pixel formats 	FG 	SVC
   case 18:
-    GraphicsV_ReadItems( regs[0], (void*) regs[1], regs[2] );
+    regs[2] = GraphicsV_ReadItem( regs[0], (void*) regs[1], regs[2] );
+    regs[4] = 0; // https://www.riscosopen.org/wiki/documentation/show/GraphicsV%2018
     break; // Read info 	FG 	SVC
   case 19:
     WriteS( "Vet mode 2 " );
@@ -276,6 +279,7 @@ static void __attribute__(( naked )) GraphicsV_handler( char c )
   case HANDLER_PASS_ON:
     asm ( "pop {lr}\n  pop { r0-r9, r12 }\n  mov pc, lr" );
     break;
+  default: asm ( "bkpt 3" );
   }
 }
 
@@ -420,14 +424,4 @@ void __attribute__(( naked )) init()
   c_init( private, env, instantiation );
 
   asm ( "pop { pc }" );
-}
-
-void *memcpy(void *d, void *s, uint32_t n)
-{
-  uint8_t const *src = s;
-  uint8_t *dest = d;
-  // Trivial implementation, asm( "" ) ensures it doesn't get optimised
-  // to calling this function!
-  for (int i = 0; i < n; i++) { dest[i] = src[i]; asm( "" ); }
-  return d;
 }

@@ -24,6 +24,7 @@ typedef struct {
   OSPipe *log_pipe;
   OSTaskSlot *currently_mapped;
   OSTask *irq_task;
+  OSTask *interrupted_tasks;
 
   struct {
     uint32_t stack[64];

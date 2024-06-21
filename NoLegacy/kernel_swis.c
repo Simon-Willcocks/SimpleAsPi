@@ -138,6 +138,10 @@ OSTask *execute_swi( svc_registers *regs, int number )
     PANIC; // TODO
   }
 
+  if (0 != (VF & regs->spsr)) {
+    PANIC; // TODO
+  }
+
   return 0;
 }
 

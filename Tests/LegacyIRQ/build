@@ -1,30 +1,19 @@
 #! /bin/bash -
 
-# Parts of the kernel
-SUBSYSTEMS=RawMemory:OSTask:SimpleHeap:NoLegacy:Modules
-# Modules to include (HAL chooses which ones to load.)
-#MODULES=HAL:System/Pi/QA7:System/Pi/LEDBlink:System/LogToScreen
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART
+SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
+MODULES=HAL:System/Pi/QA7:System/Test/SystemVars
+
+#:System/Pi/PL011UART
 
 echo Modules: ${MODULES//:/ }
 
+# Be careful not to include the same module twice!
+# At least until it will be safely coped with.
 INITIAL_MODULES='QA7\0'
-INITIAL_MODULES+='LEDBlink\0'
-INITIAL_MODULES+='GPUMailbox\0'
-INITIAL_MODULES+='BCM2835Display\0'
 
-INITIAL_MODULES+='LogToUART\0'
-#INITIAL_MODULES+='LogToScreen\0'
+DEFAULT_LANGUAGE=SystemVars
 
-DEFAULT_LANGUAGE=LEDBlink
-
-# This is not a foolproof test, but it should catch some foolishness
-for i in ${INITIAL_MODULES/\\0/ } $DEFAULT_LANGUAGE ; do 
-  echo Looking for $i
-  echo ${MODULES//:/ } | grep $i
-done || { echo $i not in build! ; exit 3 ; }
-
-echo $INITIAL_MODULES
+echo Initial modules: ${INITIAL_MODULES//\\0/, }
 echo Default language: $DEFAULT_LANGUAGE
 
 rm -rf Generated
@@ -53,9 +42,51 @@ $GCC -c Processor/CortexA53/processor.c \
         --no-toplevel-reorder \
         $CFLAGS &&
 $OBJCOPY --rename-section .text=.init --rename-section .data=.init processor.o processor.boot &&
-$OBJCOPY --rename-section .text=.init --rename-section .data=.init mmu.o mmu.boot || ( echo Failed >&2 ; exit 1 )
+$OBJCOPY --rename-section .text=.init --rename-section .data=.init mmu.o mmu.boot || { echo Failed to build core routines >&2 ; exit 1; }
 
 echo Sources: ${SOURCES//://*.c }
+
+# legacy_zero_page must match ZeroPage in Sources/Kernel/hdr/KernelWS
+
+# This script expects a complete ROM image in RISCOS.img and Kernel_gpa
+# copied from RiscOS/Sources/Kernel/bin/Kernel_gpa or
+# RiscOS/Install/ROOL/BCM2835/RISC_OS/Kernel_gpa
+# Changing the amount of RAM reserved for the HAL involves many changes in
+# the RISC OS source, and I can't work out what they all are!
+# So, for now, the CKernel modules can come after the rom image.
+#   RiscOS/Export/APCS-32/Hdr/Global/HALSize/?
+#   RiscOS/BuildSys/Components/ROOL/BCM2835
+
+# Position taken from RISCOS.log is the first word of the module, the
+# length is in the previous word
+
+function rom_module {
+  sed -n  's/^\<'$1'\> *\(FC......\) *00.*$/0x\1/p' RISCOS.log
+}
+
+function rom_object {
+  sed -n  's/^\<'$1'\> *\(........\)\.\.FC.*$/0x\1/p' Kernel_gpa
+}
+
+KERNEL_START=$( rom_module Kernel )
+KERNEL_OFFSET=$( echo $KERNEL_START | sed -n 's/^0xFC0*//p' )
+
+function symbol {
+  echo -Wl,--defsym=$1=$( rom_object $1 ) 
+}
+
+FIRST=$( printf 0x%x $(( $( rom_object UtilityMod ) - 4 )) )
+
+LEGACIES="-Wl,--defsym=LegacyModulesList=$FIRST"
+LEGACIES+=" "$( symbol JTABLE )
+LEGACIES+=" "$( symbol defaultvectab )
+
+LEGACIES+=" "$( symbol VduInit )
+
+LEGACIES+=" "$( symbol HardFont )
+
+echo $LEGACIES
+echo $KERNEL_START, $KERNEL_OFFSET
 
 # Cleared after the first (HAL) module built
 HALFLAGS="-DINITIAL_MODULES="\"$INITIAL_MODULES\"" -DDEFAULT_LANGUAGE=\"$DEFAULT_LANGUAGE\" " &&
@@ -84,8 +115,6 @@ echo 'char const modcflags[] = "Build module flags: '"$MODCFLAGS"'";' >> Generat
 
 echo Modules built &&
 
-grep -r _GLOBAL_OFFSET_TABLE_ Generated/*.dump && echo Problem || true &&
-
 echo SWI chunks: &&
 
 for i in Generated/*,ffa 
@@ -102,18 +131,40 @@ do
   od -j 28 -N 4 -t x4 -A none $i 
 done | sort | uniq -c | grep -v -e '00000000$' -e '\<1\>' && exit 2
 
-echo
+### IMPORTANT
+# The following dd, the location of .romimage in the linker parameters and
+# the line "Kernel -at 0x..." in RiscOS/BuildSys/Components/ROOL/* must
+# match up. This script takes its cue from the Kernel_gpa, so only the
+# RiscOS/BuildSys/Components/ROOL/ file needs to be changed.
+###
+
+# RMA (shared_heap) starts at AplWorkMaxSize, 512MiB, but no obvious symbol
+# to extract from build.
+
+dd if=RISCOS.img of=/tmp/RISCOS.used bs=$(( 0x$KERNEL_OFFSET )) skip=1 &&
+$OBJCOPY -I binary -O elf32-littlearm -B armv7 \
+        --redefine-sym _binary__tmp_RISCOS_used_start=_romimage_start \
+        --redefine-sym _binary__tmp_RISCOS_used_size=_romimage_size \
+        --rename-section .data=.romimage \
+        /tmp/RISCOS.used RISCOS.o &&
+
+echo Running sanity check
+strings RISCOS.img -t x | grep OSIm | grep $KERNEL_OFFSET || exit 1
+echo Seems alright
 
 # 16MiB boot RAM
 # 256MiB minimum RAM
 arm-none-eabi-gcc-9.2.1 \
         processor.boot mmu.boot \
         ${SOURCES//://*.c } \
+        RISCOS.o \
         -o kernel7.elf \
         $CFLAGS \
         $LEGACIES \
         -I Generated Generated/*.o \
         romimage_end.c \
+        -Wl,--defsym=legacy_svc_stack_top=0xfa208000 \
+        -Wl,--defsym=legacy_zero_page=0xfff40000 \
         \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
         -Wl,--defsym=top_of_minimum_RAM=0x10000000 \
@@ -127,16 +178,16 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=VMSAv6_Level2_Tables=0xff300000 \
         -Wl,--defsym=system_heap_base=0x30000000 \
         -Wl,--defsym=system_heap_top=0x30100000 \
-        -Wl,--defsym=shared_heap_base=0xff500000 \
-        -Wl,--defsym=shared_heap_top=0xff600000 \
+        -Wl,--defsym=shared_heap_base=0x20000000 \
+        -Wl,--defsym=shared_heap_top=0x20100000 \
         \
         -Wl,--defsym=log_pipe=0xfff00000 \
         -Wl,--defsym=log_pipe_top=0xfff02000 \
-        -Wl,--defsym=app_memory_limit=0x3000000 \
+        -Wl,--defsym=app_memory_limit=0x20000000 \
+        -Wl,--defsym=dynamic_areas_base=0x40000000 \
+        -Wl,--defsym=dynamic_areas_top=0x50000000 \
         -Wl,--defsym=pipes_base=0x80000000 \
-        -Wl,--defsym=pipes_top=0x81000000 \
-        -Wl,--defsym=frame_buffers_base=0xc0000000 \
-        -Wl,--defsym=frame_buffers_top=0xe0000000 \
+        -Wl,--defsym=pipes_top=0xc0000000 \
         \
         -Wl,--defsym=translation_table=0xfff80000 \
         -Wl,--defsym=global_translation_table=0xfff84000 \
@@ -146,8 +197,12 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=shared=0xfffe0000 \
         -Wl,--section-start=.init=0xfc000000 \
         -Wl,--section-start=.text=0xfc003000 \
+        -Wl,--section-start=.romimage=$KERNEL_START \
         &&
 arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&
+echo Running sanity check 2 &&
+strings kernel7.img -t x | grep OSIm | grep $KERNEL_OFFSET &&
+echo Seems alright &&
 
 echo Image built, disassembling &&
 time arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump

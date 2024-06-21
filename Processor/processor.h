@@ -65,10 +65,6 @@ uint32_t number_of_cores();
 
 #define PANIC do { asm ( "bkpt %[line]\n wfi" : : [line] "i" (__LINE__) ); for (;;) {} } while (true)
 
-// TODO:
-// push writes to RAM (va range)
-// RAM may have changed (va range) - invalidate cache
-
 void push_writes_out_of_cache( uint32_t va, uint32_t size );
 
 void RAM_may_have_changed( uint32_t va, uint32_t size );
