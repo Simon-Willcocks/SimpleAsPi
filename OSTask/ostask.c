@@ -1196,13 +1196,11 @@ void __attribute__(( noreturn )) execute_svc( svc_registers *regs )
    && workspace.ostask.running != workspace.ostask.idle) PANIC;
 
   if (resume != 0) {
-    if (0 == (resume->regs.spsr & 15)) {
-      asm ( "msr sp_usr, %[sp]"
-        "\n  msr lr_usr, %[lr]"
-          :
-          : [sp] "r" (resume->banked_sp_usr)
-          , [lr] "r" (resume->banked_lr_usr) );
-    }
+    asm ( "msr sp_usr, %[sp]"
+      "\n  msr lr_usr, %[lr]"
+        :
+        : [sp] "r" (resume->banked_sp_usr)
+        , [lr] "r" (resume->banked_lr_usr) );
 
     map_slot( resume->slot );
   }
@@ -1623,7 +1621,7 @@ void __attribute__(( naked )) prefetch_handler()
 
   asm volatile (
     "\n.ifne .-prefetch_handler"
-    "\n  .error \"prefetch_handler compiled code includes instructions before srsdb\""
+    "\n  .error \"prefetch_handler check generated code\""
     "\n.endif"
     "\n  srsdb sp!, #0x17 // Store fail address and SPSR (Abt mode)"
   );
