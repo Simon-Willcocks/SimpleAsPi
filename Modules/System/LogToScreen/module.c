@@ -49,7 +49,7 @@ NO_messages_file;
 const char title[] = "LogToScreen";
 const char help[] = "LogToScreen\t0.01 (" CREATION_DATE ")";
 
-UART volatile *const uart  = (void*) 0x4000;
+UART volatile *const uart  = (void*) 0x1000;
 
 static inline void push_writes_to_device()
 {

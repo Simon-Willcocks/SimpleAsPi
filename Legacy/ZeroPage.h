@@ -792,7 +792,7 @@ typedef struct {
       uint32_t Proc_DMB_Write;
       uint32_t Proc_DMB_Read;
       uint32_t Proc_IMB_Full;
-      uint32_t Proc_IMB_Range;
+      void *Proc_IMB_Range;
       uint32_t Proc_IMB_List;
       uint32_t Proc_MMU_Changing;
       uint32_t Proc_MMU_ChangingEntry;

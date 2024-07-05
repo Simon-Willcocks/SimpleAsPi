@@ -43,7 +43,7 @@ NO_messages_file;
 const char title[] = "Echo";
 const char help[] = "Echo serial\t0.01 (" CREATION_DATE ")";
 
-UART volatile *const uart  = (void*) 0x7000;
+UART volatile *const uart  = (void*) 0x1000;
 
 static inline void push_writes_to_device()
 {

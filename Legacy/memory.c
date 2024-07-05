@@ -21,6 +21,8 @@
 
 #include "ostaskops.h"
 
+DEFINE_ERROR( UnknownDA, 0x105, "Unknown dynamic area" );
+
 // This should probably mostly be farmed out to a memory manager module...
 
 // To start with, ignore most things and simply allocate the maximum size
@@ -45,13 +47,14 @@ static dynamic_area *find_da( uint32_t num )
          da->next != shared.legacy.dynamic_areas)
     da = da->next;
 
-  if (da->number != num) PANIC;
+  if (da->number != num) return 0;
 
   return da;
 }
 
 void do_OS_ReadDynamicArea( svc_registers *regs )
 {
+  bool return_max = regs->r[0] >= 128;
   uint32_t max = 0;
   uint32_t number = regs->r[0];
   if (number < 256 && number >= 128) number -= 128;
@@ -97,13 +100,14 @@ void do_OS_ReadDynamicArea( svc_registers *regs )
         regs->r[1] = da->current_size;
       }
       else {
-        asm ( "bkpt 6" ); // TODO appropriate error message
+        Error_UnknownDA( regs );
+        return;
       }
     }
     break;
   }
 
-  if (0 != (regs->r[0] & 0x80)) {
+  if (return_max) {
     regs->r[2] = max;
   }
 }
@@ -153,6 +157,11 @@ void do_OS_DynamicArea( svc_registers *regs )
       regs->r[3] = new_da->va_start;
 
       uint32_t pages = (0xfff + regs->r[5]) >> 12;
+      if (pages > 0x400) {
+        pages = 0x400;
+        Task_LogString( "Limiting DA size\n", 0 );
+      } // 4 MiB FIXME
+
       memory_mapping map = {
         .base_page = claim_contiguous_memory( pages ),
         .pages = pages,
@@ -182,6 +191,23 @@ void do_OS_DynamicArea( svc_registers *regs )
       }
       else
         PANIC;
+    }
+    break;
+  case Enumerate:
+    {
+      dynamic_area *da;
+      if (regs->r[1] == -1) {
+        da = shared.legacy.dynamic_areas;
+      }
+      else {
+        da = find_da( regs->r[1] );
+      }
+      if (da->next == shared.legacy.dynamic_areas) {
+        regs->r[1] = -1;
+      }
+      else {
+        regs->r[1] = da->next->number;
+      }
     }
     break;
   case 27: // Tested by WindowManager

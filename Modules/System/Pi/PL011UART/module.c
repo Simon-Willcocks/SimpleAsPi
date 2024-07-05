@@ -48,8 +48,8 @@ NO_messages_file;
 const char title[] = "PL011UART";
 const char help[] = "PL011UART\t0.01 (" CREATION_DATE ")";
 
-// TEMPORARY GPIO stuff is at 0x6000
-UART volatile *const uart  = (void*) 0x4000;
+// TEMPORARY GPIO stuff is at 0x2000
+UART volatile *const uart  = (void*) 0x1000;
 
 // Hopefully no stack at all...
 __attribute__(( optimize( "O4" ), naked, noreturn ))
@@ -91,7 +91,7 @@ void send_to_uart( char const *string, uint32_t length )
 //  Set their state to Alt0
 #include "Devices/bcm_gpio.h"
 
-GPIO volatile *const gpio  = (void*) 0x6000;
+GPIO volatile *const gpio  = (void*) 0x2000;
 
 static inline void setup_pins()
 {

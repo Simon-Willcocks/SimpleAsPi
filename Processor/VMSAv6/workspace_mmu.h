@@ -22,5 +22,6 @@ typedef struct {
   uint32_t lock;
   l2tt *free;
   uint32_t l2tables_phys_base; // page index
+  uint32_t legacy_scratch_space; // TOTALLY IN THE WRONG PLACE, but I want something to work!
 } shared_mmu;
 

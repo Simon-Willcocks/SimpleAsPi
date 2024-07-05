@@ -16,6 +16,16 @@
 #include "ostask.h"
 #include "kernel_swis.h"
 
+static inline void clear_VF()
+{
+  asm ( "msr cpsr_f, #0" );
+}
+
+static inline void set_VF()
+{
+  asm ( "msr cpsr_f, #(1 << 28)" );
+}
+
 typedef struct module_header module_header;
 
 typedef struct {
@@ -25,9 +35,11 @@ typedef struct {
 
 #include "rom_modules.h"
 
+#define NO_COMMAND 0x124
 DEFINE_ERROR( ModuleNotFound, 0x888, "Module not found" );
 DEFINE_ERROR( NoRoomInRMA, 0x888, "No room in RMA" );
 DEFINE_ERROR( NoStart, 0x888, "Module not startable" );
+DEFINE_ERROR( NoCommand, NO_COMMAND, "No module command found" );
 DECLARE_ERROR( UnknownSWI );
 
 extern uint32_t const LegacyModulesList;
@@ -142,6 +154,11 @@ static inline const char *title_string( module_header *header )
 static inline void *service_call_handler( module_header *h )
 {
   return pointer_at_offset_from( h, h->offset_to_service_call_handler );
+}
+
+static inline void *module_commands( module_header *h )
+{
+  return pointer_at_offset_from( h, h->offset_to_help_and_command_keyword_table );
 }
 
 // Case insensitive, nul, cr, lf, space, or % terminates.
@@ -455,14 +472,17 @@ module_header *find_named_module( char const *name )
   header = find_module_in_rom( name );
   if (header == 0) {
     header = find_module_in_list( name, &LegacyModulesList );
-    if (header == 0) {
-      Task_LogString( "Module ", 0 );
-      Task_LogString( name, 0 );
-      Task_LogString( " not found\n", 0 );
-    }
   }
 
-  if (header == 0) PANIC; // Not found in ROM
+#ifdef DEBUG__SHOW_MODULE_INIT
+  if (header == 0) {
+    Task_LogString( "Module ", 7 );
+    char const *e = name;
+    while (*e > ' ') e++;
+    Task_LogString( name, e - name );
+    Task_LogString( " not found\n", 11 );
+  }
+#endif
 
   return header;
 }
@@ -476,9 +496,10 @@ module_header *load_named_module( char const *name )
 
   module_header *header = find_named_module( module_name );
 
-  if (header == 0) PANIC;
+  if (header == 0) {
+    // TODO: Load the module from a file system
 
-  // TODO: Load the module from a file system
+  }
 
   return header;
 }
@@ -498,6 +519,13 @@ module *find_initialised_module( char const *name )
 
 error_block *load_and_initialise( char const *name )
 {
+#ifdef DEBUG__SHOW_MODULE_INIT
+  Task_LogString( "Module ", 7 );
+  char const *e = name;
+  while (*e > ' ') e++;
+  Task_LogString( name, e - name );
+  Task_LogString( " init\n", 6 );
+#endif
   module_header *header = load_named_module( name );
   if (header == 0) {
     svc_registers tmp;
@@ -575,30 +603,381 @@ OSTask *do_OS_ServiceCall( svc_registers *regs )
   return 0;
 }
 
-static uint32_t osmodule24( uint32_t size, uint32_t align )
-{
-  extern uint8_t shared_heap_base;
-  extern uint8_t shared_heap_top;
+extern OSTask *legacy_do_OS_Module( svc_registers *regs );
 
-  register uint32_t command asm ( "r0" ) = 7;
-  register void *heap asm ( "r1" ) = &shared_heap_base;
-  register uint32_t alignment asm ( "r2" ) = align;
-  register uint32_t bytes asm ( "r3" ) = size;
-  register uint32_t mem asm ( "r2" );      // OUT
-  asm ( "svc %[swi]"
-    : "=r" (mem)
-    : [swi] "i" (OS_Heap), "r" (command), "r" (heap), "r" (bytes)
-    , "r" (alignment)
-    : "lr", "cc" );
-  return mem;
+#ifdef DEBUG__SHOW_LEGACY_MODULES
+void show_legacy_modules()
+{
+  uint32_t const *list = &LegacyModulesList;
+
+  Task_LogString( "Legacy modules\n", 14 );
+
+  module_header *header = 0;
+  uint32_t const *entry = list;
+  while (*entry != 0) {
+    header = (void*) (entry + 1);
+
+    Task_LogString( title_string( header ), 0 );
+    Task_LogNewLine();
+
+    entry += (*entry / sizeof( uint32_t ));
+  }
+}
+#endif
+
+// The legacy kernel no longer has control of the initialised modules
+// list, so commands provided by modules have to be run from here, but
+// I think I can leave the handling of executable files to the legacy
+// kernel by passing on the vector call.
+// There will be a small performance hit from de-aliasing commands in
+// two places.
+// This will also handle spawning commands using the Spawn command,
+// alias & (TODO)
+
+// This vector will only be called owning the legacy stack....
+// Illicit knowledge?
+// At least we know that the value of the Alias variable will not change
+// before we call some external code.
+
+typedef enum { HANDLER_PASS_ON, HANDLER_INTERCEPTED, HANDLER_FAILED } handled;
+
+typedef struct {
+  char const *command;
+  char const *tail;
+} command_parts;
+
+static command_parts split_command( char const *cmd )
+{
+  command_parts result;
+
+  result.command = cmd;
+  while (*result.command == ' '
+     ||  *result.command == '*') result.command++;
+  result.tail = result.command;
+  while (*result.tail > ' ') result.tail++;
+  while (*result.tail == ' ') result.tail++;
+
+  return result;
 }
 
-extern OSTask *legacy_do_OS_Module( svc_registers *regs );
+// Case insensitive, nul, cr, lf, or space terminate
+static inline bool riscoscmp( char const *left, char const *right )
+{
+  int diff = 0;
+
+  while (diff == 0) {
+    char l = *left++;
+    char r = *right++;
+
+    if ((l == 0 || l == 10 || l == 13 || l == ' ')
+     && (r == 0 || r == 10 || r == 13 || r == ' ')) return true;
+
+    diff = l - r;
+    if (diff == 'a'-'A') {
+      if (l >= 'a' && l <= 'z') diff = 0;
+    }
+    else if (diff == 'A'-'a') {
+      if (r >= 'a' && r <= 'z') diff = 0;
+    }
+  }
+
+  return false;
+}
+
+typedef struct __attribute__(( packed, aligned( 4 ) )) {
+  uint32_t code_offset;
+  struct {
+    uint8_t min_params;
+    uint8_t gstrans;
+    uint8_t max_params;
+    uint8_t flags;
+  } info;
+  uint32_t invalid_syntax_offset;
+  uint32_t help_offset;
+} module_command;
+
+typedef struct {
+  module *module;
+  module_command *command;
+} module_code;
+
+static int strlen( char const *s )
+{
+  char const *p = s;
+  while ('\0' < *p) { p++; }
+  return p - s;
+}
+
+static module_code find_module_command( char const *command )
+{
+  module *m = shared.module.modules;
+
+  while (m != 0) {
+    module_header *header = m->header;
+
+    const char *cmd = module_commands( header );
+
+    if (cmd != 0) {
+      while (cmd[0] != '\0') {
+        int len = strlen( cmd );
+
+        module_command *c = (void*) (((uint32_t) cmd + len + 4)&~3);
+        // +4 because len is strlen, not including terminator
+
+        if (riscoscmp( cmd, command ) && c->code_offset != 0) {
+          module_code result = { m, c };
+
+          return result;
+        }
+
+        cmd = (char const *) (c + 1);
+      }
+    }
+
+    m = m->next;
+  }
+
+  module_code no_match = { 0, 0 };
+  return no_match;
+}
+
+static inline bool terminator( char c )
+{
+  return c == '\0' || c == '\r' || c == '\n';
+}
+
+static uint32_t count_params( char const *params )
+{
+  uint32_t result = 0;
+  char const *p = params;
+
+  while (*p == ' ') p++;
+
+  while (!terminator( *p )) {
+
+    result ++;
+
+    while (!terminator( *p ) && *p != ' ') {
+      if ('"' == *p) {
+        do {
+          p ++;
+        } while (!terminator( *p ) && *p != '"');
+        if (terminator( *p )) return -1; // Mistake
+        // Otherwise p points to closing quote...
+      }
+      p++;
+    }
+
+    while (*p == ' ') p++;
+  }
+
+  return result;
+}
+
+static error_block *run_command( module *m, uint32_t code_offset, const char *tail, uint32_t count )
+{
+  register uint32_t non_kernel_code asm( "r14" ) = code_offset + (uint32_t) m->header;
+  register uint32_t private_word asm( "r12" ) = m->private_word;
+  register const char *p asm( "r0" ) = tail;
+  register uint32_t c asm( "r1" ) = count;
+
+  register error_block *error asm( "r0" );
+
+  asm volatile (
+      "\n  blx r14"
+      : "=r" (error)
+      : "r" (p)
+      , "r" (c)
+      , "r" (non_kernel_code)
+      , "r" (private_word)
+      : "r2", "r3", "r4", "r5", "r6" );
+
+  return error;
+}
+
+static error_block *run_module_code( module_code code, char const *tail )
+{
+  while (*tail == ' ') tail++;
+  uint32_t count = count_params( tail );
+  module_command const *c = code.command;
+  module *m = code.module;
+
+  if (count < c->info.min_params || count > c->info.max_params) {
+    static error_block error = { 666, "Invalid number of parameters" };
+    // TODO Service_SyntaxError
+    return &error;
+  }
+  else if (count == -1) {
+    static error_block mistake = { 4, "Mistake" };
+    return &mistake;
+  }
+
+  if (c->info.gstrans != 0 && count > 0) {
+    // Need to copy the command, running GSTrans on some parameters
+    asm ( "bkpt 1" );
+  }
+
+  return run_command( m, c->code_offset, tail, count );
+}
+
+// FIXME: Deal with Set Alias$A B ; Set Alias$B A?
+__attribute__(( noinline ))
+handled run_aliased_command( uint32_t *regs )
+{
+  command_parts parts = split_command( (void*) regs[0] );
+  char const *cmd = parts.command;
+  char const *tail = parts.tail;
+
+  char const Alias[] = "Alias$";
+  int varsize = sizeof( Alias ); // Includes terminator
+  char const *name = cmd;
+  while (*name > ' ') {
+    varsize++;
+    if (*name == ':' || *name == '.') return false;
+    name++;
+  }
+  char varname[varsize];
+  char const *s = Alias;
+  char *d = varname;
+  while (*s > ' ') *d++ = *s++;
+  char const *cmd0 = d;
+  s = cmd;
+  while (*s > ' ') *d++ = *s++;
+  *d = '\0';
+
+  module_code code = { 0, 0 };
+
+  uint32_t space = 0;
+
+  {
+    register char const *name asm ( "r0" ) = varname;
+    // r1 ignored because r2 -ve
+    register int32_t asksize asm ( "r2" ) = -1;
+    register uint32_t context asm ( "r3" ) = 0;
+    register uint32_t convert asm ( "r4" ) = 0; // No conversion
+    register int32_t size asm ( "r2" );
+    register uint32_t type asm ( "r4" );
+    asm ( "svc %[swi]"
+        : "=r" (size)
+        , "=r" (type)
+        , "=r" (context)
+        : [swi] "i" (OS_ReadVarVal)
+        , "r" (name)
+        , "r" (asksize)
+        , "r" (context)
+        , "r" (convert)
+        : "lr" );
+
+    if (size != 0) {
+      space = !size;
+    }
+  }
+
+  if (space != 0) {
+    char alias[space+1];
+
+    register char const *name asm ( "r0" ) = varname;
+    register char const *buffer asm ( "r1" ) = alias;
+    register int32_t asksize asm ( "r2" ) = space;
+    register uint32_t context asm ( "r3" ) = 0;
+    register uint32_t convert asm ( "r4" ) = 0; // No conversion
+    register int32_t size asm ( "r2" );
+    register uint32_t type asm ( "r4" );
+    asm ( "svc %[swi]"
+        : "=r" (size)
+        , "=r" (type)
+        , "=r" (context)
+        : [swi] "i" (OS_ReadVarVal)
+        , "r" (name)
+        , "r" (buffer)
+        , "r" (asksize)
+        , "r" (context)
+        , "r" (convert)
+        : "lr", "memory" );
+
+    if (size != space) PANIC;
+
+    alias[space] = '\0'; // ReadVarVal doesn't terminate output
+
+    code = find_module_command( alias );
+  }
+  else {
+    code = find_module_command( cmd0 );
+  }
+
+  if (code.module == 0) {
+    clear_VF();
+    return HANDLER_PASS_ON;
+  }
+
+  error_block *error = run_module_code( code, tail );
+
+  if (error != 0) {
+    regs[0] = (uint32_t) error;
+    return HANDLER_FAILED;
+  }
+
+  return HANDLER_INTERCEPTED;
+}
+
+
+__attribute__(( naked ))
+void run_module_command()
+{
+  // The code will be called in SVC mode.
+  uint32_t *regs;
+
+  asm ( "push { r0-r9, r12 }\n  mov %[regs], sp" : [regs] "=r" (regs) );
+  asm ( "push {lr}" ); // Normal return address, to continue down the list
+
+  handled result = run_aliased_command( regs );
+  switch (result) {
+  case HANDLER_FAILED: // Intercepted, but failed
+  case HANDLER_INTERCEPTED:
+    if (result == HANDLER_FAILED)
+      set_VF();
+    else
+      clear_VF();
+    asm ( "pop {lr}\n  pop { r0-r9, r12, pc }" );
+    break;
+  case HANDLER_PASS_ON:
+    asm ( "pop {lr}\n  pop { r0-r9, r12 }\n  mov pc, lr" );
+    break;
+  default: PANIC;
+  }
+}
+
+void claim_CLIV()
+{
+#ifdef DEBUG__SHOW_LEGACY_MODULES
+  show_legacy_modules();
+#endif
+  register uint32_t vector asm( "r0" ) = 5;
+  register void *routine asm( "r1" ) = run_module_command;
+  //register struct workspace *handler_workspace asm( "r2" ) = ws;
+  // Always provide the same "workspace", so repeated claims
+  // replace the previous.
+  register uint32_t handler_workspace asm( "r2" ) = 0x83838383;
+  asm ( "svc %[swi]"
+      :
+      : [swi] "i" (OS_Claim | Xbit)
+      , "r" (vector)
+      , "r" (routine)
+      , "r" (handler_workspace)
+      : "lr" );
+}
 
 OSTask *do_OS_Module( svc_registers *regs )
 {
   error_block *error = 0;
   char const *const name = (void*) regs->r[1];
+
+  if (shared.module.modules == 0) {
+    // Even if the load_and_initialise doesn't modify 
+    // shared.module.modules, a subsequent claim will simply
+    // replace the previous.
+    claim_CLIV();
+  }
 
   switch (regs->r[0]) {
   case 0: // RMRun
@@ -626,9 +1005,18 @@ OSTask *do_OS_Module( svc_registers *regs )
   case 1: // RMLoad
     error = load_and_initialise( name );
     break;
-  case 18: // Extract module information
+  case 18: // Extract module information ("Look-up module name")
+    // Called from legacy RMEnsure
     {
       char const *name = (void*) regs->r[1];
+
+#ifdef DEBUG__SHOW_MODULE_INIT
+  Task_LogString( "Lookup module ", 14 );
+  char const *e = name;
+  while (*e > ' ') e++;
+  Task_LogString( name, e - name );
+  Task_LogNewLine();
+#endif
 
       if (module_name_match( name, "UtilityModule" )) {
         // Special case, used by Wimp
@@ -649,9 +1037,15 @@ OSTask *do_OS_Module( svc_registers *regs )
 
       module *m = find_initialised_module( name );
       if (m == 0) {
+#ifdef DEBUG__SHOW_MODULE_INIT
+  Task_LogString( "Not found\n", 10 );
+#endif
         return Error_ModuleNotFound( regs );
       }
       else {
+#ifdef DEBUG__SHOW_MODULE_INIT
+  Task_LogString( "Module found\n", 13 );
+#endif
         uint32_t n = 0;
         module *p = shared.module.modules;
         while (p != m) { n++; p = p->next; }
@@ -673,7 +1067,11 @@ OSTask *do_OS_Module( svc_registers *regs )
   }
 
   if (error != 0) {
-    PANIC;
+#ifdef DEBUG__SHOW_MODULE_INIT
+    Task_LogString( "Module init ERROR: ", 19 );
+    Task_LogString( error->desc, 0 );
+    Task_LogNewLine();
+#endif
     regs->spsr |= VF;
     regs->r[0] = (uint32_t) error;
   }

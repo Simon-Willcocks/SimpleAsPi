@@ -35,7 +35,7 @@ void __attribute__(( naked, noreturn )) gpio_task( uint32_t handle,
   __builtin_unreachable();
 }
 
-static uint32_t const gpio_va = 0x7000;
+static uint32_t const gpio_va = 0x1000;
 GPIO volatile *const gpio = (void*) gpio_va;
 extern struct {
   struct group {

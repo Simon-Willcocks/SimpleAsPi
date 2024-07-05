@@ -152,6 +152,7 @@ void open_display( uint32_t handle, workspace *ws )
   Task_LogHex( *frame_buffer );
   Task_LogString( ", size ", 0 );
   Task_LogHex( *frame_buffer_size );
+  Task_LogNewLine();
 
   // Correct for something... Returns an address between 0xc0000000
   // and 0xd0000000, but needs to be accessed with lower physical

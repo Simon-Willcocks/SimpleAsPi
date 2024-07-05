@@ -56,7 +56,7 @@ static inline void push_writes_to_device()
 
 static uint32_t const gpu_page = 0x3f00b;
 
-static GPU volatile *const gpu = (void*) 0x7000;
+static GPU volatile *const gpu = (void*) 0x1000;
 
 typedef struct {
   uint32_t task;

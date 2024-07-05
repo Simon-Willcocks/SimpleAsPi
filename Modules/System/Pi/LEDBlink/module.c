@@ -43,9 +43,7 @@ NO_messages_file;
 const char title[] = "LEDBlink";
 const char help[] = "BCM Blink LED\t0.01 (" CREATION_DATE ")";
 
-// For consistency, this should be 7000 (work our way down from 0x8000,
-// a page at a time), but for debugging...
-GPIO volatile *const gpio = (void*) 0x6000;
+GPIO volatile *const gpio = (void*) 0x1000;
 
 static inline void push_writes_to_device()
 {
@@ -105,13 +103,13 @@ for (int y = 100; y < 200; y++) {
   asm ( "svc 2" : : "r" (str) : "lr" ); // Write0
 #endif
   for (;;) {
-    // Task_LogString( "ON ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
+    Task_LogString( "ON ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
     led_on( pin );
     Task_Sleep( on_time );
-    // Task_LogString( "OFF ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
+    Task_LogString( "OFF ", 0 ); Task_LogSmallNumber( pin ); Task_LogNewLine();
     led_off( pin );
     Task_Sleep( off_time );
-    asm ( "swi 0x12a" );
+    asm ( "swi 0x12a" ); // '*'
   }
 }
 
@@ -210,9 +208,26 @@ void __attribute__(( naked )) init()
   asm ( "pop { pc }" );
 }
 
+static void inline XOS_Byte( int n, int v )
+{
+  register uint32_t num asm ( "r0" ) = n;
+  register uint32_t val asm ( "r1" ) = v;
+  asm volatile (
+        "svc %[swi]"
+        :
+        : [swi] "i" (0x20000 | OS_Byte)
+        , "r" (num)
+        , "r" (val)
+        : "memory", "r2" );
+}
+
 void go()
 {
   Task_LogString( "Entering blink module\n", 0 );
+
+    asm ( "swi 0x10c" ); // CLS
+    asm ( "swi 0x110" ); // CLG
+    asm ( "swi 0x12a" ); // '*'
   if (1) {
   register uint32_t pin asm( "r0" ) = 22; // 22 green 27 orange
   register uint32_t on asm( "r1" ) = 200;

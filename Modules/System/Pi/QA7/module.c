@@ -83,8 +83,8 @@ NO_messages_file;
 const char title[] = "QA7";
 const char help[] = "BCM QA7\t\t0.01 (" CREATION_DATE ")";
 
-static QA7 volatile *const qa7 = (void*) 0x7000;
-static GPU volatile *const gpu = (void*) 0x6000;
+static QA7 volatile *const qa7 = (void*) 0x1000;
+static GPU volatile *const gpu = (void*) 0x2000;
 
 static inline void push_writes_to_device()
 {
@@ -419,14 +419,21 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
       (1 << 29) | // Interrupt enable
       (1 << 28) | // Timer enable
 
+#ifndef QEMU
+#ifndef QEMU_SLOW
+#ifndef QEMU_FAST
+      38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
+#endif
+#endif
+#endif
 #ifdef QEMU
-#ifdef QEMU_SLOW
-      38400000; // 19.2 MHz clock, 38.4 MHz ticks, 1s ticks, for qemu with cpu tracing
-#else
       3840000; // 19.2 MHz clock, 38.4 MHz ticks, 100 ms ticks for qemu
 #endif
-#else
-      38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
+#ifdef QEMU_SLOW
+      38400000; // 19.2 MHz clock, 38.4 MHz ticks, 1s ticks, for qemu with cpu tracing
+#endif
+#ifdef QEMU_FAST
+      384000; // 19.2 MHz clock, 38.4 MHz ticks, 10ms ticks, for qemu with int tracing on fast hardware
 #endif
 #endif
 

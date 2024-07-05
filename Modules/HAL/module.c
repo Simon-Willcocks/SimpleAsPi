@@ -97,8 +97,13 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
 
   Task_Yield();
 
-  char const entering[] = "Entering default language: " DEFAULT_LANGUAGE "\n";
+  char const entering[] = "Entering default language: " DEFAULT_LANGUAGE " in ";
   Task_LogString( entering, sizeof( entering ) - 1 );
+  for (int i = 10; i > 0; i--) {
+    Task_LogSmallNumber( i );
+    Task_LogString( " ", 1 );
+    Task_Sleep( 1000 );
+  }
   register uint32_t enter asm ( "r0" ) = 0; // RMRun
   register char const *module asm ( "r1" ) = "System:Modules."DEFAULT_LANGUAGE;
   register error_block *error asm ( "r0" );

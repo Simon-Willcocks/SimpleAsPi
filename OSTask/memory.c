@@ -217,6 +217,33 @@ void clear_app_virtual_memory_area( OSTaskSlot *old )
   clear_memory_region( (&pipes_base - (uint8_t*) 0), 
                        (&pipes_top - &pipes_base) >> 12, ask_slot );
   // Obviously only change the minimum required! FIXME
+
+  // The scratch space is a pain in the ass. The RO code really doesn't
+  // want it moved.
+
+  uint32_t volatile *p = &shared.mmu.legacy_scratch_space;
+  if (2 > *p) {
+    if (0 == change_word_if_equal( p, 0, 1 )) {
+      *p = claim_contiguous_memory( 4 );
+      if (*p == 0) PANIC;
+    }
+    else {
+      while (*p == 1) {}
+    }
+  }
+
+  memory_mapping map = {
+    .base_page = shared.mmu.legacy_scratch_space,
+    .pages = 4,
+    .va = 0x4000,
+    .type = CK_MemoryRWX,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 0 };
+
+  map.not_shared = 0; // Set to one if only one task in this slot FIXME
+
+  map_memory( &map );
 }
 
 void map_first_slot()

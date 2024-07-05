@@ -52,7 +52,7 @@ NO_messages_file;
 const char title[] = "LogToUART";
 const char help[] = "LogToUART\t0.01 (" CREATION_DATE ")";
 
-UART volatile *const uart  = (void*) 0x4000;
+UART volatile *const uart  = (void*) 0x1000;
 
 static inline void push_writes_to_device()
 {
@@ -179,7 +179,7 @@ void send_to_uart( char const *string, uint32_t length )
 //  Set their state to Alt0
 #include "Devices/bcm_gpio.h"
 
-GPIO volatile *const gpio  = (void*) 0x6000;
+GPIO volatile *const gpio  = (void*) 0x2000;
 
 static inline void setup_pins()
 {

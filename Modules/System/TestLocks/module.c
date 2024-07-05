@@ -47,7 +47,7 @@ NO_messages_file;
 const char title[] = "TestLocks";
 const char help[] = "TestLocks\t0.01 (" CREATION_DATE ")";
 
-UART volatile *const uart  = (void*) 0x7000;
+UART volatile *const uart  = (void*) 0x1000;
 
 static inline void push_writes_to_device()
 {
@@ -59,7 +59,7 @@ static inline void push_writes_to_device()
 //  Set their state to Alt0
 #include "Devices/bcm_gpio.h"
 
-GPIO volatile *const gpio  = (void*) 0x6000;
+GPIO volatile *const gpio  = (void*) 0x2000;
 
 static inline void setup_pins()
 {

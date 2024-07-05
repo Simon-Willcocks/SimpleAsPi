@@ -31,6 +31,7 @@ extern uint8_t system_heap_top;
 extern uint8_t shared_heap_base;
 extern uint8_t shared_heap_top;
 
+extern uint32_t JTABLE[128];
 
 void heap_initialise( void *start, uint32_t size )
 {
@@ -348,6 +349,8 @@ void fill_legacy_zero_page()
   legacy_zero_page.ChocolateMRBlocks = (void*) 0xbadbad01;
   legacy_zero_page.ChocolateMABlocks = (void*) 0xbadbad02;
   legacy_zero_page.ChocolateMSBlocks = (void*) 0xbadbad03;
+
+  legacy_zero_page.OsbyteVars.Shadow = 1; // No shadow modes (0 turns on)
 }
 
 uint32_t ZPOFF_OsbyteVars = ZP_OFF( OsbyteVars );
@@ -423,8 +426,6 @@ static bool in_legacy_stack()
 
 OSTask *legacy_do_OS_Module( svc_registers *regs )
 {
-  extern uint32_t JTABLE[128];
-
   uint32_t entry = JTABLE[OS_Module];
   run_risos_code_implementing_swi( regs, OS_Module, entry );
   return 0;
@@ -454,6 +455,77 @@ OSTask *do_OS_PlatformFeatures( svc_registers *regs )
     regs->r[0] = 0;
     regs->r[1] = 0xbadf00d;
     PANIC;
+  }
+  return 0;
+}
+
+OSTask *do_OS_ReadSysInfo( svc_registers *regs )
+{
+  switch (regs->r[0]) {
+  case 8:
+    regs->r[0] = 11; // New class of platform (CKernel)
+    // Flags will include alignment options, but allow that to be
+    // changed per slot. TODO
+    regs->r[1] = 0;
+    regs->r[2] = 0;
+    break;
+  case 1:
+    {
+      // 32 bpp -> 5 Log2BPP
+      static uint32_t const msb[] = { 1, 1920, 1080, 5, 60, -1 };
+
+      regs->r[0] = (uint32_t) msb;
+      regs->r[1] = 7; // Use MDF
+      regs->r[2] = 0;
+    }
+    break;
+  case 6: // Some values are just plain dangerous
+    {
+      if (regs->r[1] == 0 && regs->r[2] == 18) {
+        // Used by TaskWindow, but it then tries to write to it.
+        // TaskWindow needs replacing.
+        regs->r[2] = (uint32_t) &JTABLE;
+        break;
+      }
+      else if (regs->r[1] == 0 && regs->r[2] == 16) {
+        Task_LogString( "ReadSysInfo 6: top of SVC stack\n", 33 );
+        regs->r[2] = (uint32_t) &legacy_svc_stack_top;
+        // This might be worth a panic!
+        break;
+      }
+      else if (regs->r[1] == 0 && regs->r[2] == 69) {
+        Task_LogString( "ReadSysInfo 6: Address of IRQsema\n", 35 );
+        regs->r[2] = (uint32_t) &legacy_zero_page.IRQsema;
+        break;
+      }
+      else if (regs->r[1] == 0 && regs->r[2] == 70) {
+        Task_LogString( "ReadSysInfo 6: Address of DomainId\n", 36 );
+        regs->r[2] = (uint32_t) &legacy_zero_page.DomainId;
+        break;
+      }
+      else if (regs->r[1] == 0 && regs->r[2] == 79) {
+        Task_LogString( "ReadSysInfo 6: RISCOSLibWord\n", 29 );
+        regs->r[2] = (uint32_t) &legacy_zero_page.RISCOSLibWord;
+        break;
+      }
+      else if (regs->r[1] == 0 && regs->r[2] == 80) {
+        Task_LogString( "ReadSysInfo 6: CLibWord\n", 24 );
+        regs->r[2] = (uint32_t) &legacy_zero_page.CLibWord;
+        break;
+      }
+      else {
+        Task_LogString( "ReadSysInfo 6: ", 15 );
+        Task_LogSmallNumber( regs->r[2] );
+        Task_LogNewLine();
+      }
+    }
+    // drop though
+  default:
+    {
+      uint32_t entry = JTABLE[OS_ReadSysInfo];
+      run_risos_code_implementing_swi( regs, OS_ReadSysInfo, entry );
+      break;
+    }
   }
   return 0;
 }
@@ -562,10 +634,22 @@ OSTask *execute_swi( svc_registers *regs, int number )
     case OS_Memory: do_OS_Memory( legacy_regs ); break;
     case OS_ValidateAddress: do_OS_ValidateAddress( legacy_regs ); break;
     case OS_PlatformFeatures: do_OS_PlatformFeatures( legacy_regs ); break;
-    // case OS_Heap: do_OS_Heap( legacy_regs ); break;
+    case OS_ReadSysInfo: do_OS_ReadSysInfo( legacy_regs ); break;
+
+#ifdef DEBUG__LOG_COMMANDS
+    case OS_CLI:
+      {
+        Task_LogString( "OSCLI: ", 7 );
+        Task_LogString( (char*) regs->r[0], 0 );
+        Task_LogNewLine();
+        uint32_t entry = JTABLE[OS_CLI];
+        run_risos_code_implementing_swi( regs, OS_CLI, entry );
+        break;
+      }
+#endif
+
     default:
       {
-        extern uint32_t JTABLE[128];
         if (swi < 128) {
           uint32_t entry = JTABLE[swi];
           run_risos_code_implementing_swi( legacy_regs, swi, entry );
@@ -589,7 +673,6 @@ OSTask *execute_swi( svc_registers *regs, int number )
 
     if (generate_error && (regs->spsr & VF) != 0) {
       // FIXME: TENTATIVE
-      extern uint32_t JTABLE[128];
       uint32_t entry = JTABLE[OS_CallAVector];
       run_risos_code_implementing_swi( legacy_regs, OS_CallAVector, entry );
     }
@@ -710,8 +793,8 @@ void __attribute__(( naked, noreturn )) ResumeLegacy()
   register uint32_t **legacy_sp asm( "lr" ) = &shared.legacy.sp;
   asm ( "ldr sp, [lr]"
 
-    "\n  push { r0 }"
-    "\n  ldr r0, [sp, #4]"
+    "\n  push { r0 }"           // Now 4 words on the stack
+    "\n  ldr r0, [sp, #4]"      // old_legacy_sp
     "\n  str r0, [lr]"
     "\n  pop { r0, lr }" // Don't care about the lr value, but adds 8 to sp
 
@@ -727,7 +810,7 @@ void interrupting_privileged_code( OSTask *task )
   // We need to be able to get the task back to the state it was in when
   // interrupted, without corrupting anything.
   uint32_t svc_lr;
-  uint32_t old_legacy_sp = shared.legacy.sp;
+  uint32_t old_legacy_sp = (uint32_t) shared.legacy.sp;
   asm ( "mrs %[sp], sp_svc"
     "\n  mrs %[lr], lr_svc"
     "\n  msr sp_svc, %[reset_sp]"

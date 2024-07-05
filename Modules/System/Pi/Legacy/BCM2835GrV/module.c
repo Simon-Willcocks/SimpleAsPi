@@ -113,6 +113,7 @@ void open_display( uint32_t handle, workspace *ws )
 #define WriteS( s ) Task_LogString( s, sizeof( s ) - 1 )
 #define Write0( s ) Task_LogString( s, 0 )
 #define WriteNum( n ) Task_LogHex( n )
+#define Space Task_LogString( " ", 1 )
 
 typedef enum { HANDLER_PASS_ON, HANDLER_INTERCEPTED, HANDLER_FAILED } handled;
 
@@ -133,6 +134,8 @@ static uint32_t GraphicsV_ReadItem( uint32_t item, uint32_t *buffer, uint32_t le
   default:
     asm ( "bkpt %[line]" : : [line] "i" (__LINE__) );
   };
+
+  return 0;
 }
 
 handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct workspace *workspace )
@@ -151,7 +154,7 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     return HANDLER_PASS_ON;
   }
 
-  Write0( "GraphicsV in BCM2835Display " );
+  Write0( "GraphicsV in BCM2835GrV " );
   WriteNum( command.raw );
   Task_LogNewLine();
 
@@ -191,17 +194,12 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     break; // Vet mode 	FG 	SVC
   case 8:  // Features 	FG 	SVC
     {
-      regs[0] = 0x38;
       // No VSyncs, separate frame store, not variable frame store,
-
-#if 0
-      // Framestore address changes on mode change
-      regs[1] = 0x20;
-#else
-      // Framestore address fixed; will get #9 next
-      regs[1] = 0x0;
-#endif
-      regs[2] = 0;
+      regs[0] = 0x38;
+      // Mask of supported pixel formats
+      regs[1] = (1 << 5); // 32bpp RGB (C16M LTBGR)
+      // Display buffer alignment requirement
+      regs[2] = (1 << 20);
     }
     break;
   case 9:
@@ -213,6 +211,9 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     }
     break;
   case 10:
+    WriteNum( regs[0] ); Space; 
+    WriteNum( regs[1] ); Space; 
+    WriteNum( regs[2] ); Space; 
     WriteS( "Write palette entry, ignored for now " );
     break; // Write palette entry 	FG/BG 	SVC/IRQ
   case 11:
@@ -232,6 +233,7 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     break; // Select head 	FG 	SVC
   case 16:
     WriteS( "Select startup mode " );
+    asm ( "bkpt 89" );
     break; // Select startup mode 	FG 	SVC
   case 17:
     WriteS( "List pixel formats " );
@@ -387,6 +389,9 @@ void __attribute__(( noinline )) c_init( workspace **private,
   ws->graphics_driver_id = GraphicsV_RegisterDriver( "BCM28xx" );
 
   {
+    // Note, this looks a little odd. Possibly written this way to
+    // avoid problems with absolute addresses. Possibly not needed!
+    // FIXME
     void *handler = GraphicsV_handler;
     register uint32_t vector asm( "r0" ) = 42;
     register void *routine asm( "r1" ) = handler;

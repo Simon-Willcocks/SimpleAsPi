@@ -33,7 +33,7 @@ void __attribute__(( naked, noreturn )) gpu_task( uint32_t handle,
   __builtin_unreachable();
 }
 
-GPU volatile *const gpu = (void*) 0x7000;
+GPU volatile *const gpu = (void*) 0x1000;
 
 void manage_gpu( uint32_t handle, workspace *ws )
 {

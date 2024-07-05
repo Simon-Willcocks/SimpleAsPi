@@ -28,8 +28,11 @@ static inline void send_char( char c )
 {
   UART volatile * const uart = (void*) 0xfffff000;
 
-  while (UART_TxEmpty != (uart->flags & UART_TxEmpty)) { for (int i = 0; i < 10000; i++) asm ( "" );
-    while (UART_TxEmpty != (uart->flags & UART_TxEmpty)) { for (int i = 0; i < 1000; i++) asm ( "" ); }
+  while (UART_TxEmpty != (uart->flags & UART_TxEmpty)) {
+    for (int i = 0; i < 10000; i++) asm ( "" );
+    while (UART_TxEmpty != (uart->flags & UART_TxEmpty)) {
+      for (int i = 0; i < 1000; i++) asm ( "" );
+    }
   }
 
   uart->data = c;
@@ -242,13 +245,30 @@ void __attribute__(( naked )) undefined_instruction_handler()
       );
 }
 
+// This routine must be called before moving a task away from this
+// core's running task.
+// Exception: the entry to irq_handler performs the same task as this.
+
+// TODO: Storing floating point registers as needed.
 void __attribute__(( noinline )) save_task_state( svc_registers *regs )
 {
-  workspace.ostask.running->regs = *regs;
+  OSTask *running = workspace.ostask.running;
+
+  // I think only tasks directly calling from usr32
+  assert( regs + 1 == (svc_registers *) ((&workspace.svc_stack)+1) );
+
+  running->regs = *regs;
 #ifdef DEBUG__UDF_ON_SAVE_TASK_STATE
   asm ( "udf 3" );
 #endif
-  if (workspace.ostask.running->regs.lr == 0) PANIC;
+  if (running->regs.lr == 0) PANIC;
+
+  if (0 == (regs->spsr & 15)) {
+    asm ( "mrs %[sp], sp_usr"
+      "\n  mrs %[lr], lr_usr"
+        : [sp] "=r" (running->banked_sp_usr)
+        , [lr] "=r" (running->banked_lr_usr) );
+  }
 }
 
 void __attribute__(( naked, optimize( "O4" ) )) unexpected_task_return()
@@ -1171,15 +1191,6 @@ void __attribute__(( noreturn )) execute_svc( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;
 
-  register uint32_t spsr asm( "r9" ) = regs->spsr;
-  if (0 == (regs->spsr & 15)) {
-    asm ( "mrs %[sp], sp_usr"
-      "\n  mrs %[lr], lr_usr"
-        : [sp] "=r" (running->banked_sp_usr)
-        , [lr] "=r" (running->banked_lr_usr) );
-    asm ( "" : : "r" (spsr) );
-  }
-
   uint32_t number = get_svc_number( regs->lr );
   uint32_t swi = (number & ~Xbit); // A bit of RISC OS creeping in!
 
@@ -1287,8 +1298,8 @@ void __attribute__(( naked, noreturn )) irq_handler()
         "\n  ldr lr, [lr]       // setting lr -> running->regs"
         "\n  stm lr!, {r0-r12}  // setting lr -> lr/spsr"
         "\n  pop { r0, r1 }     // Resume address, SPSR"
-        "\n  stm lr!, { r0, r1, sp, lr }^"
-        "\n  sub lr, lr, #17*4 // restores its value"
+        "\n  stm lr, { r0, r1, sp, lr }^"
+        "\n  sub lr, lr, #13*4 // restores its value"
         : "=r" (interrupted)
         , "=r" (mode)
         : "r" (head)
