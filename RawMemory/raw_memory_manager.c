@@ -127,6 +127,11 @@ static inline uint32_t count_leading_zeros( uint32_t v )
   return result;
 }
 
+static inline uint32_t count_leading_ones( uint32_t v )
+{
+  return count_leading_zeros( ~v );
+}
+
 // Returns -1 if unavailable
 uint32_t claim_contiguous_memory( uint32_t pages )
 {
@@ -143,13 +148,14 @@ uint32_t claim_contiguous_memory( uint32_t pages )
 
     int i = 0;
     while (i < limit && result == contiguous_memory_unavailable) {
-      uint32_t l0 = count_leading_zeros( sections[i] );
+      uint32_t section = sections[i];
+      uint32_t l0 = count_leading_zeros( section );
       while (l0 < 32 && result == contiguous_memory_unavailable) { // non-zero
-        uint32_t l1 = count_leading_zeros( ~(sections[i] << l0) );
+        uint32_t l1 = count_leading_ones( section << l0 );
 
         // l1 free sections in a row. Enough?
         if (l1 >= required) {
-          result = ((i / 32) + l0) << 8;
+          result = ((i * 32) + l0) << 8;
           uint32_t mask = 0xffffffff;
           mask = mask << (32 - required);
           mask = mask >> l0;
@@ -157,8 +163,8 @@ uint32_t claim_contiguous_memory( uint32_t pages )
         }
         else {
           // That wasn't enough in a row, but there could still be,
-          // e.g. 0x01100111 should match 3 MiB.
-          l0 += l1 + count_leading_zeros( sections[i] << (l0 + l1) );
+          // e.g. 0x01100171 should match 3 MiB.
+          l0 += l1 + count_leading_zeros( section << (l0 + l1) );
         }
       }
       i++;

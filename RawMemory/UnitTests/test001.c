@@ -15,6 +15,11 @@ static inline uint32_t count_leading_zeros( uint32_t v )
   return result;
 }
 
+static inline uint32_t count_leading_ones( uint32_t v )
+{
+  return count_leading_zeros( ~v );
+}
+
 void show_bits()
 {
   uint32_t *p = &shared.rawmemory.sections[0];
@@ -31,6 +36,12 @@ int main()
    || count_leading_zeros( 0x80000000 ) != 0
    || count_leading_zeros( 0x99999999 ) != 0) {
     printf( "count_leading_zeros error\n" );
+  }
+  if (count_leading_ones( 0 ) != 0
+   || count_leading_ones( 0x80000000 ) != 1
+   || count_leading_ones( 0xf0000000 ) != 4
+   || count_leading_ones( 0x99999999 ) != 1) {
+    printf( "count_leading_ones error\n" );
   }
   uint32_t result = 0;
   for (uint32_t n = 0xffffffff; n != 0; n = n >> 1) {
@@ -105,6 +116,24 @@ fail:
   if (claim_contiguous_memory( 1 ) != 0xffffffff) {
     printf( "Failed\n" );
   }
+
+  free_contiguous_memory( 0x2000, 0x4000 );
+  if (0 == claim_contiguous_memory( 0x400 )) {
+    printf( "Failed\n" );
+  }
+  if (0 == claim_contiguous_memory( 0x100 )) {
+    printf( "Failed\n" );
+  }
+  if (0 == claim_contiguous_memory( 0x400 )) {
+    printf( "Failed\n" );
+  }
+  if (0 == claim_contiguous_memory( 0x400 )) {
+    printf( "Failed\n" );
+  }
+  if (0 == claim_contiguous_memory( 0x400 )) {
+    printf( "Failed\n" );
+  }
+  show_bits();
 
   return 0;
 }
