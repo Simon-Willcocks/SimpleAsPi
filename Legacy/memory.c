@@ -34,7 +34,19 @@ struct dynamic_area {
   uint32_t va_start;
   uint32_t max_size;
   uint32_t current_size;
+
+  // TODO: Call handlers, as required.
+  uint32_t handler;
+  uint32_t workspace;
+  char name[];
 };
+
+static int strlen( char const *p )
+{
+  char const *e = p;
+  while (*e >= ' ') e++;
+  return e - p;
+}
 
 DLL_TYPE( dynamic_area )
 
@@ -134,7 +146,9 @@ void do_OS_DynamicArea( svc_registers *regs )
   switch (action) {
   case Create:
     {
-      dynamic_area *new_da = system_heap_allocate( sizeof( *new_da ) );
+      char const *name = (void*) regs->r[8];
+      int len = (strlen( name ) + 4 & ~3);
+      dynamic_area *new_da = system_heap_allocate( sizeof( *new_da ) + len );
       dll_new_dynamic_area( new_da );
       new_da->number = regs->r[1];
       if (new_da->number == -1) {
@@ -156,14 +170,22 @@ void do_OS_DynamicArea( svc_registers *regs )
       new_da->va_start = shared.legacy.last_da_top;
       regs->r[3] = new_da->va_start;
 
+      new_da->handler = regs->r[6];
+      new_da->workspace = regs->r[7];
+      char *d = new_da->name;
+      while (*name >= ' ') { *d++ = *name++; }
+
       uint32_t pages = (0xfff + regs->r[5]) >> 12;
       if (pages > 0x400) {
         pages = 0x400;
         Task_LogString( "Limiting DA size\n", 0 );
       } // 4 MiB FIXME
 
+      uint32_t physical = claim_contiguous_memory( pages );
+      if (physical == 0) PANIC;
+
       memory_mapping map = {
-        .base_page = claim_contiguous_memory( pages ),
+        .base_page = physical,
         .pages = pages,
         .va = new_da->va_start,
         .type = CK_MemoryRW,
@@ -178,7 +200,6 @@ void do_OS_DynamicArea( svc_registers *regs )
     break;
   case Info:
     {
-      asm ( "" : : "r" (regs->lr), "r" (regs->r[1]) );
       if (regs->r[1] == 6) {
         // Free pool, faking it
         regs->r[2] = 16 << 20; // 16MiB
@@ -188,9 +209,24 @@ void do_OS_DynamicArea( svc_registers *regs )
         regs->r[6] = 0;
         regs->r[7] = 0;
         regs->r[8] = (uint32_t) "Free";
+        return;
       }
-      else
-        PANIC;
+
+      dynamic_area *da = find_da( regs->r[1] );
+
+      if (da != 0) {
+        regs->r[2] = da->current_size;
+        regs->r[3] = da->va_start;
+        regs->r[4] = 0; // TODO?
+        regs->r[5] = da->max_size;
+        regs->r[6] = da->handler;
+        regs->r[7] = da->workspace;
+        regs->r[8] = da->name;
+      }
+      else {
+        Error_UnknownDA( regs );
+        return;
+      }
     }
     break;
   case Enumerate:
