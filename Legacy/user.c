@@ -58,8 +58,13 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     }
 #endif
 
+    bool writeS = ((client.swi & ~Xbit) == OS_WriteS);
+    // This SWI is unique (I hope), in changing the return address
+    uint32_t r0 = regs.r[0];
+    if (writeS) regs.r[0] = regs.lr;
+
     regs.r[11] = handle;
-    regs.r[12] = client.swi;
+    regs.r[12] = writeS ? OS_Write0 : client.swi;
     regs.lr = (uint32_t) run_swi;
 
 asm ( "udf #99" : : "r" (lr) );
@@ -76,8 +81,15 @@ asm ( "udf #99" : : "r" (lr) );
 
     Task_GetRegisters( client.task_handle, &regs );
 
-    regs.r[0] = regs.r[12]; // R0 on exit from SWI
-    regs.spsr = regs.r[11]; // State on exit from SWI
+    if (!writeS) {
+      regs.r[0] = regs.r[12]; // R0 on exit from SWI
+      regs.spsr = regs.r[11]; // State on exit from SWI
+    }
+    else {
+      regs.lr = (3 + regs.r[12]) & ~3; // R0 on exit from SWI
+      regs.r[0] = r0;
+      regs.spsr = regs.r[11]; // State on exit from SWI
+    }
 
     if (module_run && 0 == (VF & regs.spsr)) {
       // Special case: we just successfully ran an OS_Module call to

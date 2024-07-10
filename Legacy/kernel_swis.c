@@ -636,25 +636,53 @@ OSTask *execute_swi( svc_registers *regs, int number )
     case OS_PlatformFeatures: do_OS_PlatformFeatures( legacy_regs ); break;
     case OS_ReadSysInfo: do_OS_ReadSysInfo( legacy_regs ); break;
 
+    case OS_WriteS: // Called from SVC mode, when owner of legacy stack.
+      // user.c takes care of other cases
+      {
+        uint32_t r0 = legacy_regs->r[0];
+        legacy_regs->r[0] = legacy_regs->lr;
+        uint32_t entry = JTABLE[OS_Write0];
+        run_risos_code_implementing_swi( legacy_regs, OS_Write0, entry );
+        legacy_regs->lr = (3 + legacy_regs->r[0]) & ~3;
+        legacy_regs->r[0] = r0;
+      }
+      break;
+#ifdef DEBUG__WIMP_LOOK_1
+    case OS_Byte:
+      {
+        if (regs->r[0] == 0xa1 && regs->r[1] == 0x8c) {
+          regs->r[2] = 3; // System font, 3D look.
+          // Alternative approach: set 1, and Wimp$Font... variables
+        }
+        else {
+          uint32_t entry = JTABLE[OS_Byte];
+          run_risos_code_implementing_swi( regs, OS_Byte, entry );
+        }
+      }
+      break;
+#endif
+
 #ifdef DEBUG__LOG_COMMANDS
     case OS_CLI:
       {
         Task_LogString( "OSCLI: ", 7 );
-        Task_LogString( (char*) regs->r[0], 0 );
+        Task_LogString( (char*) legacy_regs->r[0], 0 );
         Task_LogNewLine();
-        uint32_t entry = JTABLE[OS_CLI];
-        run_risos_code_implementing_swi( regs, OS_CLI, entry );
-        break;
+        // DROPPING THROUGH!
       }
 #endif
 
     default:
       {
-        if (swi < 128) {
+        if (swi < OS_ConvertStandardDateAndTime) {
           uint32_t entry = JTABLE[swi];
           run_risos_code_implementing_swi( legacy_regs, swi, entry );
         }
-        else if (swi >= 256 && swi < 512) {
+        else if (swi < 256) {
+          extern uint32_t despatchConvert;
+          run_risos_code_implementing_swi( legacy_regs, swi, &despatchConvert );
+        } // Conversion SWIs
+        else if (swi < 512) {
           uint32_t r0 = legacy_regs->r[0];
           uint32_t entry = JTABLE[0];
 
@@ -662,7 +690,6 @@ OSTask *execute_swi( svc_registers *regs, int number )
           run_risos_code_implementing_swi( legacy_regs, 0, entry );
           legacy_regs->r[0] = r0;
         }
-        else if (swi < 512) { asm( "udf 1" : : "r" (regs->lr) ); PANIC; } // Conversion SWIs
         else run_module_swi( legacy_regs, swi );
       }
     }
@@ -770,6 +797,17 @@ void __attribute__(( noreturn )) startup()
       , "r" (handler)
       : "r1", "r2", "r3" );
   }
+
+  extern char const build_script[];
+  extern char const build_options[];
+  extern char const modcflags[];
+
+  Task_LogString( build_script, 0 );
+  Task_LogNewLine();
+  Task_LogString( build_options, 0 );
+  Task_LogNewLine();
+  Task_LogString( modcflags, 0 );
+  Task_LogNewLine();
 
   // RMRun HAL
   register uint32_t run asm ( "r0" ) = 0; // RMRun
