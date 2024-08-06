@@ -40,6 +40,8 @@ DEFINE_ERROR( ModuleNotFound, 0x888, "Module not found" );
 DEFINE_ERROR( NoRoomInRMA, 0x888, "No room in RMA" );
 DEFINE_ERROR( NoStart, 0x888, "Module not startable" );
 DEFINE_ERROR( NoCommand, NO_COMMAND, "No module command found" );
+DEFINE_ERROR( NoMoreModules, 0x108, "NoMoreModules:No more modules" );
+DEFINE_ERROR( NoMoreInstances, 0x109, "NoMoreIncarnations:No more incarnations of that module" );
 DECLARE_ERROR( UnknownSWI );
 
 extern uint32_t const LegacyModulesList;
@@ -105,14 +107,6 @@ module *new_module( module_header *header, char const *postfix )
 
   if (size == 0) { // No postfix
     result->base = 0;
-
-    if (shared.module.last != 0) {
-      shared.module.last->next = result;
-    }
-    shared.module.last = result;
-    if (shared.module.modules == 0) {
-      shared.module.modules = result;
-    }
   }
   else {
     module **instance = &base->instances;
@@ -126,37 +120,49 @@ module *new_module( module_header *header, char const *postfix )
   return result;
 }
 
+static inline
+void append_module_to_list( module *m )
+{
+  if (shared.module.last != 0) {
+    shared.module.last->next = m;
+  }
+  shared.module.last = m;
+  if (shared.module.modules == 0) {
+    shared.module.modules = m;
+  }
+}
+
 static void *pointer_at_offset_from( void *base, uint32_t off )
 {
   return (off == 0) ? 0 : ((uint8_t*) base) + off;
 }
 
-static inline void *start_code( module_header *header )
+static inline void *start_code( module_header const *header )
 {
   return pointer_at_offset_from( header, header->offset_to_start );
 }
 
-static inline void *init_code( module_header *header )
+static inline void *init_code( module_header const *header )
 {
   return pointer_at_offset_from( header, header->offset_to_initialisation );
 }
 
-static inline const char *help_string( module_header *header )
+static inline const char *help_string( module_header const *header )
 {
   return pointer_at_offset_from( header, header->offset_to_help_string );
 }
 
-static inline const char *title_string( module_header *header )
+static inline const char *title_string( module_header const *header )
 {
   return pointer_at_offset_from( header, header->offset_to_title_string );
 }
 
-static inline void *service_call_handler( module_header *h )
+static inline void *service_call_handler( module_header const *h )
 {
   return pointer_at_offset_from( h, h->offset_to_service_call_handler );
 }
 
-static inline void *module_commands( module_header *h )
+static inline void *module_commands( module_header const *h )
 {
   return pointer_at_offset_from( h, h->offset_to_help_and_command_keyword_table );
 }
@@ -222,23 +228,14 @@ static inline uint32_t bcd( char c )
 }
 
 static
-void Service_ModulePostInit( module *module )
+int get_version( module_header const *m )
 {
-#ifdef DEBUG__SHOW_SERVICE_CALLS
-  Task_LogString( "Service_ModulePostInit: ", 24 );
-  Task_LogString( title_string( module->header ), 0 );
-  Task_LogNewLine();
-#endif
-
-  char const *postfix = module->postfix[0] == 0 ? 0 : module->postfix;
-  char const *title = title_string( module->header );
   uint32_t bcd_version = 0;
-  char const *help = help_string( module->header );
+  char const *help = help_string( m );
 
   if (help != 0) {
     while (*help != '\t' && *help != '\0') help++;
     while (*help == '\t') help++;
-    while (*help == ' ' && *help != '\0') help++;
     while (*help == ' ' && *help != '\0') help++;
     while (*help != '\0' && *help != '.') {
       bcd_version = (bcd_version << 4) + bcd( *help++ );
@@ -251,6 +248,22 @@ void Service_ModulePostInit( module *module )
       bcd_version = (bcd_version << 8);
     }
   }
+
+  return bcd_version;
+}
+
+static
+void Service_ModulePostInit( module *module )
+{
+#ifdef DEBUG__SHOW_SERVICE_CALLS
+  Task_LogString( "Service_ModulePostInit: ", 24 );
+  Task_LogString( title_string( module->header ), 0 );
+  Task_LogNewLine();
+#endif
+
+  char const *postfix = module->postfix[0] == 0 ? 0 : module->postfix;
+  char const *title = title_string( module->header );
+  uint32_t bcd_version = get_version( module->header );
 
   register module_header* header asm( "r0" ) = module->header;
   register uint32_t code asm( "r1" ) = 0xda;
@@ -266,13 +279,15 @@ void Service_ModulePostInit( module *module )
 }
 
 static inline 
-error_block *run_initialisation_code( const char *env, module *m,
+error_block const *run_initialisation_code( const char *env, module *m,
                                       uint32_t instance )
 {
   uint32_t *code = init_code( m->header );
 
   if (code == 0) {
     Task_LogString( "No initialisation code\n", 23 );
+    append_module_to_list( m );
+    assert( shared.module.modules != 0 );
     return 0;
   }
 
@@ -291,6 +306,7 @@ error_block *run_initialisation_code( const char *env, module *m,
   else {
     Task_LogString( " no parameters", 14 );
   }
+  Task_LogHex( (uint32_t) &m->private_word );
   Task_LogNewLine();
 #endif
 
@@ -299,7 +315,7 @@ error_block *run_initialisation_code( const char *env, module *m,
   register uint32_t _instance asm( "r11" ) = instance;
   register const char *environment asm( "r10" ) = env;
 
-  error_block *error;
+  error_block const *error;
 
   asm volatile (
         "  blx r14"
@@ -323,12 +339,26 @@ error_block *run_initialisation_code( const char *env, module *m,
   Task_LogNewLine();
 #endif
   if (error == 0) {
+    append_module_to_list( m );
     Service_ModulePostInit( m );
+  }
+  else {
+    // TODO report error
+// Don't PANIC;
   }
 
 #ifdef DEBUG__SHOW_MODULES
-  Task_LogString( "Done", 4 );
+  Task_LogString( "Done, pw ", 9 );
+  Task_LogHex( (uint32_t) &m->private_word );
+  Task_LogString( " ", 1 );
+  if (error != 0)
+    Task_LogHex( (uint32_t) error->code );
+  Task_LogString( " ", 1 );
+  Task_LogHex( (uint32_t) m->private_word );
+  if (m->private_word == 0)
+    Task_LogString( " empty!", 7 );
   Task_LogNewLine();
+  asm ( "udf 2" );
 #endif
 
   return error;
@@ -437,11 +467,13 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
       return Error_UnknownSWI( regs );
     }
     else {
+      PANIC; // Untested
       OSTask *running = workspace.ostask.running;
       action.code( regs, (void*) m->private_word,
                    workspace.core, ostask_handle( running ) );
       if (running != workspace.ostask.running) {
-        // SetController was called
+        // Task_QueueR12 was called
+        PANIC; // Untested
         return workspace.ostask.running;
       }
     }
@@ -462,7 +494,7 @@ char const *extract_module_name( char const *name )
   char const *rom_path = "System:Modules.";
   char const *mod_name = name;
   while (*mod_name == *rom_path) { mod_name++; rom_path++; }
-  return mod_name;
+  return ('\0' == *rom_path) ? mod_name : name;
 }
 
 module_header *find_named_module( char const *name )
@@ -517,7 +549,7 @@ module *find_initialised_module( char const *name )
   return instance;
 }
 
-error_block *load_and_initialise( char const *name )
+error_block const *load_and_initialise( char const *name )
 {
 #ifdef DEBUG__SHOW_MODULE_INIT
   Task_LogString( "Module ", 7 );
@@ -530,7 +562,7 @@ error_block *load_and_initialise( char const *name )
   if (header == 0) {
     svc_registers tmp;
     Error_ModuleNotFound( &tmp );
-    return (error_block *) tmp.r[0];
+    return (error_block const *) tmp.r[0];
   }
   while (*name > ' ' && *name != '%') name++;
   module *m = new_module( header, (*name == '%') ? name + 1 : 0 );
@@ -551,14 +583,17 @@ error_block *load_and_initialise( char const *name )
   return run_initialisation_code( name, m, number );
 }
 
-static bool __attribute__(( noinline )) run_service_call_handler_code( svc_registers *regs, module *m )
+static void __attribute__(( noinline )) run_service_call_handler_code( svc_registers *regs, module *m )
 {
   register void *non_kernel_code asm( "r14" ) =
                         service_call_handler( m->header );
 
   register uint32_t *private_word asm( "r12" ) = &m->private_word;
 
-  asm goto (
+  // "the V set convention cannot be used" PRM 1-217
+  // Ignoring the input flags and not storing the output flags.
+
+  asm (
         "  push { %[regs] }"
       "\n  ldm %[regs], { r0-r8 }"
       "\n  udf 3"
@@ -566,18 +601,12 @@ static bool __attribute__(( noinline )) run_service_call_handler_code( svc_regis
       "\n  udf 4"
       "\n  pop { r14 }"
       "\n  stm r14, { r0-r8 }"
-      "\n  bvs %l[failed]"
       :
       : [regs] "r" (regs)
+      , [spsr] "i" (offsetof( svc_registers, spsr ))
       , "r" (non_kernel_code)
       , "r" (private_word)
-      : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8" 
-      : failed );
-
-  return true;
-
-failed:
-  return false;
+      : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8" );
 }
 
 OSTask *do_OS_ServiceCall( svc_registers *regs )
@@ -592,8 +621,7 @@ OSTask *do_OS_ServiceCall( svc_registers *regs )
       // Call for all instances, or just the base?
       if (m->instances != 0) PANIC;
 
-      bool result = run_service_call_handler_code( regs, m );
-      if (!result) break;
+      run_service_call_handler_code( regs, m );
 
       assert( regs->r[1] == 0 || regs->r[1] == call );
     }
@@ -653,9 +681,15 @@ static command_parts split_command( char const *cmd )
   result.command = cmd;
   while (*result.command == ' '
      ||  *result.command == '*') result.command++;
+  // result.command points to the first non-space, non-asterisk character
+  // That may be a '%'.
+
   result.tail = result.command;
+  while (*result.tail == '%') result.tail++;
+  while (*result.tail == ' ') result.tail++;
   while (*result.tail > ' ') result.tail++;
   while (*result.tail == ' ') result.tail++;
+  // result.tail points to the first non-space character after the command
 
   return result;
 }
@@ -665,12 +699,22 @@ static inline bool riscoscmp( char const *left, char const *right )
 {
   int diff = 0;
 
+#ifdef DEBUG__riscoscmp
+  Task_LogString( left, 0 );
+  Task_LogString( " ", 1 );
+  Task_LogString( right, 0 );
+#endif
   while (diff == 0) {
     char l = *left++;
     char r = *right++;
 
     if ((l == 0 || l == 10 || l == 13 || l == ' ')
-     && (r == 0 || r == 10 || r == 13 || r == ' ')) return true;
+     && (r == 0 || r == 10 || r == 13 || r == ' ')) {
+#ifdef DEBUG__riscoscmp
+  Task_LogString( " match\n", 7 );
+#endif
+      return true;
+    }
 
     diff = l - r;
     if (diff == 'a'-'A') {
@@ -681,6 +725,9 @@ static inline bool riscoscmp( char const *left, char const *right )
     }
   }
 
+#ifdef DEBUG__riscoscmp
+  Task_LogString( " no match\n", 10 );
+#endif
   return false;
 }
 
@@ -708,6 +755,33 @@ static int strlen( char const *s )
   return p - s;
 }
 
+static int rostrlen( char const *s )
+{
+  char const *p = s;
+  while (' ' < *p || '\t' == *p) { p++; }
+  return p - s;
+}
+
+static module_command *search_list( char const *command, const char *cmd )
+{
+  if (cmd != 0) {
+    while (cmd[0] != '\0') {
+      int len = strlen( cmd );
+
+      module_command *c = (void*) (((uint32_t) cmd + len + 4)&~3);
+      // +4 because len is strlen, not including terminator
+
+      if (riscoscmp( cmd, command ) && c->code_offset != 0) {
+        return c;
+      }
+
+      cmd = (char const *) (c + 1);
+    }
+  }
+
+  return 0;
+}
+
 static module_code find_module_command( char const *command )
 {
   module *m = shared.module.modules;
@@ -717,21 +791,11 @@ static module_code find_module_command( char const *command )
 
     const char *cmd = module_commands( header );
 
-    if (cmd != 0) {
-      while (cmd[0] != '\0') {
-        int len = strlen( cmd );
+    module_command *found = search_list( command, cmd );
 
-        module_command *c = (void*) (((uint32_t) cmd + len + 4)&~3);
-        // +4 because len is strlen, not including terminator
-
-        if (riscoscmp( cmd, command ) && c->code_offset != 0) {
-          module_code result = { m, c };
-
-          return result;
-        }
-
-        cmd = (char const *) (c + 1);
-      }
+    if (found != 0) {
+      module_code result = { m, found };
+      return result;
     }
 
     m = m->next;
@@ -771,20 +835,34 @@ static uint32_t count_params( char const *params )
     while (*p == ' ') p++;
   }
 
+#ifdef DEBUG__SHOW_COUNT_PARAMS
+  Task_LogString( "Tail: \"", 7 );
+  Task_LogString( params, 0 );
+  Task_LogString( "\" ", 2 );
+  Task_LogSmallNumber( result );
+  Task_LogNewLine();
+#endif
+
   return result;
 }
 
-static error_block *run_command( module *m, uint32_t code_offset, const char *tail, uint32_t count )
+//static 
+__attribute__(( noinline ))
+error_block const *run_command( module *m, uint32_t code_offset, const char *tail, uint32_t count )
 {
+  Task_LogHex( code_offset + (uint32_t) m->header );
+
   register uint32_t non_kernel_code asm( "r14" ) = code_offset + (uint32_t) m->header;
-  register uint32_t private_word asm( "r12" ) = m->private_word;
+  // Bodge for funny commands
+  register uint32_t private_word asm( "r12" ) = m == 0 ? 0 : &m->private_word;
   register const char *p asm( "r0" ) = tail;
   register uint32_t c asm( "r1" ) = count;
 
-  register error_block *error asm( "r0" );
+  register error_block const *error asm( "r0" );
 
   asm volatile (
       "\n  blx r14"
+      "\n  movvc r0, #0"
       : "=r" (error)
       : "r" (p)
       , "r" (c)
@@ -795,14 +873,23 @@ static error_block *run_command( module *m, uint32_t code_offset, const char *ta
   return error;
 }
 
-static error_block *run_module_code( module_code code, char const *tail )
+static error_block const *run_module_code( module_code code, char const *tail )
 {
   while (*tail == ' ') tail++;
   uint32_t count = count_params( tail );
   module_command const *c = code.command;
   module *m = code.module;
 
+#ifdef DEBUG__SHOW_COUNT_PARAMS
+  Task_LogString( "Expecting between ", 18 );
+  Task_LogSmallNumber( c->info.min_params );
+  Task_LogString( " and ", 5 );
+  Task_LogSmallNumber( c->info.max_params );
+  Task_LogNewLine();
+#endif
+
   if (count < c->info.min_params || count > c->info.max_params) {
+    asm ( "udf 77" );
     static error_block error = { 666, "Invalid number of parameters" };
     // TODO Service_SyntaxError
     return &error;
@@ -814,7 +901,14 @@ static error_block *run_module_code( module_code code, char const *tail )
 
   if (c->info.gstrans != 0 && count > 0) {
     // Need to copy the command, running GSTrans on some parameters
+    Task_LogString( "The code in run_module_code needs expanding, not GSTransing parameters\n", 0 );
+    Task_LogString( tail, rostrlen( tail ) );
+    Task_LogNewLine();
+/*
+    static error_block needs_more_code = { 4, "The code in run_module_code needs expanding" };
+    return &needs_more_code;
     asm ( "bkpt 1" );
+*/
   }
 
   return run_command( m, c->code_offset, tail, count );
@@ -828,11 +922,15 @@ handled run_aliased_command( uint32_t *regs )
   char const *cmd = parts.command;
   char const *tail = parts.tail;
 
+  // %Command is dealt with part way through, once the command has been
+  // copied.
+
   char const Alias[] = "Alias$";
   int varsize = sizeof( Alias ); // Includes terminator
   char const *name = cmd;
   while (*name > ' ') {
     varsize++;
+    // If it's a file name, forget it, leave it to the legacy kernel
     if (*name == ':' || *name == '.') return false;
     name++;
   }
@@ -845,11 +943,13 @@ handled run_aliased_command( uint32_t *regs )
   while (*s > ' ') *d++ = *s++;
   *d = '\0';
 
-  module_code code = { 0, 0 };
+  // varname now contains "Alias$" + the command, possibly including
+  // % characters. If the command starts with a %, the Alias$ part will
+  // be ignored.
 
   uint32_t space = 0;
 
-  {
+  if (cmd[0] != '%') {
     register char const *name asm ( "r0" ) = varname;
     // r1 ignored because r2 -ve
     register int32_t asksize asm ( "r2" ) = -1;
@@ -872,6 +972,13 @@ handled run_aliased_command( uint32_t *regs )
       space = !size;
     }
   }
+  else {
+    // Skip preceding % characters and subsequent spaces
+    while (*cmd0 == '%') cmd0++;
+    while (*cmd0 == ' ') cmd0++;
+  }
+
+  module_code code = { 0, 0 };
 
   if (space != 0) {
     char alias[space+1];
@@ -902,18 +1009,61 @@ handled run_aliased_command( uint32_t *regs )
     code = find_module_command( alias );
   }
   else {
+    // Not aliased.
     code = find_module_command( cmd0 );
   }
 
-  if (code.module == 0) {
+  if (code.command == 0) {
+    // Special command list, removed in later versions?
+    // FIXME? Assuming not alias
+    extern char const SCHCTab;
+    extern char const SysCommsModule;
+    code.command = search_list( cmd0, &SCHCTab );
+
+    if (code.command != 0) {
+#ifdef DEBUG__LOG_COMMANDS
+      Task_LogString( "Special: ", 9 );
+      Task_LogString( cmd0, 0 );
+      Task_LogNewLine();
+#endif
+
+      static module const fake = { .header = &SysCommsModule };
+      code.module = &fake;
+    }
+  }
+
+  if (code.command == 0) {
+#ifdef DEBUG__LOG_COMMANDS
+    Task_LogString( "Command ", 8 );
+    Task_LogString( cmd0, 0 );
+    Task_LogString( " not found in modules\n", 22 );
+#endif
     clear_VF();
     return HANDLER_PASS_ON;
   }
 
-  error_block *error = run_module_code( code, tail );
+#ifdef DEBUG__LOG_COMMANDS
+    Task_LogString( "Running ", 8 );
+    Task_LogString( cmd0, 0 );
+    Task_LogString( " module: ", 9 );
+    Task_LogHex( code.module->header );
+    Task_LogString( " code: ", 7 );
+    Task_LogHex( code.command );
+    Task_LogString( " offset: ", 9 );
+    Task_LogHex( code.command->code_offset );
+    Task_LogNewLine();
+#endif
+  error_block const *error = run_module_code( code, tail );
 
   if (error != 0) {
     regs[0] = (uint32_t) error;
+#ifdef DEBUG__LOG_COMMANDS
+    Task_LogString( "Error from ", 11 );
+    Task_LogString( cmd0, 0 );
+    Task_LogString( ": ", 2 );
+    Task_LogString( error->desc, 0 );
+    Task_LogNewLine();
+#endif
     return HANDLER_FAILED;
   }
 
@@ -967,9 +1117,37 @@ void claim_CLIV()
       : "lr" );
 }
 
+static inline __attribute__(( noreturn ))
+void start_usr32( uint32_t start, uint32_t *private )
+{
+  // Not sure how long the command should exist for; until the
+  // application is replaced, presumably. Put a copy in RMA and
+  // associate it with the slot? TODO
+  // Set arguments as for OS_FSControl 2? TODO
+  // Start address in r4, private word in r3, "command line" in r2
+
+  register uint32_t r0 asm( "r0" ) = 2;
+  register uint32_t r1 asm( "r1" ) = 0;
+  register char const *r2 asm( "r2" ) = "SomeCommand";
+  register uint32_t *r3 asm( "r3" ) = private;
+  register uint32_t r4 asm( "r4" ) = start;
+  register uint32_t r12 asm( "r12" ) = 0x5943474c; // "LGCY"
+  asm ( "svc %[swi]"
+      :
+      : [swi] "i" (OSTask_Finished)
+      , "r" (r0)
+      , "r" (r1)
+      , "r" (r2)
+      , "r" (r3)
+      , "r" (r4)
+      );
+
+  __builtin_unreachable();
+}
+
 OSTask *do_OS_Module( svc_registers *regs )
 {
-  error_block *error = 0;
+  error_block const *error = 0;
   char const *const name = (void*) regs->r[1];
 
   if (shared.module.modules == 0) {
@@ -994,18 +1172,59 @@ OSTask *do_OS_Module( svc_registers *regs )
       if (start == 0) {
         return Error_NoStart( regs );
       }
-      // Not sure how long the command should exist for; until the
-      // application is replaced, presumably. Put a copy in RMA and
-      // associate it with the slot? TODO
-      regs->r[0] = (uint32_t) name;
-      regs->r[1] = (uint32_t) &m->private_word;
-      regs->r[2] = (uint32_t) start;
+#ifdef DEBUG__SHOW_MODULE_INIT
+  Task_LogString( "RMRun module ", 13 );
+  char const *e = name;
+  while (*e > ' ') e++;
+  Task_LogString( name, e - name );
+  Task_LogNewLine();
+#endif
+      // NOTE!!! This action will be completed in Legacy/user.c
+      // Bad, bad, breaking of modularity!
+
+      start_usr32( start, &m->private_word );
     }
     break;
   case 1: // RMLoad
     error = load_and_initialise( name );
     break;
-  case 18: // Extract module information ("Look-up module name")
+  case 2: // RMEnter
+    {
+      char const *const module_name = extract_module_name( name );
+      module *m = find_initialised_module( module_name );
+      if (m == 0) PANIC;
+
+      void *start = start_code( m->header );
+      if (start == 0) PANIC;
+
+      start_usr32( start, &m->private_word );
+    }
+    break;
+  case 12: // Extract module information
+    // Called from legacy RMEnsure
+    {
+      uint32_t number = regs->r[1];
+      uint32_t inst = regs->r[2];
+
+      module *m = shared.module.modules;
+      uint32_t n = 0;
+      while (m != 0 && n < number) {
+        m = m->next;
+        n++;
+      }
+
+      regs->r[1]++;
+      if (m == 0) {
+        return Error_NoMoreModules( regs );
+      }
+      else {
+        regs->r[3] = (uint32_t) m->header;
+        regs->r[4] = (uint32_t) m->private_word;
+        regs->r[5] = (uint32_t) &m->postfix;
+      }
+    }
+    break;
+  case 18: // Look-up module name (not really what it does)
     // Called from legacy RMEnsure
     {
       char const *name = (void*) regs->r[1];
@@ -1017,18 +1236,6 @@ OSTask *do_OS_Module( svc_registers *regs )
   Task_LogString( name, e - name );
   Task_LogNewLine();
 #endif
-
-      if (module_name_match( name, "UtilityModule" )) {
-        // Special case, used by Wimp
-        // Desktop/Wimp/s/Wimp02 "Figure out ROM location"
-
-        regs->r[1] = 1;
-        regs->r[2] = 0;
-        regs->r[3] = 0xfc010000; // Not true
-        regs->r[4] = 0;
-
-        return 0;
-      }
 
       //  TODO: instances
       char const *p = name;
@@ -1058,8 +1265,8 @@ OSTask *do_OS_Module( svc_registers *regs )
       }
     }
     break;
-  case 2: // RMEnter
   case 3: // RMReinit
+  case 4: // Delete
     PANIC;
     break;
   default:
