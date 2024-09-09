@@ -24,16 +24,21 @@ enum {
   , OSTask_Spawn                // 0x303 New OSTask in a new slot
   , OSTask_EndTask              // 0x304 Last one out ends the slot
   , OSTask_Cores                // 0x305 Use sparingly! (More or less
-                                // useless outside interrupt tasks,
-                                // I think).
-  , OSTask_RegisterSWIHandlers  // 0x306 Code or queue
+                                // useless outside interrupt and memory
+                                // management tasks, I think).
+  , OSTask_RegisterSWIHandlers  // 0x306 Code or queue for each SWI
   , OSTask_MapDevicePages       // 0x307 For device drivers
   , OSTask_AppMemoryTop         // 0x308 r0 = New value, or 0 to read
+
+  // I'm increasingly unhappy with this approach, I think it would be
+  // better to allow modules to create a task in another task's context
+  // which can run either 32- or 64-bit code provided by the module.
+  // Or simply change the module's task's slot...
   , OSTask_RunThisForMe         // 0x309 Run code in the context of the task
   , OSTask_GetRegisters         // 0x30a Get registers of controlled task
   , OSTask_SetRegisters         // 0x30b Set registers of controlled task
-  , OSTask_RelinquishControl    // 0x30c Resume controlling task
-  , OSTask_ReleaseTask          // 0x30d Resume controlled task
+  , OSTask_Finished             // 0x30c Resume controlling task
+  , OSTask_ReleaseTask          // 0x30d Resume no longer controlled task
   , OSTask_ChangeController     // 0x30e Pass the controlled task to another
   , OSTask_SetController        // 0x30f Allow another task to control me
 
@@ -73,10 +78,13 @@ enum {
   , OSTask_PipeWaitUntilEmpty
 
   , OSTask_QueueCreate = OSTask_PipeCreate + 16 // 0x330
+  , OSTask_QueueDelete
   , OSTask_QueueWait
   , OSTask_QueueWaitCore        // No implementation
   , OSTask_QueueWaitSWI         // No implementation
   , OSTask_QueueWaitCoreAndSWI  // No implementation
+
+  , OSTask_QueueR12             // For modules to route SWIs to providers
 };
 
 // "memory" clobber, because the task might have moved cores by
@@ -264,6 +272,9 @@ uint32_t Task_GetLogPipe()
 static inline
 void Task_LogString( char const *string, uint32_t length )
 {
+#ifdef DEBUG__QUIET
+  return;
+#endif
   if (length == 0) {
     char const *p = string;
     while (*p != '\0') {
@@ -286,6 +297,9 @@ void Task_LogString( char const *string, uint32_t length )
 static inline __attribute__(( optimize( "Os" ) ))
 void Task_LogSmallNumber( uint32_t number )
 {
+#ifdef DEBUG__QUIET
+  return;
+#endif
   // FIXME: This is very chunky, maybe use OS_Convert...
   // putting this implmentation into NoLegacy.
   char string[12];
@@ -382,9 +396,12 @@ static inline char tohex( uint8_t n )
   return ("0123456789abcdef")[n];
 }
 
-static inline
+static __attribute__(( noinline )) // inline
 void Task_LogHex( uint32_t number )
 {
+#ifdef DEBUG__QUIET
+  return;
+#endif
   char string[8];
   for (int i = 0; i < 8; i++) {
     string[7-i] = tohex( (number >> (i * 4)) & 0xf );
@@ -719,6 +736,197 @@ error_block *Task_RunThisForMe( uint32_t client, svc_registers const *regs )
       : "lr", "cc", "memory" );
 
   return error;
+}
+
+// Task creation routines never return an error, but may never return (until
+// resources become available, which may be a user decision).
+
+// The number is the number of parameters passed to the task (in addition to
+// the task handle), the remainder will be zeros.
+
+// These routines allow the created task to run immediately, the usual case:
+// Task_SpawnTask{3,2,1,0}
+// Task_CreateTask{3,2,1,0}
+
+// These routines leave the created task blocked, and under the control of
+// the caller.
+// The caller can then pass it off to another task, ask them to run code
+// on its behalf (and with its permissions), or release it to run freely.
+// Task_SpawnService{3,2,1,0}
+// Task_CreateService{3,2,1,0}
+// See also Queues, which put tasks under the control of the task that
+// removes them from a queue.
+
+static inline
+uint32_t Task_SpawnTask3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+{
+  register void *s asm( "r0" ) = start;
+  register uint32_t p asm( "r1" ) = sp;
+  register uint32_t r1 asm( "r2" ) = p0;
+  register uint32_t r2 asm( "r3" ) = p1;
+  register uint32_t r3 asm( "r4" ) = p2;
+  register uint32_t handle asm( "r0" );
+  asm volatile ( // Volatile because we ignore the outputs
+        "svc %[swi_spawn]"
+    "\n  mov r1, #0"    // No extra context
+    "\n  svc %[swi_release]"
+    : "=r" (p) // Corrupted
+    , "=r" (handle)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
+    , "r" (s)
+    , "r" (p)
+    , "r" (r1)
+    , "r" (r2)
+    , "r" (r3)
+    : "lr", "cc" );
+
+  return handle;
+}
+
+static inline
+uint32_t Task_SpawnTask2( void *start, uint32_t sp, uint32_t p0, uint32_t p1 )
+{
+  return Task_SpawnTask3( start, sp, p0, p1, 0 );
+}
+
+static inline
+uint32_t Task_SpawnTask1( void *start, uint32_t sp, uint32_t p0 )
+{
+  return Task_SpawnTask3( start, sp, p0, 0, 0 );
+}
+
+static inline
+uint32_t Task_SpawnTask0( void *start, uint32_t sp )
+{
+  return Task_SpawnTask3( start, sp, 0, 0, 0 );
+}
+
+static inline
+uint32_t Task_CreateTask3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+{
+  register void *s asm( "r0" ) = start;
+  register uint32_t p asm( "r1" ) = sp;
+  register uint32_t r1 asm( "r2" ) = p0;
+  register uint32_t r2 asm( "r3" ) = p1;
+  register uint32_t r3 asm( "r4" ) = p2;
+  register uint32_t handle asm( "r0" );
+  asm volatile ( // Volatile because we ignore the outputs
+        "svc %[swi_create]"
+    "\n  mov r1, #0"    // No extra context
+    "\n  svc %[swi_release]"
+    : "=r" (p) // Corrupted
+    , "=r" (handle)
+    : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_ReleaseTask)
+    , "r" (s)
+    , "r" (p)
+    , "r" (r1)
+    , "r" (r2)
+    , "r" (r3)
+    : "lr", "cc" );
+
+  return handle;
+}
+
+static inline
+uint32_t Task_CreateTask2( void *start, uint32_t sp, uint32_t p0, uint32_t p1 )
+{
+  return Task_CreateTask3( start, sp, p0, p1, 0 );
+}
+
+static inline
+uint32_t Task_CreateTask1( void *start, uint32_t sp, uint32_t p0 )
+{
+  return Task_CreateTask3( start, sp, p0, 0, 0 );
+}
+
+static inline
+uint32_t Task_CreateTask0( void *start, uint32_t sp )
+{
+  return Task_CreateTask3( start, sp, 0, 0, 0 );
+}
+
+static inline
+uint32_t Task_SpawnService3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+{
+  register void *s asm( "r0" ) = start;
+  register uint32_t p asm( "r1" ) = sp;
+  register uint32_t r1 asm( "r2" ) = p0;
+  register uint32_t r2 asm( "r3" ) = p1;
+  register uint32_t r3 asm( "r4" ) = p2;
+  register uint32_t handle asm( "r0" );
+  asm volatile ( // Volatile because we ignore the outputs
+        "svc %[swi_spawn]"
+    : "=r" (handle)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , "r" (s)
+    , "r" (p)
+    , "r" (r1)
+    , "r" (r2)
+    , "r" (r3)
+    : "lr", "cc" );
+
+  return handle;
+}
+
+static inline
+uint32_t Task_SpawnService2( void *start, uint32_t sp, uint32_t p0, uint32_t p1 )
+{
+  return Task_SpawnService3( start, sp, p0, p1, 0 );
+}
+
+static inline
+uint32_t Task_SpawnService1( void *start, uint32_t sp, uint32_t p0 )
+{
+  return Task_SpawnService3( start, sp, p0, 0, 0 );
+}
+
+static inline
+uint32_t Task_SpawnService0( void *start, uint32_t sp )
+{
+  return Task_SpawnService3( start, sp, 0, 0, 0 );
+}
+
+static inline
+uint32_t Task_CreateService3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+{
+  register void *s asm( "r0" ) = start;
+  register uint32_t p asm( "r1" ) = sp;
+  register uint32_t r1 asm( "r2" ) = p0;
+  register uint32_t r2 asm( "r3" ) = p1;
+  register uint32_t r3 asm( "r4" ) = p2;
+  register uint32_t handle asm( "r0" );
+  asm volatile ( // Volatile because we ignore the outputs
+        "svc %[swi_create]"
+    : "=r" (handle)
+    : [swi_create] "i" (OSTask_Create)
+    , "r" (s)
+    , "r" (p)
+    , "r" (r1)
+    , "r" (r2)
+    , "r" (r3)
+    : "lr", "cc" );
+
+  return handle;
+}
+
+static inline
+uint32_t Task_CreateService2( void *start, uint32_t sp, uint32_t p0, uint32_t p1 )
+{
+  return Task_CreateService3( start, sp, p0, p1, 0 );
+}
+
+static inline
+uint32_t Task_CreateService1( void *start, uint32_t sp, uint32_t p0 )
+{
+  return Task_CreateService3( start, sp, p0, 0, 0 );
+}
+
+static inline
+uint32_t Task_CreateService0( void *start, uint32_t sp )
+{
+  return Task_CreateService3( start, sp, 0, 0, 0 );
 }
 
 static inline

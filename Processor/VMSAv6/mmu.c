@@ -923,6 +923,8 @@ void mmu_establish_resources()
 
 // Real hardware reports errors type 0x007, at fa 0x80000000+
 // Real hardware reports errors type 0x807, at fa 0x80000000+
+// Seems to have been from a lack of a synchonisation primitive, but IDK
+// which one!
 static bool strange_handler( uint32_t fa, uint32_t ft )
 {
 #ifdef DEBUG__REPORT_STRANGE_HANDLER

@@ -31,12 +31,12 @@ typedef unsigned        bool;
 #define number_of( arr ) (sizeof( arr ) / sizeof( arr[0] ))
 #define offset_of( T, E ) ((uint32_t) &((T*)0)->E)
 
-static const uint32_t NF = (1 << 31);
-static const uint32_t ZF = (1 << 30);
-static const uint32_t CF = (1 << 29);
-static const uint32_t VF = (1 << 28);
+#define NF (1 << 31)
+#define ZF (1 << 30)
+#define CF (1 << 29)
+#define VF (1 << 28)
 
-static const uint32_t Xbit = (1 << 17);
+#define Xbit (1 << 17)
 
 // Copy of the registers stored for an SVC instruction; doesn't include
 // the user stack pointer or link registers.

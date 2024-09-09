@@ -84,6 +84,11 @@ OSTask *QueueCreate( svc_registers *regs )
 
   regs->r[0] = handle;
 
+#ifdef DEBUG__FOLLOW_QUEUES
+  Task_LogString( "New Queue ", 10 );
+  Task_LogHex( handle );
+  Task_LogNewLine();
+#endif
   return 0;
 }
 
@@ -108,6 +113,13 @@ OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
   if (reclaimed) PANIC;
 
   if (queue->queue == 0) {
+#ifdef DEBUG__FOLLOW_QUEUES
+  Task_LogString( "Blocking ", 9 );
+  Task_LogHex( (uint32_t) running );
+  Task_LogString( " on ", 4 );
+  Task_LogHex( queue_handle( queue ) );
+  Task_LogNewLine();
+#endif
     // Nothing to remove, block caller
     save_task_state( regs );
     workspace.ostask.running = next;
@@ -132,7 +144,15 @@ OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
     regs->r[1] = head->swi.offset;
     regs->r[2] = head->swi.core;
     assert( 0xff1 == ((uint32_t) running) >> 20 );
-    head->controller = running;
+    if (!push_controller( head, running )) PANIC; // FIXME
+#ifdef DEBUG__FOLLOW_QUEUES
+  Task_LogHex( (uint32_t) running );
+  Task_LogString( " found queued ", 15 );
+  Task_LogHex( (uint32_t) head );
+  Task_LogString( " on ", 4 );
+  Task_LogHex( queue_handle( queue ) );
+  Task_LogNewLine();
+#endif
   }
 
   core_release_lock( &shared.ostask.queues_lock );
@@ -144,6 +164,13 @@ DECLARE_ERROR( InvalidQueue );
 
 OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32_t SWI )
 {
+#ifdef DEBUG__FOLLOW_QUEUES
+  Task_LogString( "Queuing SWI ", 12 );
+  Task_LogHex( SWI );
+  Task_LogString( " on ", 4 );
+  Task_LogHex( (uint32_t) queue_handle );
+  Task_LogNewLine();
+#endif
   OSTask *running = workspace.ostask.running;
   OSTask *next = running->next;
   OSTask *result = next;
@@ -151,6 +178,9 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
   OSQueue *queue = queue_from_handle( queue_handle );
 
   if (queue == 0) {
+#ifdef DEBUG__FOLLOW_QUEUES
+  Task_LogString( "Error\n", 6 );
+#endif
     return Error_InvalidQueue( regs );
   }
 
@@ -192,6 +222,11 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
   }
 
   if (matched_handler) {
+#ifdef DEBUG__FOLLOW_QUEUES
+  Task_LogString( "Handled by ", 11 );
+  Task_LogHex( (uint32_t) matched_handler );
+  Task_LogNewLine();
+#endif
     assert( 0xff1 == ((uint32_t) matched_handler) >> 20 );
     // Schedule the handler, giving it control over caller
     // It should run on this core, so as to implement the SWI
@@ -200,11 +235,14 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
     regs->r[0] = ostask_handle( running );
     regs->r[1] = op;
     regs->r[2] = core;
-    running->controller = matched_handler;
+    if (!push_controller( running, matched_handler )) PANIC; // FIXME
     dll_attach_OSTask( matched_handler, &workspace.ostask.running );
     result = matched_handler;
   }
   else {
+#ifdef DEBUG__FOLLOW_QUEUES
+  Task_LogString( "Blocking\n", 9 );
+#endif
     // No matching handler, block caller
     running->swi.offset = op;
     running->swi.core = core;

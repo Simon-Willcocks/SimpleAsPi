@@ -471,9 +471,15 @@ void start_ticker()
   register void *start asm( "r0" ) = ticker;
   register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
   register QA7 volatile *r1 asm( "r2" ) = qa7;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Create)
+  register uint32_t handle asm( "r0" );
+  asm volatile (
+        "svc %[swi_create]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    , "=r" (handle)
+    : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -510,10 +516,14 @@ void irq_manager( uint32_t handle, workspace *ws )
     register uint32_t r1 asm( "r2" ) = i;
 
     register uint32_t handle asm( "r0" );
-
-    asm volatile ( "svc %[swi]" // volatile in case we ignore output
-      : "=r" (handle)
-      : [swi] "i" (OSTask_Create)
+    asm volatile (
+          "svc %[swi_create]"
+      "\n  mov r1, #0"
+      "\n  svc %[swi_release]"
+      : "=r" (sp)
+      , "=r" (handle)
+      : [swi_create] "i" (OSTask_Create)
+      , [swi_release] "i" (OSTask_ReleaseTask)
       , "r" (start)
       , "r" (sp)
       , "r" (r1)
@@ -526,10 +536,14 @@ void irq_manager( uint32_t handle, workspace *ws )
     register workspace *r2 asm( "r3" ) = ws;
 
     register uint32_t handle asm( "r0" );
-
-    asm volatile ( "svc %[swi]" // volatile in case we ignore output
-      : "=r" (handle)
-      : [swi] "i" (OSTask_Create)
+    asm volatile (
+          "svc %[swi_create]"
+      "\n  mov r1, #0"
+      "\n  svc %[swi_release]"
+      : "=r" (sp)
+      , "=r" (handle)
+      : [swi_create] "i" (OSTask_Create)
+      , [swi_release] "i" (OSTask_ReleaseTask)
       , "r" (start)
       , "r" (sp)
       , "r" (r1)
@@ -678,9 +692,15 @@ void __attribute__(( noinline )) c_init( workspace **private,
   register void *start asm( "r0" ) = irq_manager;
   register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
   register workspace *r1 asm( "r2" ) = ws;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  register uint32_t new_handle asm( "r0" );
+  asm volatile ( // volatile because we ignore output
+        "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (new_handle)
+    , "=r" (sp) // corrupted
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)

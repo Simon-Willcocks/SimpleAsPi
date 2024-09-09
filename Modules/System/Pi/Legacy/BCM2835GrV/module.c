@@ -113,6 +113,7 @@ void open_display( uint32_t handle, workspace *ws )
 #define WriteS( s ) Task_LogString( s, sizeof( s ) - 1 )
 #define Write0( s ) Task_LogString( s, 0 )
 #define WriteNum( n ) Task_LogHex( n )
+#define WriteSmallNum( n ) Task_LogSmallNumber( n )
 #define Space Task_LogString( " ", 1 )
 
 typedef enum { HANDLER_PASS_ON, HANDLER_INTERCEPTED, HANDLER_FAILED } handled;
@@ -138,6 +139,123 @@ static uint32_t GraphicsV_ReadItem( uint32_t item, uint32_t *buffer, uint32_t le
   return 0;
 }
 
+static inline
+uint32_t get_pixel( int x, int y )
+{
+  return *(uint32_t*) (0xc0000000 + 4 * x + 4 * 1920 * (1080 - y));
+}
+
+static inline
+void set_pixel( int x, int y, uint32_t p )
+{
+  *(uint32_t*) (0xc0000000 + 4 * x + 4 * 1920 * (1080 - y)) = p;
+}
+
+typedef struct {
+  uint32_t sl;	// Source left edge
+  uint32_t sb;	// Source bottom edge
+  uint32_t dl;	// Dest left edge
+  uint32_t db;	// Dest bottom edge
+  uint32_t w;	// Width-1
+  uint32_t h;	// Height-1
+} copy_parms;
+
+void RectCopy( copy_parms *const copy )
+{
+  Task_LogString( "Source left edge ", 0 ); Task_LogSmallNumber( copy->sl ); Task_LogNewLine();
+  Task_LogString( "Source bottom edge ", 0 ); Task_LogSmallNumber( copy->sb ); Task_LogNewLine();
+  Task_LogString( "Dest left edge ", 0 ); Task_LogSmallNumber( copy->dl ); Task_LogNewLine();
+  Task_LogString( "Dest bottom edge ", 0 ); Task_LogSmallNumber( copy->db ); Task_LogNewLine();
+  Task_LogString( "Width-1 ", 0 ); Task_LogSmallNumber( copy->w ); Task_LogNewLine();
+  Task_LogString( "Height-1 ", 0 ); Task_LogSmallNumber( copy->h ); Task_LogNewLine();
+  // TODO Hardware acceleration, or at least efficient implementation!
+  if (copy->sb < copy->db) {
+    // Go top to bottom, in case of overlap
+    if (copy->sl < copy->dl) {
+      // Go right to left, in case of overlap
+      for (int y = copy->h; y >= 0; y--) {
+        for (int x = copy->w; x >= 0; x--) {
+          set_pixel( copy->dl + x, copy->db + y, get_pixel( copy->sl + x, copy->sb + y ) );
+        }
+      }
+    }
+    else {
+      // Go left to right, in case of overlap
+      for (int y = copy->h; y >= 0; y--) {
+        for (int x = 0; x <= copy->w; x++) {
+          set_pixel( copy->dl + x, copy->db + y, get_pixel( copy->sl + x, copy->sb + y ) );
+        }
+      }
+    }
+  }
+  else {
+    // Go bottom to top, in case of overlap
+    if (copy->sl < copy->dl) {
+      // Go right to left, in case of overlap
+      for (int y = 0; y <= copy->h; y++) {
+        for (int x = copy->w; x >= 0; x--) {
+          set_pixel( copy->dl + x, copy->db + y, get_pixel( copy->sl + x, copy->sb + y ) );
+        }
+      }
+    }
+    else {
+      // Go left to right, in case of overlap
+      for (int y = 0; y <= copy->h; y++) {
+        for (int x = 0; x <= copy->w; x++) {
+          set_pixel( copy->dl + x, copy->db + y, get_pixel( copy->sl + x, copy->sb + y ) );
+        }
+      }
+    }
+  }
+}
+
+typedef struct {
+  uint32_t or_mask;
+  uint32_t eor_mask;
+} ecf_line;
+
+typedef struct {
+  ecf_line line[8];
+} ECF;
+
+typedef struct {
+  uint32_t left;
+  uint32_t top;
+  uint32_t right;
+  uint32_t bottom;
+  ECF      *ecf;
+} fill_parms;
+
+void RectFill( fill_parms *const fill )
+{
+  ECF const *ecf = fill->ecf;
+
+  char const text[] = " ECF\n";
+  Task_LogString( text, sizeof( text )-1 );
+
+  for (int i = 0; i < 8; i++) {
+    Task_LogHex( ecf->line[i].or_mask );
+    Task_LogHex( ecf->line[i].eor_mask );
+    Task_LogNewLine();
+  }
+
+  if (ecf->line[0].or_mask == 0xffffffff) {
+    uint32_t c = ~ecf->line[0].eor_mask;
+    for (int y = fill->bottom; y <= fill->top; y++) {
+      for (int x = fill->left; x <= fill->right; x++) {
+        set_pixel( x, y, c );
+      }
+    }
+  }
+  else {
+    for (int y = fill->bottom; y <= fill->top; y++) {
+      for (int x = fill->left; x <= fill->right; x++) {
+        set_pixel( x, y, (get_pixel( x, y ) | ecf->line[0].or_mask) ^ ecf->line[0].eor_mask );
+      }
+    }
+  }
+}
+
 handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct workspace *workspace )
 {
   union {
@@ -154,9 +272,12 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     return HANDLER_PASS_ON;
   }
 
-  Write0( "GraphicsV in BCM2835GrV " );
-  WriteNum( command.raw );
+#if 0
+#define VERBOSE
+  Write0( "GraphicsV " );
+  WriteSmallNum( command.raw );
   Task_LogNewLine();
+#endif
 
   switch (command.code) {
   case 0:
@@ -183,14 +304,30 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     break; // Set DAG 	FG/BG 	SVC/IRQ
   case 7:
     WriteS( "Vet mode " );
+    WriteNum( regs[0] ); WriteS( " -> " );
     uint32_t *list = (void*) regs[0];
+    WriteNum( list[0] ); WriteS( " " );
+    WriteNum( list[1] ); WriteS( " " );
+    WriteNum( list[2] ); WriteS( " " );
+    WriteNum( list[3] ); WriteS( " " );
+    WriteNum( list[4] ); WriteS( " " );
+    WriteNum( list[5] ); WriteS( " " );
+    WriteNum( list[6] ); WriteS( " " );
+    WriteNum( list[7] ); WriteS( " " );
+    WriteNum( list[8] ); WriteS( " " );
+    WriteNum( list[9] ); WriteS( " " );
+    WriteNum( list[10] ); WriteS( " " );
+    WriteNum( list[11] ); Task_LogNewLine();
     if (list[0] != 3
      || list[1] != 5
      || list[5] != 1920
-     || list[11] != 1080) asm( "bkpt 1" );
+     || list[11] != 1080) {
+      WriteS( "Unsupported mode!\n" );
+      for (;;) { Task_Yield(); }
+      asm( "bkpt 1" );
+    }
 
     regs[0] = 0;
-    regs[1] = 0;
     break; // Vet mode 	FG 	SVC
   case 8:  // Features 	FG 	SVC
     {
@@ -211,10 +348,10 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     }
     break;
   case 10:
-    WriteNum( regs[0] ); Space; 
-    WriteNum( regs[1] ); Space; 
-    WriteNum( regs[2] ); Space; 
-    WriteS( "Write palette entry, ignored for now " );
+    // WriteNum( regs[0] ); Space; 
+    // WriteNum( regs[1] ); Space; 
+    // WriteNum( regs[2] ); Space; 
+    // WriteS( "Write palette entry, ignored for now " );
     break; // Write palette entry 	FG/BG 	SVC/IRQ
   case 11:
     WriteS( "Write palette entries " );
@@ -223,7 +360,18 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     WriteS( "Read palette entry " );
     break; // Read palette entry 	FG 	SVC
   case 13:
-    WriteS( "Render " );
+    switch (regs[1]) {
+    case 0: // Nop
+      break;
+    case 1:
+      RectCopy( (void*) regs[2] );
+      break;
+    case 2:
+      RectFill( (void*) regs[2] );
+      break;
+    default:
+      break;
+    }
     break; // Render 	FG 	SVC
   case 14:
     WriteS( "IIC op " );
@@ -243,16 +391,34 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     regs[4] = 0; // https://www.riscosopen.org/wiki/documentation/show/GraphicsV%2018
     break; // Read info 	FG 	SVC
   case 19:
+    {
     WriteS( "Vet mode 2 " );
+    WriteNum( regs[2] ); WriteS( ", " );
+    WriteNum( regs[0] ); WriteS( " -> " );
+    uint32_t *list = (void*) regs[0];
+    WriteNum( list[0] ); WriteS( " " );
+    WriteNum( list[1] ); WriteS( " " );
+    WriteNum( list[2] ); WriteS( " " );
+    WriteNum( list[3] ); WriteS( " " );
+    WriteNum( list[4] ); WriteS( " " );
+    WriteNum( list[5] ); WriteS( " " );
+    WriteNum( list[6] ); WriteS( " " );
+    WriteNum( list[7] ); WriteS( " " );
+    WriteNum( list[8] ); WriteS( " " );
+    WriteNum( list[9] ); WriteS( " " );
+    WriteNum( list[10] ); WriteS( " " );
+    WriteNum( list[11] ); Task_LogNewLine();
+    }
     regs[0] = 3;
     regs[1] = 2 << 20;
     regs[2] = 0;
-    regs[4] = 0;
     // Only change 3 and 5 if regs[0] == 2
     break; // Vet mode 2 	FG 	SVC
   }
 
+#ifdef VERBOSE
   Task_LogNewLine();
+#endif
 
   regs[4] = 0; // Indicate to caller that call was intercepted
 
@@ -266,6 +432,7 @@ static void __attribute__(( naked )) GraphicsV_handler( char c )
 
   asm ( "push { r0-r9, r12 }\n  mov %[regs], sp" : [regs] "=r" (regs) );
   asm ( "push {lr}" ); // Normal return address, to continue down the list
+  asm ( "udf #88" ); // FIXME remove
 
   register struct workspace *workspace asm( "r12" );
   handled result = C_GraphicsV_handler( regs, workspace );
@@ -287,9 +454,9 @@ static void __attribute__(( naked )) GraphicsV_handler( char c )
 
 void __attribute__(( noinline )) C_service_call( uint32_t *regs, struct workspace *workspace )
 {
-  Task_LogString( "Service call ", 0 );
-  Task_LogHex( regs[1] );
-  Task_LogNewLine();
+  //Task_LogString( "Service call ", 0 );
+  //Task_LogHex( regs[1] );
+  //Task_LogNewLine();
   switch (regs[1]) {
   case 0x4d: // Service_PreModeChange
     {
@@ -407,10 +574,14 @@ void __attribute__(( noinline )) c_init( workspace **private,
   register workspace *r1 asm( "r2" ) = ws;
 
   register uint32_t handle asm( "r0" );
-
-  asm volatile ( "svc %[swi]" // volatile in case we ignore output
-    : "=r" (handle)
-    : [swi] "i" (OSTask_Create)
+  asm volatile (
+        "svc %[swi_create]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    , "=r" (handle)
+    : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)

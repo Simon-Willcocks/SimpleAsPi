@@ -20,12 +20,10 @@
 static void __attribute__(( naked )) run_swi( uint32_t task, svc_registers *regs )
 {
   asm ( "svc %[swi]"
-    "\n  mov r12, r0    // Save value"
-    "\n  mov r0, r11    // Controller"
     "\n  mrs r11, cpsr  // Save cpsr"
     "\n  svc %[finished]"
     :
-    : [finished] "i" (OSTask_RelinquishControl)
+    : [finished] "i" (OSTask_Finished)
     , [swi] "i" (OS_CallASWIR12 | Xbit) );
 
   // The above should never return.
@@ -40,9 +38,6 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     queued_task client = Task_QueueWait( pipe );
 
     Task_GetRegisters( client.task_handle, &regs );
-
-    bool module_run = client.swi == OS_Module &&
-                      (regs.r[0] == 0 || regs.r[0] == 2);
 
     uint32_t r11 = regs.r[11];
     uint32_t r12 = regs.r[12];
@@ -63,14 +58,11 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     uint32_t r0 = regs.r[0];
     if (writeS) regs.r[0] = regs.lr;
 
-    regs.r[11] = handle;
     regs.r[12] = writeS ? OS_Write0 : client.swi;
     regs.lr = (uint32_t) run_swi;
 
-asm ( "udf #99" : : "r" (lr) );
     *owner = client.task_handle;
     Task_RunThisForMe( client.task_handle, &regs );
-asm ( "udf #99" : : "r" (lr) );
     *owner = 0;
 
 #ifdef DEBUG__SHOW_LEGACY_SWIS
@@ -81,26 +73,28 @@ asm ( "udf #99" : : "r" (lr) );
 
     Task_GetRegisters( client.task_handle, &regs );
 
-    if (!writeS) {
-      regs.r[0] = regs.r[12]; // R0 on exit from SWI
-      regs.spsr = regs.r[11]; // State on exit from SWI
-    }
-    else {
-      regs.lr = (3 + regs.r[12]) & ~3; // R0 on exit from SWI
-      regs.r[0] = r0;
-      regs.spsr = regs.r[11]; // State on exit from SWI
-    }
-
-    if (module_run && 0 == (VF & regs.spsr)) {
+    if (regs.r[12] != client.swi) {
       // Special case: we just successfully ran an OS_Module call to
-      // enter a module.
+      // enter a module. We reset the SVC stack and enter the code in
+      // usr32 mode.
+
       // These register choices have to match do_OS_Module
       // regs.r[0] is the command line (not so much, at the moment!)
       // Oh, wait, this is an OS_ChangeEnvironment thing, isn't it?
-      regs.r[12] = regs.r[1];
-      regs.lr = regs.r[2];
+      // Or OS_FSControl 2?
+      regs.r[0] = regs.r[2];
+      regs.r[12] = regs.r[3];
+      regs.lr = regs.r[4];
+      regs.spsr = 0x10; // usr32, interrupts enabled
+    }
+    else if (writeS) {
+      regs.spsr = regs.r[11]; // State on exit from SWI
+      regs.lr = (3 + regs.r[0]) & ~3; // R0 on exit from SWI (OS_WriteS)
+      regs.r[0] = r0;   // Restored to state before OS_WriteS
+      regs.r[12] = OS_WriteS;
     }
     else {
+      regs.spsr = regs.r[11]; // State on exit from SWI
       regs.r[11] = r11;
       regs.r[12] = r12;
       regs.lr = lr;

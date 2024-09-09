@@ -46,6 +46,8 @@ DECLARE_ERROR( UnknownSWI );
 
 extern uint32_t const LegacyModulesList;
 
+#define API_FLAG 8
+
 struct module_header {
   uint32_t offset_to_start;
   uint32_t offset_to_initialisation;
@@ -165,6 +167,16 @@ static inline void *service_call_handler( module_header const *h )
 static inline void *module_commands( module_header const *h )
 {
   return pointer_at_offset_from( h, h->offset_to_help_and_command_keyword_table );
+}
+
+static inline uint32_t module_flags( module_header const *h )
+{
+  return *(uint32_t*) pointer_at_offset_from( h, h->offset_to_flags );
+}
+
+static inline bool is_api_module( module_header const *h )
+{
+  return 0 != (4 & module_flags( h ));
 }
 
 // Case insensitive, nul, cr, lf, space, or % terminates.
@@ -385,9 +397,30 @@ static module *find_module_by_chunk( uint32_t swi )
 
 bool needs_legacy_stack( uint32_t swi )
 {
+  // if (swi >= OS_ConvertHex1 && swi <= OS_ConvertSpacedCardinal4) return false;
   if (swi < 0x200) return true; // kernel SWIs, currently all legacy
 
   module *m = find_module_by_chunk( swi );
+
+#if 0
+  if (m != 0) {
+    Task_LogString( title_string( m->header ), 0 );
+    if (m->handlers == 0) {
+      char const text[] = " Legacy\n";
+      Task_LogString( text, sizeof( text ) - 1 );
+    }
+    else {
+      char const text[] = " MP\n";
+      Task_LogString( text, sizeof( text ) - 1 );
+    }
+  }
+  else {
+    char const text[] = "No module providing ";
+    Task_LogString( text, sizeof( text ) - 1 );
+    Task_LogHex( swi );
+    Task_LogNewLine();
+  }
+#endif
 
   // We don't need a legacy stack to return unknown SWI, or if
   // the module has registered handlers.
@@ -408,6 +441,18 @@ OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )
   // Not, strictly speaking, a requirement, but having SWIs but not starting
   // at the first one is suspect.
   if (m->handlers->action[0].code == 0) PANIC;
+
+#ifdef DEBUG__SHOW_HANDLERS
+  {
+  char const text[] = "Handlers:";
+  Task_LogString( text, sizeof( text )-1 );
+  }
+  for (int i = 0; i < 64; i++) {
+    Task_LogString( " ", 1 );
+    Task_LogHex( m->handlers->action[i].queue );
+  }
+  Task_LogNewLine();
+#endif
 
   return 0;
 }
@@ -448,7 +493,14 @@ static void run_swi_handler_code( svc_registers *regs, uint32_t svc, module *m )
       : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9" );
 }
 
-OSTask *run_module_swi( svc_registers *regs, int swi )
+OSTask *run_api_swi( svc_registers *regs, int swi )
+{
+  // find api modules by chunk
+  // ...
+  return 0;
+}
+
+OSTask *run_traditional_swi( svc_registers *regs, int swi )
 {
   module *m = find_module_by_chunk( swi );
 
@@ -457,8 +509,9 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
     return Error_UnknownSWI( regs );
   }
 
+  uint32_t swi_offset = swi & 0x3f;
+
   if (m->handlers != 0) { // MP-aware
-    uint32_t swi_offset = swi & 0x3f;
     swi_action action = m->handlers->action[swi_offset];
     if (is_queue( action ))
       return queue_running_OSTask( regs, action.queue, swi_offset );
@@ -467,7 +520,7 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
       return Error_UnknownSWI( regs );
     }
     else {
-      PANIC; // Untested
+      // PANIC; // Untested
       OSTask *running = workspace.ostask.running;
       action.code( regs, (void*) m->private_word,
                    workspace.core, ostask_handle( running ) );
@@ -485,6 +538,21 @@ OSTask *run_module_swi( svc_registers *regs, int swi )
   }
 
   return 0;
+}
+
+static inline bool is_api_chunk( int swi )
+{
+  return false;
+}
+
+OSTask *run_module_swi( svc_registers *regs, int swi )
+{
+  if (is_api_chunk( swi )) {
+    return run_api_swi( regs, swi );
+  }
+  else {
+    return run_traditional_swi( regs, swi );
+  }
 }
 
 char const *extract_module_name( char const *name )
@@ -580,6 +648,13 @@ error_block const *load_and_initialise( char const *name )
     }
   }
 
+  if (is_api_module( header )) {
+    // This is where we register an API, if this is the first that
+    // provides this chunk.
+    // Either way, register the module as a provider.
+    PANIC;
+  }
+
   return run_initialisation_code( name, m, number );
 }
 
@@ -596,14 +671,12 @@ static void __attribute__(( noinline )) run_service_call_handler_code( svc_regis
   asm (
         "  push { %[regs] }"
       "\n  ldm %[regs], { r0-r8 }"
-      "\n  udf 3"
       "\n  blx r14"
-      "\n  udf 4"
       "\n  pop { r14 }"
       "\n  stm r14, { r0-r8 }"
       :
       : [regs] "r" (regs)
-      , [spsr] "i" (offsetof( svc_registers, spsr ))
+      , [spsr] "i" (offset_of( svc_registers, spsr ))
       , "r" (non_kernel_code)
       , "r" (private_word)
       : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8" );
@@ -616,40 +689,74 @@ OSTask *do_OS_ServiceCall( svc_registers *regs )
 
   uint32_t call = regs->r[1];
 
+#ifdef DEBUG__FOLLOW_SERVICE_CALLS
+  Task_LogString( "Service call ", 13 );
+  Task_LogSmallNumber( regs->r[1] );
+  Task_LogNewLine();
+#endif
+
   while (m != 0 && regs->r[1] != 0) {
     if (0 != m->header->offset_to_service_call_handler) {
       // Call for all instances, or just the base?
       if (m->instances != 0) PANIC;
 
+#ifdef DEBUG__FOLLOW_SERVICE_CALLS
+      Task_LogString( "  ", 2 );
+      Task_LogString( title_string( m->header ), 0 );
+#endif
+
       run_service_call_handler_code( regs, m );
 
       assert( regs->r[1] == 0 || regs->r[1] == call );
     }
+#ifdef DEBUG__FOLLOW_SERVICE_CALLS
+    if (regs->r[1] == 0) {
+      Task_LogString( " - Claimed\n", 11 );
+    }
+#endif
     m = m->next;
   }
+
+#ifdef DEBUG__FOLLOW_SERVICE_CALLS
+  Task_LogNewLine();
+#endif
 
   return 0;
 }
 
 extern OSTask *legacy_do_OS_Module( svc_registers *regs );
 
+__attribute__(( weak ))
+OSTask *legacy_do_OS_Module( svc_registers *regs )
+{
+  PANIC;
+  return 0;
+}
+
 #ifdef DEBUG__SHOW_LEGACY_MODULES
 void show_legacy_modules()
 {
   uint32_t const *list = &LegacyModulesList;
 
-  Task_LogString( "Legacy modules\n", 14 );
+  Task_LogString( "Legacy modules\n", 15 );
+  int count = 0;
 
   module_header *header = 0;
   uint32_t const *entry = list;
   while (*entry != 0) {
     header = (void*) (entry + 1);
 
+    Task_LogHex( *entry );
+    Task_LogString( "  ", 2 );
     Task_LogString( title_string( header ), 0 );
     Task_LogNewLine();
 
     entry += (*entry / sizeof( uint32_t ));
+    count++;
   }
+
+  Task_LogString( "END\n", 4 );
+  if (count < 10) PANIC;
 }
 #endif
 
@@ -1013,6 +1120,7 @@ handled run_aliased_command( uint32_t *regs )
     code = find_module_command( cmd0 );
   }
 
+#ifdef LEGACY_SPECIAL_SCHC
   if (code.command == 0) {
     // Special command list, removed in later versions?
     // FIXME? Assuming not alias
@@ -1031,6 +1139,7 @@ handled run_aliased_command( uint32_t *regs )
       code.module = &fake;
     }
   }
+#endif
 
   if (code.command == 0) {
 #ifdef DEBUG__LOG_COMMANDS
@@ -1118,7 +1227,7 @@ void claim_CLIV()
 }
 
 static inline __attribute__(( noreturn ))
-void start_usr32( uint32_t start, uint32_t *private )
+void start_usr32( void *start, uint32_t *private )
 {
   // Not sure how long the command should exist for; until the
   // application is replaced, presumably. Put a copy in RMA and
@@ -1130,7 +1239,7 @@ void start_usr32( uint32_t start, uint32_t *private )
   register uint32_t r1 asm( "r1" ) = 0;
   register char const *r2 asm( "r2" ) = "SomeCommand";
   register uint32_t *r3 asm( "r3" ) = private;
-  register uint32_t r4 asm( "r4" ) = start;
+  register void *r4 asm( "r4" ) = start;
   register uint32_t r12 asm( "r12" ) = 0x5943474c; // "LGCY"
   asm ( "svc %[swi]"
       :
@@ -1140,6 +1249,7 @@ void start_usr32( uint32_t start, uint32_t *private )
       , "r" (r2)
       , "r" (r3)
       , "r" (r4)
+      , "r" (r12)
       );
 
   __builtin_unreachable();
@@ -1150,12 +1260,14 @@ OSTask *do_OS_Module( svc_registers *regs )
   error_block const *error = 0;
   char const *const name = (void*) regs->r[1];
 
+#ifdef LEGACY_CLIV
   if (shared.module.modules == 0) {
     // Even if the load_and_initialise doesn't modify 
     // shared.module.modules, a subsequent claim will simply
     // replace the previous.
     claim_CLIV();
   }
+#endif
 
   switch (regs->r[0]) {
   case 0: // RMRun

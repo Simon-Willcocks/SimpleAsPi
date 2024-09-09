@@ -18,6 +18,7 @@
 #include "doubly_linked_list.h"
 #include "ostask_extras.h"
 #include "raw_memory_manager.h"
+#include "kernel_swis.h"
 
 #include "ostaskops.h"
 
@@ -33,7 +34,8 @@ struct dynamic_area {
   uint32_t number;
   uint32_t va_start;
   uint32_t max_size;
-  uint32_t current_size;
+  uint32_t actual_pages; // Pages allocated and mapped in
+  uint32_t pages;       // Pages a program will be told about
 
   // TODO: Call handlers, as required.
   uint32_t handler;
@@ -62,6 +64,14 @@ static dynamic_area *find_da( uint32_t num )
   if (da->number != num) return 0;
 
   return da;
+}
+
+static uint32_t new_da_number()
+{
+  if (shared.legacy.last_allocated_da == 0) {
+    shared.legacy.last_allocated_da = 0x41450000;
+  }
+  return --shared.legacy.last_allocated_da;
 }
 
 void do_OS_ReadDynamicArea( svc_registers *regs )
@@ -106,10 +116,9 @@ void do_OS_ReadDynamicArea( svc_registers *regs )
       dynamic_area *da = find_da( regs->r[0] );
 
       if (da != 0) {
-        if (regs->r[0] > 127)
-          regs->r[2] = da->max_size;
+        max = da->max_size;
         regs->r[0] = da->va_start;
-        regs->r[1] = da->current_size;
+        regs->r[1] = da->pages << 12;
       }
       else {
         Error_UnknownDA( regs );
@@ -129,6 +138,169 @@ extern uint32_t dynamic_areas_top;
 
 static uint32_t const da_base = (uint32_t) &dynamic_areas_base;
 static uint32_t const da_top = (uint32_t) &dynamic_areas_top;
+
+static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
+{
+  if (resize_by_pages == 0) { // Doing nothing
+    return 0;
+  }
+
+  if (resize_by_pages < 0 && (-resize_by_pages > da->pages)) {
+    resize_by_pages = -da->pages;      // Attempting to reduce the size as much as possible
+  }
+
+  int32_t resize_by = resize_by_pages << 12;
+
+  if (((da->pages + resize_by_pages) << 12) > da->max_size) {
+    static error_block error = { 999, "DA maximum size exceeded" };
+    asm ( "bkpt 21" );
+    return &error;
+  }
+
+  if (da->handler != 0 && resize_by < 0) {
+    // Pre-shrink
+    register uint32_t code asm ( "r0" ) = 2;
+    register uint32_t shrink_by asm ( "r3" ) = -resize_by_pages << 12;
+    register uint32_t current_size asm ( "r4" ) = da->pages << 12;
+    register uint32_t page_size asm ( "r5" ) = 4096;
+    register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
+    register uint32_t error asm( "r0" );
+    register int32_t permitted asm ( "r3" );
+    asm ( "blx %[preshrink]"
+      "\n  movvc r0, #0"
+        : "=r" (error)
+        , "=r" (permitted)
+        : "r" (code)
+        , "r" (shrink_by)
+        , "r" (current_size)
+        , "r" (page_size)
+        , "r" (workspace)
+        , [preshrink] "r" (da->handler) 
+        : "lr" );
+    if (error != 0) { // pre-shrink code
+      return error;
+    }
+    permitted = -permitted; // FIXME: Non-page multiples
+    resize_by_pages = permitted >> 12;
+    resize_by = resize_by_pages << 12;
+  } 
+  else if (da->handler != 0 && resize_by >= 0) {
+    // Pre-grow
+    register uint32_t code asm ( "r0" ) = 0;
+    register uint32_t page_block asm ( "r1" ) = 0xbadf00d;
+    register uint32_t pages asm ( "r2" ) = resize_by_pages;
+    register uint32_t grow_by asm ( "r3" ) = resize_by;
+    register uint32_t current_size asm ( "r4" ) = da->pages << 12;
+    register uint32_t page_size asm ( "r5" ) = 4096;
+    register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
+    register uint32_t error asm( "r0" );
+    asm ( "blx %[pregrow]"
+      "\n  movvc r0, #0"
+        : "=r" (error)
+        : "r" (code)
+        , "r" (page_block)
+        , "r" (pages)
+        , "r" (grow_by)
+        , "r" (current_size)
+        , "r" (page_size)
+        , "r" (workspace)
+        , [pregrow] "r" (da->handler)
+        : "lr" );
+    if (error != 0) {
+      return error;
+    }
+  } 
+
+  // TODO Actually release memory as it's not used.
+  // mmu_release_global_pages( va, pages ); (Wakes a task to do the job,
+  // cleaning out the memory map on each core then returning the memory to
+  // the free pool?)
+
+  da->pages = da->pages + resize_by_pages; // Always increased (or decreased) to sufficient pages
+  // A small increase of less than a page may not change the
+  // number of pages.
+  if (da->pages > da->actual_pages) {
+    uint32_t new_pages = da->pages - da->actual_pages;
+    uint32_t physical = claim_contiguous_memory( new_pages );
+    if (physical == 0) PANIC;
+
+    Task_LogString( "Expanding DA\n", 13 );
+    memory_mapping map = {
+        .base_page = physical,
+        .pages = new_pages,
+        .va = da->va_start + (da->actual_pages << 12),
+        .type = CK_MemoryRW,
+        .map_specific = 0,
+        .all_cores = 1,
+        .usr32_access = 1 };
+
+    map_memory( &map );
+
+    da->actual_pages = da->pages;
+  }
+
+  if (da->handler != 0 && resize_by >= 0) {
+    // Post-grow
+    register uint32_t code asm ( "r0" ) = 1;
+    register uint32_t page_block asm ( "r1" ) = 0xbadf00d;
+    register uint32_t pages asm ( "r2" ) = resize_by_pages;
+    register uint32_t grown_by asm ( "r3" ) = resize_by_pages << 12;
+    register uint32_t current_size asm ( "r4" ) = da->pages << 12;
+    register uint32_t page_size asm ( "r5" ) = 4096;
+    register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
+    register uint32_t error asm( "r0" );
+    asm ( "blx %[postgrow]"
+      "\n  movvc r0, #0"
+        : "=r" (error)
+        : "r" (code)
+        , "r" (page_block)
+        , "r" (pages)
+        , "r" (grown_by)
+        , "r" (current_size)
+        , "r" (page_size)
+        , "r" (workspace)
+        , [postgrow] "r" (da->handler) 
+        : "lr" );
+    if (error != 0) { // Changed
+      return error;
+    }
+  }
+
+  if (da->handler != 0 && resize_by < 0) {
+    // Post-shrink
+    register uint32_t code asm ( "r0" ) = 3;
+    register uint32_t grown_by asm ( "r3" ) = resize_by_pages << 12;
+    register uint32_t current_size asm ( "r4" ) = da->pages << 12;
+    register uint32_t page_size asm ( "r5" ) = 4096;
+    register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
+    register uint32_t error asm( "r0" );
+    asm ( "blx %[postgrow]"
+      "\n  movvc r0, #0"
+        : "=r" (error)
+        : "r" (code)
+        , "r" (grown_by)
+        , "r" (current_size)
+        , "r" (page_size)
+        , "r" (workspace)
+        , [postgrow] "r" (da->handler) 
+        : "lr" );
+    if (error != 0) { // Changed
+      return error;
+    }
+  }
+
+  {
+    // Service_MemoryMoved
+    register uint32_t code asm( "r1" ) = 0x4e;
+    asm ( "svc %[swi]"
+        :
+        : [swi] "i" (OS_ServiceCall | Xbit)
+        , "r" (code)
+        : "lr", "cc", "memory" );
+  }
+
+  return 0;
+}
 
 void do_OS_DynamicArea( svc_registers *regs )
 {
@@ -150,19 +322,23 @@ void do_OS_DynamicArea( svc_registers *regs )
       int len = (strlen( name ) + 4 & ~3);
       dynamic_area *new_da = system_heap_allocate( sizeof( *new_da ) + len );
       dll_new_dynamic_area( new_da );
+
+      if (regs->r[5] == -1) regs->r[5] = 16 << 20; // Max size
+
+      new_da->pages = 0;
+      new_da->max_size = regs->r[5];
+      new_da->actual_pages = 0;
       new_da->number = regs->r[1];
+
+      // TODO: area flags
+
       if (new_da->number == -1) {
-        if (shared.legacy.last_allocated_da == 0) {
-          shared.legacy.last_allocated_da = -1;
-        }
-        new_da->number = --shared.legacy.last_allocated_da;
+        new_da->number = new_da_number();
         regs->r[1] = new_da->number;
       }
-      new_da->current_size = regs->r[2];
+
       if (regs->r[3] != -1) PANIC;
       if (shared.legacy.last_da_top == 0) shared.legacy.last_da_top = da_top;
-
-      if (regs->r[5] == -1) regs->r[5] = 16 << 20;
 
       if (shared.legacy.last_da_top - regs->r[5] < da_base) PANIC; // FIXME
 
@@ -175,25 +351,9 @@ void do_OS_DynamicArea( svc_registers *regs )
       char *d = new_da->name;
       while (*name >= ' ') { *d++ = *name++; }
 
-      uint32_t pages = (0xfff + regs->r[5]) >> 12;
-      if (pages > 0x400) {
-        pages = 0x400;
-        Task_LogString( "Limiting DA size\n", 0 );
-      } // 4 MiB FIXME
+      uint32_t pages = (0xfff + regs->r[2]) >> 12;
 
-      uint32_t physical = claim_contiguous_memory( pages );
-      if (physical == 0) PANIC;
-
-      memory_mapping map = {
-        .base_page = physical,
-        .pages = pages,
-        .va = new_da->va_start,
-        .type = CK_MemoryRW,
-        .map_specific = 0,
-        .all_cores = 1,
-        .usr32_access = 1 };
-
-      map_memory( &map );
+      resize_da( new_da, pages );
 
       dll_attach_dynamic_area( new_da, &shared.legacy.dynamic_areas );
     }
@@ -215,7 +375,7 @@ void do_OS_DynamicArea( svc_registers *regs )
       dynamic_area *da = find_da( regs->r[1] );
 
       if (da != 0) {
-        regs->r[2] = da->current_size;
+        regs->r[2] = da->pages << 12;
         regs->r[3] = da->va_start;
         regs->r[4] = 0; // TODO?
         regs->r[5] = da->max_size;
@@ -259,12 +419,28 @@ void do_OS_DynamicArea( svc_registers *regs )
 
 void do_OS_ChangeDynamicArea( svc_registers *regs )
 {
-  // TODO whole pages
   dynamic_area *da = find_da( regs->r[0] );
-  if (da == 0) PANIC;
-  da->current_size += regs->r[1];
-  if (0 > (int32_t) regs->r[1]) {
-    regs->r[1] = -regs->r[1];
+
+  if (da == 0) {
+    Error_UnknownDA( regs );
+    return;
+  }
+
+  int32_t resize_by = (int32_t) regs->r[1];
+  int32_t resize_by_pages = resize_by >> 12;
+
+  if (0 != (resize_by & 0xfff)) {
+    resize_by_pages ++;
+  }
+
+  error_block *error = resize_da( da, resize_by_pages );
+  if (error) {
+    regs->r[0] = error;
+    regs->spsr |= VF;
+    PANIC;
+  }
+  else {
+    regs->r[1] = resize_by_pages;
   }
 }
 
@@ -374,6 +550,19 @@ for (int y = 0; y < 1080; y++) {
       regs->r[3] = base;
     }
     break;
+  case ReadAvailable:
+    {
+      enum { DRAM = 1, VRAM, ROM, IO, Soft_ROM };
+      switch (regs->r[0] >> 8) {
+      case Soft_ROM:
+        regs->r[1] = 5 << 8;
+        regs->r[2] = 4096;
+        break;
+      default:
+        PANIC;
+      }
+    }
+    break;
   default: PANIC;
   };
 }
@@ -385,5 +574,11 @@ void do_OS_ValidateAddress( svc_registers *regs )
   // I think it's fair to complain if the memory region stradles two
   // logical regions.
   regs->spsr &= ~CF;
+}
+
+void do_OS_AMBControl( svc_registers *regs )
+{
+  if (regs->r[0] == 1) return; // Deallocate slot FIXME
+  PANIC;
 }
 

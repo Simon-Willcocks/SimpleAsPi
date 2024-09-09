@@ -122,6 +122,11 @@ struct OSTaskSlot {
   OSTaskSlot *prev;
 };
 
+#ifndef MAX_CONTROLLERS
+// above 5 needs memmove
+#define MAX_CONTROLLERS 32
+#endif
+
 struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   // Order of the next 4 items fixed for assembler code
   svc_registers regs;
@@ -132,7 +137,6 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   int reserved; // was resumes, but I don't think I need that functionality
 
   union {
-    OSTask *controller;
     struct __attribute__(( packed )) {
       uint32_t offset:10; // Big enough for kernel SWIs
       uint32_t core:8;
@@ -146,6 +150,12 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
       uint32_t match_core:1;
     } handler;
   };
+
+  // A controlled Task is either waiting to be told what to do, or
+  // running whatever code the (latest) controller wants it to run.
+  // A controller task can pass a task on to another, either explicitly,
+  // or by queuing it for another task to retrieve.
+  OSTask *controller[MAX_CONTROLLERS];
 
   OSTask *next;
   OSTask *prev;
@@ -235,3 +245,122 @@ void sanity_check();
 
 void sleeping_tasks_add( OSTask *tired );
 void sleeping_tasks_tick();
+
+static inline bool push_controller( OSTask *task, OSTask *controller )
+{
+#ifdef DEBUG__FOLLOW_CONTROLLERS
+  {
+  Task_LogString( "New controller for ", 19 );
+  Task_LogHex( (uint32_t) task );
+  Task_LogString( " is ", 4 );
+  Task_LogHex( (uint32_t) controller );
+  Task_LogString( "... ", 4 );
+  int i = 0;
+  while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
+    Task_LogHex( (uint32_t) task->controller[i] );
+    Task_LogString( " ", 1 );
+    i++;
+  }
+  Task_LogNewLine();
+  }
+#endif
+  if (task->controller[MAX_CONTROLLERS-1] != 0) {
+#ifdef DEBUG__FOLLOW_CONTROLLERS
+    Task_LogString( "Oops!\n", 6 );
+    PANIC;
+#endif
+    return false;
+  }
+
+  for (int i = MAX_CONTROLLERS-1; i >= 1; i--) {
+    task->controller[i] = task->controller[i-1];
+  }
+  task->controller[0] = controller;
+
+#ifdef DEBUG__FOLLOW_CONTROLLERS
+  {
+  Task_LogString( "Now controllers for ", 20 );
+  Task_LogHex( (uint32_t) task );
+  Task_LogString( " are ", 5 );
+  {
+  int i = 0;
+  while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
+    Task_LogHex( (uint32_t) task->controller[i] );
+    Task_LogString( " ", 1 );
+    i++;
+  }
+  }
+  Task_LogNewLine();
+  }
+#endif
+
+  return true;
+}
+
+static inline bool pop_controller( OSTask *task )
+{
+#ifdef DEBUG__FOLLOW_CONTROLLERS
+  Task_LogString( "Removing controller for ", 25 );
+  Task_LogHex( (uint32_t) task );
+  int i = 0;
+  while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
+    Task_LogString( " ", 1 );
+    Task_LogHex( (uint32_t) task->controller[i] );
+    i++;
+  }
+  Task_LogNewLine();
+#endif
+  if (task->controller[0] == 0) return false;
+
+  for (int i = 0; i < MAX_CONTROLLERS-1; i++) {
+    task->controller[i] = task->controller[i+1];
+    if (task->controller[i] == 0) break;
+  }
+  // In case the stack was full:
+  task->controller[MAX_CONTROLLERS-1] = 0;
+
+#ifdef DEBUG__FOLLOW_CONTROLLERS
+  {
+  Task_LogString( "Now controllers for ", 20 );
+  Task_LogHex( (uint32_t) task );
+  Task_LogString( " are ", 5 );
+  {
+  int i = 0;
+  while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
+    Task_LogHex( (uint32_t) task->controller[i] );
+    Task_LogString( " ", 1 );
+    i++;
+  }
+  }
+  Task_LogNewLine();
+  }
+#endif
+  return true;
+}
+
+static inline OSTask *current_controller( OSTask *task )
+{
+#ifdef DEBUG__FOLLOW_CONTROLLERS
+  Task_LogString( "Current controller for ", 23 );
+  Task_LogHex( (uint32_t) task );
+  Task_LogString( " ", 1 );
+  Task_LogHex( (uint32_t) task->controller[0] );
+  Task_LogNewLine();
+#endif
+  return task->controller[0];
+}
+
+static inline void change_current_controller( OSTask *task, OSTask *new )
+{
+#ifdef DEBUG__FOLLOW_CONTROLLERS
+  Task_LogString( "Change controller for ", 22 );
+  Task_LogHex( (uint32_t) task );
+  Task_LogString( " from ", 6 );
+  Task_LogHex( (uint32_t) task->controller[0] );
+  Task_LogString( " to ", 4 );
+  Task_LogHex( (uint32_t) new );
+  Task_LogNewLine();
+#endif
+  if (0 == task->controller[0]) PANIC;
+  task->controller[0] = new;
+}

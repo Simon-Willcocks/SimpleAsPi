@@ -77,9 +77,15 @@ void __attribute__(( noinline )) c_init( workspace **private,
 
   register void *start asm( "r0" ) = start_echo;
   register void *sp asm( "r1" ) = aligned_stack( stack + stack_size );
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  register uint32_t handle asm( "r0" );
+  asm volatile (
+        "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    , "=r" (handle)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     : "lr", "cc" );

@@ -302,10 +302,14 @@ void start_log( uint32_t handle, workspace *ws )
       register uint32_t r3 asm( "r4" ) = pipe;
 
       register uint32_t handle asm( "r0" );
-
-      asm volatile ( "svc %[swi]" // volatile in case we ignore output
-        : "=r" (handle)
-        : [swi] "i" (OSTask_Create)
+      asm volatile (
+            "svc %[swi_create]"
+        "\n  mov r1, #0"
+        "\n  svc %[swi_release]"
+        : "=r" (sp)
+        , "=r" (handle)
+        : [swi_create] "i" (OSTask_Create)
+        , [swi_release] "i" (OSTask_ReleaseTask)
         , "r" (start)
         , "r" (sp)
         , "r" (r1)
@@ -328,10 +332,14 @@ void start_log( uint32_t handle, workspace *ws )
     register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
 
     register uint32_t handle asm( "r0" );
-
-    asm volatile ( "svc %[swi]" // volatile in case we ignore output
-      : "=r" (handle)
-      : [swi] "i" (OSTask_Create)
+    asm volatile (
+          "svc %[swi_create]"
+      "\n  mov r1, #0"
+      "\n  svc %[swi_release]"
+      : "=r" (sp)
+      , "=r" (handle)
+      : [swi_create] "i" (OSTask_Create)
+      , [swi_release] "i" (OSTask_ReleaseTask)
       , "r" (start)
       , "r" (sp)
       : "lr", "cc" );
@@ -365,9 +373,15 @@ void __attribute__(( noinline )) c_init( workspace **private,
   register void *start asm( "r0" ) = start_log;
   register uint32_t sp asm( "r1" ) = aligned_stack( ws + 1 );
   register workspace *r1 asm( "r2" ) = ws;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  register uint32_t handle asm( "r0" );
+  asm volatile ( // volatile because we ignore output
+        "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (handle)
+    , "=r" (sp) // corrupted
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)

@@ -105,9 +105,15 @@ void __attribute__(( noinline )) c_init( workspace **private,
   register void *sp asm( "r1" ) = aligned_stack( stack + stack_size );
   register uint32_t r1 asm( "r2" ) = a;
   register uint32_t r2 asm( "r3" ) = b;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Create)
+  register uint32_t handle asm( "r0" );
+  asm volatile (
+        "svc %[swi_create]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    , "=r" (handle)
+    : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_Release_Task)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -119,9 +125,15 @@ void __attribute__(( noinline )) c_init( workspace **private,
   register void *sp asm( "r1" ) = aligned_stack( stack + 2 * stack_size );
   register uint32_t r1 asm( "r2" ) = a;
   register uint32_t r2 asm( "r3" ) = b;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Create)
+  register uint32_t handle asm( "r0" );
+  asm volatile (
+        "svc %[swi_create]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    , "=r" (handle)
+    : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_Release_Task)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)

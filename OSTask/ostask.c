@@ -153,13 +153,12 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
   workspace.ostask.running = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
 
   workspace.ostask.running->slot = shared.ostask.first;
-workspace.ostask.running->reserved = workspace.core << 24;
   map_first_slot();
 
   mmu_establish_resources();
 
 #ifdef DEBUG__ENABLE_EVENT_STREAM
-  // Setup event steam to see if I've missed something...
+  // Setup event stream to see if I've missed something...
   // This will re-start cores waiting for events if the software "forgets"
   // to signal one.
   asm ( "mcr p15, 0, %[start], c14, c1, 0" : : [start] "r" (0x44) );
@@ -169,13 +168,9 @@ workspace.ostask.running->reserved = workspace.core << 24;
     // Create a separate idle OSTask
     workspace.ostask.idle = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
     workspace.ostask.idle->regs.lr = (uint32_t) idle_task;
-workspace.ostask.idle->reserved = 0xf0000000 | workspace.core << 24;
-
-    uint32_t cpsr;
-    asm ( "mrs %[cpsr], cpsr" : [cpsr] "=r" (cpsr) );
 
     // usr32, interrupts enabled
-    workspace.ostask.idle->regs.spsr = cpsr & ~0x1ef;
+    workspace.ostask.idle->regs.spsr = 0x10;
     workspace.ostask.idle->slot = shared.ostask.first;
 
     dll_attach_OSTask( workspace.ostask.idle, &workspace.ostask.running );
@@ -193,7 +188,6 @@ Task_LogNewLine();
     // Become the idle OSTask
     workspace.ostask.idle = workspace.ostask.running;
     workspace.ostask.idle->slot = shared.ostask.first;
-workspace.ostask.idle->reserved = 0xf0000000 | workspace.core << 24;
 
     // Before we start scheduling tasks from other cores, ensure the shared
     // memory areas that memory_fault_handlers might use are mapped into this
@@ -254,9 +248,6 @@ void __attribute__(( noinline )) save_task_state( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
 
-  // I think only tasks directly calling from usr32
-  assert( regs + 1 == (svc_registers *) ((&workspace.svc_stack)+1) );
-
   running->regs = *regs;
 #ifdef DEBUG__UDF_ON_SAVE_TASK_STATE
   asm ( "udf 3" );
@@ -285,10 +276,10 @@ DEFINE_ERROR( InvalidQueue, 0x888, "Invalid OSTask Queue handle" );
 DEFINE_ERROR( UnknownQueueSWI, 0x888, "Unknown Queue operation" );
 
 DEFINE_ERROR( NotATask, 0x666, "Programmer error: Not a task" );
-DEFINE_ERROR( NotYourTask, 0x666, "Programmer error: Not your task" );
-DEFINE_ERROR( InvalidInitialStack, 0x666, "Tasks must always be started with 8-byte aligned stack" );
+DEFINE_ERROR( NotYourTask, 0x667, "Programmer error: Not your task" );
+DEFINE_ERROR( InvalidInitialStack, 0x668, "Tasks must always be started with 8-byte aligned stack" );
 
-static OSTask *RunInControlledTask( svc_registers *regs, bool wait )
+OSTask *TaskOpRunThisForMe( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *release = ostask_from_handle( regs->r[0] );
@@ -298,7 +289,7 @@ static OSTask *RunInControlledTask( svc_registers *regs, bool wait )
     return Error_NotATask( regs );
   }
 
-  if (release->controller != running) {
+  if (current_controller( release ) != running) {
     return Error_NotYourTask( regs );
   }
 
@@ -306,45 +297,59 @@ static OSTask *RunInControlledTask( svc_registers *regs, bool wait )
     release->regs = *context;
   }
 
-  release->controller = 0;
+  bool lock_to_core = 0 != (release->regs.spsr & 0x80);
+
+  // This must be done before the release Task is known to be runnable
+  save_task_state( regs );
+  workspace.ostask.running = running->next;
+  assert( running != running->next );
+  dll_detach_OSTask( running );
+  // running is now blocked until Finished is called
+
+  // Run code on this core, the running task just unlinked itself.
+  dll_attach_OSTask( release, &workspace.ostask.running );
+  assert( workspace.ostask.running == release );
+
+  return release;
+}
+
+OSTask *TaskOpReleaseTask( svc_registers *regs )
+{
+  OSTask *running = workspace.ostask.running;
+  OSTask *release = ostask_from_handle( regs->r[0] );
+  svc_registers *context = (void*) regs->r[1];
+
+  if (release == 0) {
+    return Error_NotATask( regs );
+  }
+
+  if (current_controller( release ) != running) {
+    return Error_NotYourTask( regs );
+  }
+
+  // Giving up control over the given task
+  pop_controller( release );
+
+  if (context != 0) {
+    release->regs = *context;
+  }
 
   bool lock_to_core = 0 != (release->regs.spsr & 0x80);
 
   // This must be done before the release Task is known to be runnable
-  if (wait) {
-    save_task_state( regs );
-    workspace.ostask.running = running->next;
-    assert( running != running->next );
-    dll_detach_OSTask( running );
-    running->controller = release;
-    // Might as well run it on this core, the running task just unlinked
-    // itself.
-    dll_attach_OSTask( release, &workspace.ostask.running );
-    assert( workspace.ostask.running == release );
-
-    return release;
-  }
-  else if (lock_to_core) {
+  if (lock_to_core) {
     OSTask *next = running->next;
     dll_attach_OSTask( release, &next );
   }
   else {
     // The caller's going to keep running, let one of the other cores
     // pick up the resumed task.
+    //   TODO When should FP context be stored? Tasks put into runnable
+    //   must not own the FP for the current core.
     mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, release );
   }
 
   return 0;
-}
-
-OSTask *TaskOpRunThisForMe( svc_registers *regs )
-{
-  return RunInControlledTask( regs, true );
-}
-
-OSTask *TaskOpReleaseTask( svc_registers *regs )
-{
-  return RunInControlledTask( regs, false );
 }
 
 OSTask *TaskOpChangeController( svc_registers *regs )
@@ -352,30 +357,32 @@ OSTask *TaskOpChangeController( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
   OSTask *release = ostask_from_handle( regs->r[0] );
   if (release == 0) {
-    PANIC;
+    return Error_NotATask( regs );
   }
   else {
-    if (release->controller != running) {
+    if (current_controller( release ) != running) {
       PANIC;
     }
     OSTask *new_controller = ostask_from_handle( regs->r[1] );
-    if (new_controller == 0) PANIC;
-    release->controller = new_controller;
+    if (new_controller == 0)
+      return Error_NotATask( regs );
+    change_current_controller( release, new_controller );
   }
   return 0;
 }
 
 OSTask *TaskOpSetController( svc_registers *regs )
 {
+  PANIC; // No longer needed?
   OSTask *running = workspace.ostask.running;
   OSTask *controller = ostask_from_handle( regs->r[1] );
   svc_registers *swi_regs = (void*) regs->r[0];
 
   if (controller == 0) PANIC;
-  if (running->controller != 0) PANIC;
+  // ??? if (current_controller( controller ) != 0) PANIC;
   if (0 == (regs->spsr & 0x80)) PANIC;
 
-  running->controller = controller;
+  running->controller[0] = controller;
 
   save_task_state( swi_regs );
   workspace.ostask.running = running->next;
@@ -386,42 +393,27 @@ OSTask *TaskOpSetController( svc_registers *regs )
   return 0;
 }
 
-OSTask *TaskOpRelinquishControl( svc_registers *regs )
+OSTask *TaskOpFinished( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
 
-  if (running->controller != 0) PANIC;
+  OSTask *resume = current_controller( running );
 
-  running->controller = ostask_from_handle( regs->r[0] );
-  if (0 == running->controller) {
-    return Error_NotATask( regs );
-  }
+  // Working for somebody?
+  if (resume == 0) PANIC; // FIXME (Error)
 
   save_task_state( regs );
   workspace.ostask.running = running->next;
   dll_detach_OSTask( running );
 
-  OSTask *resume = 0;
+  // Task is waiting, detached from the running list
+  // Place at head of this core's running list (replacing
+  // running).
 
-  if (running->controller != 0) {
-    resume = running->controller;
+  assert( resume->next == resume );
+  assert( resume->prev == resume );
 
-    if (resume->controller != running) PANIC;
-
-    // Task is waiting, detached from the running list
-    // Place at head of this core's running list (replacing
-    // running).
-
-    assert( resume->next == resume );
-    assert( resume->prev == resume );
-
-    resume->controller = 0;
-
-    dll_attach_OSTask( resume, &workspace.ostask.running );
-  }
-  else {
-    resume = running->next;
-  }
+  dll_attach_OSTask( resume, &workspace.ostask.running );
 
   return resume;
 }
@@ -435,7 +427,7 @@ OSTask *TaskOpGetRegisters( svc_registers *regs )
   if (controlled == 0) {
     return Error_NotATask( regs );
   }
-  if (controlled->controller != running) {
+  if (current_controller( controlled ) != running) {
     return Error_NotYourTask( regs );
   }
 
@@ -453,7 +445,7 @@ OSTask *TaskOpSetRegisters( svc_registers *regs )
   if (controlled == 0) {
     return Error_NotATask( regs );
   }
-  if (controlled->controller != running) {
+  if (current_controller( controlled ) != running) {
     return Error_NotYourTask( regs );
   }
 
@@ -506,13 +498,6 @@ OSTask *find_task_for_this_core()
 OSTask *IdleTaskYield( svc_registers *regs )
 {
   // Special case; the idle task never leaves its core.
-
-/*
-  char tmp[4] = "Y #\n";
-  tmp[2] = '0' + workspace.core;
-  Task_LogString( tmp, 4 );
-*/
- // *((uint32_t*) 0xfffff000) = '0' + workspace.core;
 
   OSTask *running = workspace.ostask.running;
   OSTask *next = running->next;
@@ -581,7 +566,6 @@ OSTask *IdleTaskYield( svc_registers *regs )
     resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
 
     if (resume != 0) {
-resume->reserved = workspace.core << 28;
 #ifdef DEBUG__LOG_OS_TASKS
       Task_LogString( "R ", 2 );
       if (resume == workspace.ostask.idle)
@@ -683,6 +667,11 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   OSTask *task = mpsafe_detach_OSTask_at_head( &shared.ostask.task_pool );
 
   assert( task->next == task || task->prev == task );
+  for (int i = 0; i < sizeof( *task ) / 4; i++) {
+    *((uint32_t*) task + i) = 0;
+  }
+  task->next = task;
+  task->prev = task;
 
   if (spawn) {
     task->slot = mpsafe_detach_OSTaskSlot_at_head( &shared.ostask.slot_pool );
@@ -700,6 +689,8 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   task->regs.r[3] = regs->r[4];
   task->regs.r[4] = regs->r[5];
 
+  if (!push_controller( task, running )) PANIC;
+
 #ifdef DEBUG__FOLLOW_OS_TASKS
 Task_LogString( "Created task ", 13 );
 Task_LogHex( (uint32_t) task );
@@ -710,20 +701,12 @@ Task_LogHex( (uint32_t) task->slot );
 Task_LogNewLine();
 #endif
 
-  // Keep the new task on the current core, in case it's a device
-  // driver than needs it. Any Sleep or Yield indicates that the
-  // task doesn't care what core it runs on. (Except for idle_task.)
-  // TODO: decide whether blocking on a lock should maintain core
-  // or not. (Currently chosen not 29/3/2024.)
-  OSTask *next = running->next;
-  dll_attach_OSTask( task, &next );
+  // The new task will only start executing when the controller lets it.
+  // If it has to run on the same core as the controller, it should be
+  // started with interrupts disabled.
 
   regs->r[0] = ostask_handle( task );
 
-  // If running yields, the most recently created task will run instead
-  assert( running->next == task );
-
-task->reserved = regs->lr;
   return 0;
 }
 
@@ -992,7 +975,9 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   if (running->next == running
    && running != workspace.ostask.idle) PANIC;
 
-  switch (number) {
+  uint32_t swi = number & ~Xbit;
+
+  switch (swi) {
   case OSTask_Yield:
     resume = TaskOpYield( regs );
     break;
@@ -1026,8 +1011,8 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_SetRegisters:
     resume = TaskOpSetRegisters( regs );
     break;
-  case OSTask_RelinquishControl:
-    resume = TaskOpRelinquishControl( regs );
+  case OSTask_Finished:
+    resume = TaskOpFinished( regs );
     break;
   case OSTask_ReleaseTask:
     resume = TaskOpReleaseTask( regs );
@@ -1098,7 +1083,7 @@ Task_LogString( tmp, 4 );
                                         workspace.core+1 );
       assert( !reclaimed ); // I can't imagine a recursion situation
 
-      if (number == OSTask_PipeCreate) {
+      if (swi == OSTask_PipeCreate) {
         resume = PipeCreate( regs );
       }
       else {
@@ -1107,7 +1092,7 @@ Task_LogString( tmp, 4 );
           resume = Error_InvalidPipeHandle( regs );
         }
         else {
-          switch (number) {
+          switch (swi) {
           case OSTask_PipeWaitForSpace:
             resume = PipeWaitForSpace( regs, pipe ); break;
           case OSTask_PipeSpaceFilled:
@@ -1142,7 +1127,7 @@ Task_LogString( tmp, 4 );
     {
       OSQueue *queue = 0;
 
-      if (number == OSTask_QueueCreate) {
+      if (swi == OSTask_QueueCreate) {
         resume = QueueCreate( regs );
       }
       else {
@@ -1151,7 +1136,7 @@ Task_LogString( tmp, 4 );
           resume = Error_InvalidQueue( regs );
         }
         else {
-          switch (number) {
+          switch (swi) {
           case OSTask_QueueCreate:
             break;
           case OSTask_QueueWait:
@@ -1749,3 +1734,18 @@ asm ( "bkpt 1" );
 
   __builtin_unreachable();
 }
+
+// Needed for controllers array in ostask.h
+void *memmove(void *dest, const void *src, size_t n)
+{
+  uint32_t *d = dest;
+  uint32_t const *s = src;
+  if (d != s) {
+    if (d < s)
+      for (int i = 0; i < n/4; i++) d[i] = s[i];
+    else
+      for (int i = (n/4)-1; i >= 0; i--) d[i] = s[i];
+  }
+  return dest;
+}
+

@@ -98,8 +98,6 @@ void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
   ticks_per_interval = ticks_per_interval * slower;
 #endif
 
-  Task_RegisterInterruptSources( 1 );
-
   ensure_changes_observable(); // About to write to QA7
 
   qa7->GPU_interrupts_routing = core;
@@ -109,7 +107,7 @@ void ticker( uint32_t handle, uint32_t core, uint32_t qa7_page )
 
   ensure_changes_observable(); // Wrote to QA7
 
-  Task_EnablingIntterupt();
+  Task_EnablingInterrupts();
 
   timer_set_countdown( ticks_per_interval );
 
@@ -151,9 +149,12 @@ void start_ticker( uint32_t qa7_page )
   register void *sp asm( "r1" ) = stack + stack_size;
   register uint32_t r1 asm( "r2" ) = workspace.core;
   register uint32_t r2 asm( "r3" ) = qa7_page;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  asm volatile ( "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -201,9 +202,12 @@ void start_blink_some_leds( uint32_t gpio_page )
   register void *start asm( "r0" ) = blink_some_leds;
   register void *sp asm( "r1" ) = stack + stack_size;
   register uint32_t r1 asm( "r2" ) = gpio_page;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  asm volatile ( "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -245,9 +249,12 @@ void start_send_to_uart( uint32_t uart_page, uint32_t pipe )
   register void *sp asm( "r1" ) = stack + stack_size;
   register uint32_t r1 asm( "r2" ) = uart_page;
   register uint32_t r2 asm( "r3" ) = pipe;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  asm volatile ( "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -283,9 +290,12 @@ void start_feed_pipe( uint32_t pipe )
   register void *start asm( "r0" ) = feed_pipe;
   register void *sp asm( "r1" ) = stack + stack_size;
   register uint32_t r1 asm( "r2" ) = pipe;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  asm volatile ( "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -333,9 +343,10 @@ void ping_pong( uint32_t handle, uint32_t to, uint32_t fro, bool i )
   __builtin_unreachable();
 }
 
-void execute_swi( svc_registers *regs, int number )
+OSTask* execute_swi( svc_registers *regs, int number )
 {
   PANIC;
+  return 0;
 }
 
 void __attribute__(( noreturn )) startup()
@@ -381,9 +392,12 @@ void __attribute__(( noreturn )) startup()
   register uint32_t r1 asm( "r2" ) = to;
   register uint32_t r2 asm( "r3" ) = fro;
   register uint32_t r3 asm( "r4" ) = 1;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  asm volatile ( "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -400,9 +414,12 @@ void __attribute__(( noreturn )) startup()
   register uint32_t r1 asm( "r2" ) = fro;
   register uint32_t r2 asm( "r3" ) = to;
   register uint32_t r3 asm( "r4" ) = 0;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  asm volatile ( "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)

@@ -212,10 +212,14 @@ void response_manager( uint32_t handle, workspace *ws )
   register uint32_t r2 asm( "r3" ) = handle;
 
   register uint32_t new_handle asm( "r0" );
-  // volatile required since ignoring result.
-  asm volatile ( "svc %[swi]"
-    : "=r" (new_handle)
-    : [swi] "i" (OSTask_Create)
+  asm volatile (
+        "svc %[swi_create]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    , "=r" (new_handle)
+    : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
@@ -305,9 +309,14 @@ void __attribute__(( noinline )) c_init( workspace **private,
   register uint32_t sp asm( "r1" ) = aligned_stack( &ws->response_manager_stack + 1 );
   register workspace *r1 asm( "r2" ) = ws;
   register uint32_t new_handle asm( "r0" );
-  asm volatile ( "svc %[swi]"
+  asm volatile ( // volatile because we ignore output
+        "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
     : "=r" (new_handle)
-    : [swi] "i" (OSTask_Spawn)
+    , "=r" (sp) // corrupted
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)

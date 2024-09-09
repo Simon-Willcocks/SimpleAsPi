@@ -1,7 +1,7 @@
 #! /bin/bash -
 
 SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToUART:System/Pi/Legacy/BCM2835GrV
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART:System/Pi/Legacy/BCM2835GrV
 
 #:System/Pi/PL011UART
 
@@ -16,6 +16,7 @@ INITIAL_MODULES+='LEDBlink\0'
 INITIAL_MODULES+='GPUMailbox\0'
 INITIAL_MODULES+='BCM2835Display\0'
 INITIAL_MODULES+='BCM2835GrV\0'
+#INITIAL_MODULES+='LogToScreen\0' # After BCM2835GrV!
 
 INITIAL_MODULES+='UtilityModule\0'
 INITIAL_MODULES+='FileSwitch\0'
@@ -25,10 +26,6 @@ INITIAL_MODULES+='Messages\0'
 INITIAL_MODULES+='MessageTrans\0'
 INITIAL_MODULES+='UK\0'
 
-INITIAL_MODULES+='WindowManager\0'
-INITIAL_MODULES+='TaskManager\0'
-INITIAL_MODULES+='Desktop\0'
-
 INITIAL_MODULES+='SharedCLibrary\0' # Not 'CLib\0'
 INITIAL_MODULES+='BASIC\0'
 INITIAL_MODULES+='BASIC64\0'
@@ -36,7 +33,7 @@ INITIAL_MODULES+='BASICVFP\0'
 INITIAL_MODULES+='BlendTable\0'
 INITIAL_MODULES+='BufferManager\0'
 INITIAL_MODULES+='ColourTrans\0'
-INITIAL_MODULES+='DeviceFS\0'
+##INITIAL_MODULES+='DeviceFS\0'
 INITIAL_MODULES+='ScreenModes\0'
 #INITIAL_MODULES+='Portable\0'
 INITIAL_MODULES+='DisplayManager\0'
@@ -47,6 +44,11 @@ INITIAL_MODULES+='FileCore\0'
 INITIAL_MODULES+='Filer\0'
 INITIAL_MODULES+='FilerSWIs\0'
 INITIAL_MODULES+='FontManager\0'
+
+INITIAL_MODULES+='WindowManager\0'
+INITIAL_MODULES+='TaskManager\0'
+INITIAL_MODULES+='Desktop\0'
+
 #INITIAL_MODULES+='FPEmulator\0'
 #INITIAL_MODULES+='VFPSupport\0'
 INITIAL_MODULES+='Free\0'
@@ -60,7 +62,7 @@ INITIAL_MODULES+='ResourceFiler\0'
 INITIAL_MODULES+='ROMFonts\0'
 
 #INITIAL_MODULES+='RTC\0'
-INITIAL_MODULES+='ScreenBlanker\0'
+#INITIAL_MODULES+='ScreenBlanker\0'
 #INITIAL_MODULES+='ScrSaver\0'
 #INITIAL_MODULES+='Serial\0' fc037b10 HardwareCallHAL
 #INITIAL_MODULES+='SerialDeviceSupport\0'
@@ -77,23 +79,23 @@ INITIAL_MODULES+='ScreenBlanker\0'
 INITIAL_MODULES+='SpriteUtils\0'
 INITIAL_MODULES+='Squash\0'
 INITIAL_MODULES+='BootFX\0'
-INITIAL_MODULES+='SuperSample\0'
-INITIAL_MODULES+='SystemDevices\0'
+##INITIAL_MODULES+='SuperSample\0'
+##INITIAL_MODULES+='SystemDevices\0'
 
 # TaskWindow fiddles with internal kernel variables that are no longer valid.
 #INITIAL_MODULES+='TaskWindow\0'
 INITIAL_MODULES+='WindowUtils\0'
 INITIAL_MODULES+='FilterManager\0'
-INITIAL_MODULES+='WaveSynth\0'
+## INITIAL_MODULES+='WaveSynth\0' init error: Unknown SWI
 INITIAL_MODULES+='StringLib\0'
 INITIAL_MODULES+='Percussion\0'
 INITIAL_MODULES+='SharedSound\0'
 INITIAL_MODULES+='Filer_Action\0'
-INITIAL_MODULES+='DOSFS\0'
-INITIAL_MODULES+='SDIODriver\0'
-INITIAL_MODULES+='SDFS\0' # Returns variable not found...
+# INITIAL_MODULES+='DOSFS\0'
+# INITIAL_MODULES+='SDIODriver\0'
+# INITIAL_MODULES+='SDFS\0' # Returns variable not found...
 
-INITIAL_MODULES+='SDFSFiler\0'
+# INITIAL_MODULES+='SDFSFiler\0'
 # Fun fact, SDCMOS tries to run code on the SVC stack. It's not alone.
 # Search for mov pc, sp
 # Only when there's an error in the initialisation callback
@@ -103,7 +105,7 @@ INITIAL_MODULES+='SDFSFiler\0'
 INITIAL_MODULES+='DrawFile\0'
 INITIAL_MODULES+='BootCommands\0'
 INITIAL_MODULES+='WindowScroll\0'
-INITIAL_MODULES+='MbufManager\0'
+#INITIAL_MODULES+='MbufManager\0' # calls SWI 6ee00
 
 # Skipping internet stuff for now
 # INITIAL_MODULES+='Internet\0'
@@ -124,26 +126,27 @@ INITIAL_MODULES+='Window\0'
 INITIAL_MODULES+='ToolAction\0'
 INITIAL_MODULES+='Menu\0'
 INITIAL_MODULES+='Iconbar\0'
-INITIAL_MODULES+='ColourDbox\0'
+# INITIAL_MODULES+='ColourDbox\0' # Requires ColourPicker
 INITIAL_MODULES+='ColourMenu\0'
 INITIAL_MODULES+='DCS\0'
 INITIAL_MODULES+='FileInfo\0'
-INITIAL_MODULES+='FontDbox\0'
+## INITIAL_MODULES+='FontDbox\0' init error: Not enough memory (may be I've not allocated enough to a DA)
 INITIAL_MODULES+='FontMenu\0'
-INITIAL_MODULES+='PrintDbox\0'
-INITIAL_MODULES+='ProgInfo\0'
-INITIAL_MODULES+='SaveAs\0'
-INITIAL_MODULES+='Scale\0'
+## INITIAL_MODULES+='PrintDbox\0' init error: Not enough memory (may be I've not allocated enough to a DA)
+## INITIAL_MODULES+='ProgInfo\0'        ditto
+## INITIAL_MODULES+='SaveAs\0'          ditto
+## INITIAL_MODULES+='Scale\0'           ditto
 INITIAL_MODULES+='TextGadgets\0'
-INITIAL_MODULES+='CDFSDriver\0'
-INITIAL_MODULES+='CDFSSoftSCSI\0'
-INITIAL_MODULES+='CDFS\0'
-INITIAL_MODULES+='CDFSFiler\0'
+#INITIAL_MODULES+='CDFSDriver\0'
+#INITIAL_MODULES+='CDFSSoftSCSI\0'
+#INITIAL_MODULES+='CDFS\0'
+#INITIAL_MODULES+='CDFSFiler\0'
 INITIAL_MODULES+='UnSqueezeAIF\0'
-INITIAL_MODULES+='GPIO\0'
+#INITIAL_MODULES+='GPIO\0'
 
 
-DEFAULT_LANGUAGE=LEDBlink
+#DEFAULT_LANGUAGE=LEDBlink
+DEFAULT_LANGUAGE=Desktop
 
 echo Initial modules: ${INITIAL_MODULES//\\0/, }
 echo Default language: $DEFAULT_LANGUAGE
@@ -167,6 +170,8 @@ MMU=Processor/VMSAv6
 CFLAGS="-I . -Wall -nostartfiles -nostdlib -fno-zero-initialized-in-bss -static -march=armv8-a+nofp -O4 -I Processor -I $MMU -I $SYSTEM -I Utilities -I Devices"
 CFLAGS="$CFLAGS -I ${SUBSYSTEMS//:/ -I }"
 CFLAGS="$CFLAGS $*"
+# I really didn't want anything like the following...
+CFLAGS="$CFLAGS -DLEGACY_CLIV -DLEGACY_SPECIAL_SCHC"
 echo $CFLAGS
 
 $GCC -c Processor/CortexA53/processor.c \
@@ -211,11 +216,19 @@ FIRST=$( printf 0x%x $(( $( rom_object UtilityMod ) - 4 )) )
 
 LEGACIES="-Wl,--defsym=LegacyModulesList=$FIRST"
 LEGACIES+=" "$( symbol JTABLE )
+LEGACIES+=" "$( symbol despatchConvert )
 LEGACIES+=" "$( symbol defaultvectab )
 
 LEGACIES+=" "$( symbol VduInit )
 
 LEGACIES+=" "$( symbol HardFont )
+
+# These are commands that are reached in a wierd way.
+# It's been fixed in later versions of RO, but this is easier than
+# getting that to build with my old DDE
+LEGACIES+=" "$( symbol SCHCTab )
+
+LEGACIES+=" "$( symbol SysCommsModule )
 
 echo $LEGACIES
 echo $KERNEL_START, $KERNEL_OFFSET
@@ -285,7 +298,7 @@ strings RISCOS.img -t x | grep OSIm | grep $KERNEL_OFFSET || exit 1
 echo Seems alright
 
 # 16MiB boot RAM
-# 256MiB minimum RAM
+# 512MiB minimum RAM
 arm-none-eabi-gcc-9.2.1 \
         processor.boot mmu.boot \
         ${SOURCES//://*.c } \
@@ -299,7 +312,7 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=legacy_zero_page=0xfff40000 \
         \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
-        -Wl,--defsym=top_of_minimum_RAM=0x10000000 \
+        -Wl,--defsym=top_of_minimum_RAM=0x20000000 \
         \
         -Wl,--defsym=OSTask_free_pool=0xff100000 \
         -Wl,--defsym=OSTaskSlot_free_pool=0xff200000 \
@@ -309,9 +322,9 @@ arm-none-eabi-gcc-9.2.1 \
         \
         -Wl,--defsym=VMSAv6_Level2_Tables=0xff300000 \
         -Wl,--defsym=system_heap_base=0x30000000 \
-        -Wl,--defsym=system_heap_top=0x30100000 \
+        -Wl,--defsym=system_heap_top=0x30400000 \
         -Wl,--defsym=shared_heap_base=0x20000000 \
-        -Wl,--defsym=shared_heap_top=0x20100000 \
+        -Wl,--defsym=shared_heap_top=0x20800000 \
         \
         -Wl,--defsym=log_pipe=0xfff00000 \
         -Wl,--defsym=log_pipe_top=0xfff02000 \

@@ -30,6 +30,7 @@ echo Sources: ${SOURCES//://*.c } &&
 arm-none-eabi-gcc-9.2.1 \
         processor.boot mmu.boot \
         ${SOURCES//://*.c } \
+        romimage_end.c \
         -o kernel7.elf \
         $CFLAGS \
         -Wl,--defsym=top_of_boot_RAM=0x1000000 \
@@ -43,10 +44,17 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=shared_heap_base=0xff500000 \
         -Wl,--defsym=shared_heap_top=0xff600000 \
         \
-        -Wl,--defsym=debug_pipe=0xfff00000 \
+        -Wl,--defsym=log_pipe=0xfff00000 \
+        -Wl,--defsym=log_pipe_top=0xfff02000 \
         -Wl,--defsym=app_memory_limit=0x40000000 \
         -Wl,--defsym=pipes_base=0x80000000 \
         -Wl,--defsym=pipes_top=0xc0000000 \
+        \
+        -Wl,--defsym=OSTask_free_pool=0xff100000 \
+        -Wl,--defsym=OSTaskSlot_free_pool=0xff200000 \
+        \
+        -Wl,--defsym=OSQueue_free_pool=0xfff90000 \
+        -Wl,--defsym=OSPipe_free_pool=0xfffa0000 \
         \
         -Wl,--defsym=translation_table=0xfff80000 \
         -Wl,--defsym=global_translation_table=0xfff84000 \
@@ -55,6 +63,6 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=workspace=0xfffd0000 \
         -Wl,--defsym=shared=0xfffe0000 \
         -Wl,--section-start=.init=0xfc000000 \
-        -Wl,--section-start=.text=0xfc002000 &&
+        -Wl,--section-start=.text=0xfc004000 &&
 arm-none-eabi-objcopy -R .ignoring -O binary kernel7.elf kernel7.img &&
 arm-none-eabi-objdump -x --disassemble-all kernel7.elf > kernel7.dump

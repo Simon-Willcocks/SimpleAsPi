@@ -228,7 +228,7 @@ void *cb_array( int num, int size )
   result->container_size = container_size;
   result->first_free = blocks;
 
-  uint32_t offset = sizeof( cba_head );
+  uint32_t offset = 0;
   uint32_t words = container_size / 4;
   for (int i = 0; i < num; i++) {
 #ifdef DEBUG__LOG_CB_ARRAYS
@@ -271,7 +271,7 @@ void cba_free( cba_head *block, void *unwanted )
   if (container >= bottom
    && container < top) {
     if (0 == (0x80000000 & *container)) {
-      if (&bottom[(*container - sizeof( cba_head )) / 4] == container) {
+      if (&bottom[(*container) / 4] == container) {
         *container |= 0x80000000;
         container[1] = (uint32_t) block->first_free;
         block->first_free = container;
@@ -298,11 +298,13 @@ void __attribute__(( noinline )) DoVduInit()
   asm ( "bl VduInit" : : "r" (r12) : "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr" );
 }
 
-uint32_t sizeofOsbyteVars = sizeof( legacy_zero_page.OsbyteVars );
+static uint32_t const sizeofOsbyteVars = sizeof( legacy_zero_page.OsbyteVars );
 
 void fill_legacy_zero_page()
 {
   legacy_zero_page.Proc_IMB_Range = IMB_Range;
+
+  legacy_zero_page.EscHan = 0xbad00000;
 
   legacy_zero_page.Page_Size = 4096;
   legacy_zero_page.OsbyteVars.LastBREAK = 1; // 1 Power on, 2 Control reset, 0 Soft
@@ -353,13 +355,14 @@ void fill_legacy_zero_page()
   legacy_zero_page.OsbyteVars.Shadow = 1; // No shadow modes (0 turns on)
 }
 
-uint32_t ZPOFF_OsbyteVars = ZP_OFF( OsbyteVars );
-uint32_t ZPOFF_BuffInPtrs = ZP_OFF( BuffInPtrs );
+static uint32_t const ZPOFF_OsbyteVars = ZP_OFF( OsbyteVars );
+static uint32_t const ZPOFF_BuffInPtrs = ZP_OFF( BuffInPtrs );
+
 // This routine is for SWIs implemented in the legacy kernel, 0-255, not in
 // modules, in ROM or elsewhere. (i.e. routines that return using SLVK.)
 void __attribute__(( noinline ))
-run_risos_code_implementing_swi( svc_registers *regs,
-                                 uint32_t svc, uint32_t code )
+run_riscos_code_implementing_swi( svc_registers *regs,
+                                  uint32_t svc, uint32_t code )
 {
   register uint32_t non_kernel_code asm( "r10" ) = code;
   register uint32_t swi asm( "r11" ) = svc;
@@ -427,11 +430,12 @@ static bool in_legacy_stack()
 OSTask *legacy_do_OS_Module( svc_registers *regs )
 {
   uint32_t entry = JTABLE[OS_Module];
-  run_risos_code_implementing_swi( regs, OS_Module, entry );
+  run_riscos_code_implementing_swi( regs, OS_Module, entry );
   return 0;
 }
 
 // If no other subsystem wants to handle modules, use the legacy code
+// (Which won't work!)
 __attribute__(( weak ))
 OSTask *do_OS_Module( svc_registers *regs )
 {
@@ -523,7 +527,7 @@ OSTask *do_OS_ReadSysInfo( svc_registers *regs )
   default:
     {
       uint32_t entry = JTABLE[OS_ReadSysInfo];
-      run_risos_code_implementing_swi( regs, OS_ReadSysInfo, entry );
+      run_riscos_code_implementing_swi( regs, OS_ReadSysInfo, entry );
       break;
     }
   }
@@ -558,6 +562,25 @@ OSTask *execute_swi( svc_registers *regs, int number )
   int swi = number & ~Xbit;
   bool generate_error = (number == swi);
 
+  if (swi == OS_ConvertHex8) {
+    // FIXME
+    uint32_t val = regs->r[0];
+    char *buf = (void*) regs->r[1];
+    uint32_t len = regs->r[2];
+    if (len < 9) PANIC; // FIXME return error
+    char const hex[16] = { '0', '1', '2', '3', '4', '5', '6', '7',
+                           '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+    for (int i = 7; i >= 0; i--) {
+      buf[i] = hex[val & 0xf];
+      val = val >> 4;
+    }
+    buf[8] = '\0';
+    regs->r[0] = regs->r[1];
+    regs->r[1] += 8;
+    regs->r[2] = len - 8;
+    return 0;
+  }
+
   if (swi == OS_CallASWIR12
    || swi == OS_CallASWI) {
     PANIC; // I think the legacy implementation loops forever...
@@ -566,7 +589,7 @@ OSTask *execute_swi( svc_registers *regs, int number )
   if (number != 0x1001) { // Not timer tick
   Task_LogString( "SWI: ", 5 );
   Task_LogHex( number );
-  Task_LogNewLine();
+  Task_LogString( "  ", 2 );
   Task_LogHex( regs->r[0] );
   Task_LogString( " ", 1 );
   Task_LogHex( regs->r[1] );
@@ -619,22 +642,67 @@ OSTask *execute_swi( svc_registers *regs, int number )
     case OS_Module:
       {
       bool module_run = (legacy_regs->r[0] == 0 || legacy_regs->r[0] == 2);
-      if (module_run && !new_owner) PANIC;
+      if (module_run && !new_owner) {
+        Task_LogString( "Unsolved problem: entering module from SVC mode\n", 50 );
+        // UpCall 256
+        // If not claimed, Service_NewApplication
+        // If Exit handler > memory limit (?) 
+        //   Reset all handlers where handler < memory limit
+        // Affect CAO, somehow...
+        // Copy command and start time to be read by OS_GetEnv
+        // Screw all that for the time being...!
+
+        uint32_t regs_top = (uint32_t)(legacy_regs + 1);
+        if (regs_top != legacy_top) {
+          // There are the registers on the stack, and possibly local
+          // variables & stack frame below them.
+          // They will be below the top of the stack, but possibly not
+          // below the number of words that need to be moved, so copy
+          // from the top word, down. (Like memmove.)
+          // Interrupts are disabled, so the stack will not be changed
+          // during this operation.
+          asm ( "mov r0, sp"
+            "\n  sub r2, %[regs_top], sp" // bytes to copy
+            "\n  sub sp, %[stacktop], r2"
+            "\n0:"
+            "\n  subs r2, r2, #4"
+            "\n  ldr r1, [r0, r2]"
+            "\n  str r1, [sp, r2]"
+            "\n  bpl 0b"
+            :
+            : [stacktop] "r" (legacy_top)
+            , [regs_top] "r" (legacy_regs + 1)
+            : "r0", "r2", "sp" );
+          legacy_regs = ((svc_registers *) legacy_top) - 1;
+          new_owner = true;
+        }
+      }
       // FIXME: This returns an OSTask * (always 0, but...)
-      do_OS_Module( legacy_regs );
+      OSTask *resume = do_OS_Module( legacy_regs );
+      if (resume != 0) PANIC;
       // If this call was successful, the serve_legacy_swis function in
       // Legacy/user.c will cause the module to start using the changed
       // register values.
       }
       break;
     case OS_ServiceCall: do_OS_ServiceCall( legacy_regs ); break;
+
+    // memory.c
     case OS_ReadDynamicArea: do_OS_ReadDynamicArea( legacy_regs ); break;
     case OS_DynamicArea: do_OS_DynamicArea( legacy_regs ); break;
     case OS_ChangeDynamicArea: do_OS_ChangeDynamicArea( legacy_regs ); break;
     case OS_Memory: do_OS_Memory( legacy_regs ); break;
     case OS_ValidateAddress: do_OS_ValidateAddress( legacy_regs ); break;
+    case OS_AMBControl: do_OS_AMBControl( legacy_regs ); break;
+
     case OS_PlatformFeatures: do_OS_PlatformFeatures( legacy_regs ); break;
     case OS_ReadSysInfo: do_OS_ReadSysInfo( legacy_regs ); break;
+
+    case OS_SetCallBack:
+      // Legacy's legacy. I think this is depricated in favour of
+      // AddCallBack, but it's still used by at least the Wimp.
+      legacy_zero_page.CallBack_Flag |= 1;
+      break;
 
     case OS_WriteS: // Called from SVC mode, when owner of legacy stack.
       // user.c takes care of other cases
@@ -642,25 +710,39 @@ OSTask *execute_swi( svc_registers *regs, int number )
         uint32_t r0 = legacy_regs->r[0];
         legacy_regs->r[0] = legacy_regs->lr;
         uint32_t entry = JTABLE[OS_Write0];
-        run_risos_code_implementing_swi( legacy_regs, OS_Write0, entry );
+        run_riscos_code_implementing_swi( legacy_regs, OS_Write0, entry );
         legacy_regs->lr = (3 + legacy_regs->r[0]) & ~3;
         legacy_regs->r[0] = r0;
       }
       break;
-#ifdef DEBUG__WIMP_LOOK_1
+#ifdef DEBUG__FAKE_OS_BYTE
     case OS_Byte:
       {
         if (regs->r[0] == 0xa1 && regs->r[1] == 0x8c) {
           regs->r[2] = 3; // System font, 3D look.
           // Alternative approach: set 1, and Wimp$Font... variables
         }
+        else if (regs->r[0] >= 0x7c && regs->r[0] <= 0x7e) { // Esc condition
+          regs->r[1] = 0; // No escape condition (if ack)
+        }
         else {
           uint32_t entry = JTABLE[OS_Byte];
-          run_risos_code_implementing_swi( regs, OS_Byte, entry );
+          run_riscos_code_implementing_swi( regs, OS_Byte, entry );
         }
       }
       break;
 #endif
+
+/*
+    // Avoid "Not enough memory" errors from the Toolbox.
+    // Didn't work!
+    case OS_ReadMemMapInfo:
+      {
+      regs->r[0] = 0x1000;
+      regs->r[1] = 0xa0000; // A little white lie. 160MiB total
+      }
+      break;
+*/
 
 #ifdef DEBUG__LOG_COMMANDS
     case OS_CLI:
@@ -676,21 +758,29 @@ OSTask *execute_swi( svc_registers *regs, int number )
       {
         if (swi < OS_ConvertStandardDateAndTime) {
           uint32_t entry = JTABLE[swi];
-          run_risos_code_implementing_swi( legacy_regs, swi, entry );
+          run_riscos_code_implementing_swi( legacy_regs, swi, entry );
+
+#ifdef DEBUG__CHECK_CALLBACKS
+          if (swi == OS_AddCallBack) {
+            if (0 == legacy_zero_page.CallBack_Vector) PANIC;
+          }
+#endif
         }
         else if (swi < 256) {
           extern uint32_t despatchConvert;
-          run_risos_code_implementing_swi( legacy_regs, swi, &despatchConvert );
+          run_riscos_code_implementing_swi( legacy_regs, swi, &despatchConvert );
         } // Conversion SWIs
         else if (swi < 512) {
           uint32_t r0 = legacy_regs->r[0];
           uint32_t entry = JTABLE[0];
 
           legacy_regs->r[0] = swi & 0xff;
-          run_risos_code_implementing_swi( legacy_regs, 0, entry );
+          run_riscos_code_implementing_swi( legacy_regs, 0, entry );
           legacy_regs->r[0] = r0;
         }
-        else run_module_swi( legacy_regs, swi );
+        else {
+          run_module_swi( legacy_regs, swi );
+        }
       }
     }
 
@@ -700,14 +790,30 @@ OSTask *execute_swi( svc_registers *regs, int number )
 
     if (generate_error && (regs->spsr & VF) != 0) {
       // FIXME: TENTATIVE
+Task_LogString( "Legacy error: ", 14 );
+Task_LogString( regs->r[0] + 4, 0 );
+Task_LogNewLine();
       uint32_t entry = JTABLE[OS_CallAVector];
-      run_risos_code_implementing_swi( legacy_regs, OS_CallAVector, entry );
+      run_riscos_code_implementing_swi( legacy_regs, OS_CallAVector, entry );
+          asm ( "udf #0x101" );
     }
 
-    if (new_owner) {
-      // Will be returning to the server task now.
+    if (0x10 == (regs->spsr & 0x1f) && in_legacy_stack()) {
+      // Dropping back to usr32 with interrupts enabled from a legacy SWI
 
-      // I don't grok the postponed or oldstyle flags.
+      if ((legacy_zero_page.CallBack_Flag & 1) != 0
+       && swi != OS_SetCallBack) {
+        // Call Callback handler
+        // Note, this seems to be the legacy's legacy callback approach!
+        // No longer used by Wimp to set R2 on exit from Wimp_Poll if
+        // event = 18, UserMessageRecorded
+        PANIC;
+      }
+
+      // Postponed? There shouldn't be anywhere doing this!
+      // Maybe it went: SetCallBack sets bit 0, on return, since it
+      // shouldn't call the callback then (why not?), it gets moved to
+      // bit 1, and the handler actually gets called then?
       if ((legacy_zero_page.CallBack_Flag & 2) == 2) PANIC;
 
       if ((legacy_zero_page.CallBack_Flag & 6) == 4) {
@@ -716,13 +822,18 @@ OSTask *execute_swi( svc_registers *regs, int number )
         // running this code that I don't fully understand.
         // Returning from an interrupt to user mode should also call them,
         // that needs some thought.
+        // Or elimination of modules that handle interrupts from legacy code.
         callback_entry *entry = legacy_zero_page.CallBack_Vector;
         while (entry != 0) {
           callback_entry run = *entry;
+Task_LogString( "Callback ", 9 );
+Task_LogHex( run.code );
+Task_LogNewLine();
           legacy_zero_page.CallBack_Vector = entry->next;
           cba_free( legacy_zero_page.ChocolateCBBlocks, entry );
           register uint32_t workspace asm ( "r12" ) = run.workspace;
           register uint32_t code asm ( "r14" ) = run.code;
+          asm ( "udf #0x100" );
           asm ( "blx lr" : : "r" (workspace), "r" (code) );
 
           // You would expect this to be run.next, but what if a callback
@@ -730,8 +841,6 @@ OSTask *execute_swi( svc_registers *regs, int number )
           entry = legacy_zero_page.CallBack_Vector;
         }
       }
-
-      switch_stacks( legacy_top, std_top );
     }
   }
   else {
@@ -743,20 +852,19 @@ OSTask *execute_swi( svc_registers *regs, int number )
   return 0;
 }
 
-static void spawn_legacy_manager( uint32_t queue, uint32_t *owner )
+static void make_desktop_workspace()
 {
-  register void *start asm( "r0" ) = serve_legacy_swis;
-  register void *sp asm( "r1" ) = 0;
-  register uint32_t r1 asm( "r2" ) = queue;
-  register uint32_t *r2 asm( "r3" ) = owner;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
-    , "r" (start)
-    , "r" (sp)
-    , "r" (r1)
-    , "r" (r2)
-    : "lr", "cc" );
+  uint32_t const pages = 1; // FIXME?
+  memory_mapping map = {
+    .base_page = claim_contiguous_memory( pages ),
+    .pages = pages,
+    .va = 0xff000000,
+    .type = CK_MemoryRW,
+    .map_specific = 0,
+    .all_cores = 1,
+    .usr32_access = 1 }; // FIXME?
+
+  map_memory( &map );
 }
 
 void __attribute__(( noreturn )) startup()
@@ -773,6 +881,8 @@ void __attribute__(( noreturn )) startup()
 
   fill_legacy_zero_page(); // Before shared.legacy.owner set
 
+  make_desktop_workspace();
+
   shared.legacy.owner = shared_heap_allocate( 4 );
   *shared.legacy.owner = 0; // No owner, to start with.
 
@@ -780,7 +890,7 @@ void __attribute__(( noreturn )) startup()
 
   shared.legacy.queue = handle;
 
-  spawn_legacy_manager( handle, shared.legacy.owner );
+  Task_SpawnTask2( serve_legacy_swis, 0, handle, shared.legacy.owner );
 
   asm ( "mov sp, %[reset_sp]"
     "\n  cpsie aif, #0x10"

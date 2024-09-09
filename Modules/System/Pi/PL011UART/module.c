@@ -217,9 +217,15 @@ void __attribute__(( noinline )) c_init( workspace **private,
   register void *start asm( "r0" ) = manage;
   register uint32_t sp asm( "r1" ) = aligned_stack( ws + 1 );
   register workspace *r1 asm( "r2" ) = ws;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Spawn)
+  register uint32_t new_handle asm( "r0" );
+  asm volatile ( // volatile because we ignore output
+        "svc %[swi_spawn]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (new_handle)
+    , "=r" (sp) // corrupted
+    : [swi_spawn] "i" (OSTask_Spawn)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)

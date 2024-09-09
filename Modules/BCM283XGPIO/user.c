@@ -218,9 +218,15 @@ void create_irq_task( workspace *ws )
   register void *start asm( "r0" ) = adr( irq_task );
   register void *sp asm( "r1" ) = 0x8c00;
   register workspace *r1 asm( "r2" ) = ws;
-  asm ( "svc %[swi]"
-    :
-    : [swi] "i" (OSTask_Create)
+  register uint32_t handle asm( "r0" );
+  asm volatile (
+        "svc %[swi_create]"
+    "\n  mov r1, #0"
+    "\n  svc %[swi_release]"
+    : "=r" (sp)
+    , "=r" (handle)
+    : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (start)
     , "r" (sp)
     , "r" (r1)
