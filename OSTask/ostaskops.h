@@ -34,16 +34,16 @@ enum {
   // better to allow modules to create a task in another task's context
   // which can run either 32- or 64-bit code provided by the module.
   // Or simply change the module's task's slot...
-  , OSTask_RunThisForMe         // 0x309 Run code in the context of the task
+  , OSTask_RunForTask           // 0x309 Run code in the context of the task
   , OSTask_GetRegisters         // 0x30a Get registers of controlled task
   , OSTask_SetRegisters         // 0x30b Set registers of controlled task
-  , OSTask_Finished             // 0x30c Resume controlling task
+  , OSTask_Finished             // 0x30c Return to home context
   , OSTask_ReleaseTask          // 0x30d Resume no longer controlled task
   , OSTask_ChangeController     // 0x30e Pass the controlled task to another
   , OSTask_SetController        // 0x30f Allow another task to control me
 
-  , OSTask_LockClaim            // 0x310
-  , OSTask_LockRelease          // 0x311
+  , OSTask_LockClaim            // 0x310        As yet unused and untested!
+  , OSTask_LockRelease          // 0x311        As yet unused and untested!
 
   , OSTask_EnablingInterrupts   // 0x312 Disable IRQs while I get
   , OSTask_WaitForInterrupt     // 0x313 ready to wait.
@@ -721,18 +721,30 @@ error_block *PipeOp_NoMoreData( uint32_t send_pipe )
 }
 
 static inline
-error_block *Task_RunThisForMe( uint32_t client, svc_registers const *regs )
+error_block *Task_RunForTask( uint32_t client )
 {
   register uint32_t h asm ( "r0" ) = client;
-  register svc_registers const *r asm ( "r1" ) = regs;
   register error_block *error asm ( "r0" );
 
   asm volatile ( "svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
-      : [swi] "i" (OSTask_RunThisForMe)
+      : [swi] "i" (OSTask_RunForTask)
       , "r" (h)
-      , "r" (r)
+      : "lr", "cc", "memory" );
+
+  return error;
+}
+
+static inline
+error_block *Task_Finished()
+{
+  register error_block *error asm ( "r0" );
+
+  asm volatile ( "svc %[swi]"
+             "\n  movvc r0, #0"
+      : "=r" (error)
+      : [swi] "i" (OSTask_Finished)
       : "lr", "cc", "memory" );
 
   return error;

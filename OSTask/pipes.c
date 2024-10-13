@@ -470,8 +470,6 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
   if (available >= amount || pipe_receiver_finished( pipe )) {
     regs->r[1] = available;
     regs->r[2] = write_location( pipe );
-
-    running->reserved = 0x66000000;
   }
   else {
     pipe->sender_waiting_for = amount;
@@ -483,7 +481,6 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
 
     // Blocked, waiting for space.
     dll_detach_OSTask( running );
-    running->reserved = 0x55000000;
     
     return next;
   }
@@ -533,7 +530,6 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 
     receiver->regs.r[1] = data_in_pipe( pipe );
     receiver->regs.r[2] = read_location( pipe );
-    receiver->reserved = 0x77000000 | receiver->regs.r[1];
 
     if (workspace.ostask.running != running) PANIC;
 
@@ -656,8 +652,6 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
     regs->r[1] = available;
     regs->r[2] = read_location( pipe );
 
-    running->reserved = 0x66000000;
-
     if ((regs->spsr & VF) != 0) PANIC;
   }
   else {
@@ -670,7 +664,6 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 
     // Blocked, waiting for data.
     dll_detach_OSTask( running );
-    running->reserved = 0x44000000;
 
     return next;
   }

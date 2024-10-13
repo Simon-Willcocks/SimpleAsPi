@@ -132,9 +132,10 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   svc_registers regs;
   uint32_t banked_sp_usr; // Only stored when leaving usr or sys mode
   uint32_t banked_lr_usr; // Only stored when leaving usr or sys mode
-  OSTaskSlot *slot;
+  OSTaskSlot *slot;     // Current slot.
 
-  int reserved; // was resumes, but I don't think I need that functionality
+  OSTaskSlot *home;     // Task's original slot, zero while not running code
+                        // for another task.
 
   union {
     struct __attribute__(( packed )) {

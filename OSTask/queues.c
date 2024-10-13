@@ -143,7 +143,7 @@ OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
     regs->r[0] = ostask_handle( head );
     regs->r[1] = head->swi.offset;
     regs->r[2] = head->swi.core;
-    assert( 0xff1 == ((uint32_t) running) >> 20 );
+    assert( 0xff1 == ((uint32_t) running) >> 20 );      // Can be removed
     if (!push_controller( head, running )) PANIC; // FIXME
 #ifdef DEBUG__FOLLOW_QUEUES
   Task_LogHex( (uint32_t) running );

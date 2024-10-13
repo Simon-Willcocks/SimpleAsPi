@@ -258,7 +258,7 @@ void map_slot( OSTaskSlot *new )
 {
   OSTaskSlot *current = workspace.ostask.currently_mapped;
 #ifdef DEBUG__UDF_ON_MAP_SLOT
-  asm( "udf 2" : : "r" (current) );
+  asm( "udf 17" : : "r" (current) );
 #endif
 
   // TODO: ISTR it's possible to disable table walks (get an exception on

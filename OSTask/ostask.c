@@ -279,38 +279,33 @@ DEFINE_ERROR( NotATask, 0x666, "Programmer error: Not a task" );
 DEFINE_ERROR( NotYourTask, 0x667, "Programmer error: Not your task" );
 DEFINE_ERROR( InvalidInitialStack, 0x668, "Tasks must always be started with 8-byte aligned stack" );
 
-OSTask *TaskOpRunThisForMe( svc_registers *regs )
+OSTask *TaskOpRunForTask( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
-  OSTask *release = ostask_from_handle( regs->r[0] );
-  svc_registers *context = (void*) regs->r[1];
+  OSTask *client = ostask_from_handle( regs->r[0] );
 
-  if (release == 0) {
+#if 0
+  { char const text[] = "Switching to slot of Task ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHex( regs->r[0] );
+  Task_LogNewLine();
+#endif
+
+  if (client == 0) {
     return Error_NotATask( regs );
   }
 
-  if (current_controller( release ) != running) {
+  if (current_controller( client ) != running) {
     return Error_NotYourTask( regs );
   }
 
-  if (context != 0) {
-    release->regs = *context;
-  }
+  if (running->home != 0) PANIC; // Already running for another task FIXME error
 
-  bool lock_to_core = 0 != (release->regs.spsr & 0x80);
+  running->home = running->slot;
+  running->slot = client->slot;
+  map_slot( running->slot );
 
-  // This must be done before the release Task is known to be runnable
-  save_task_state( regs );
-  workspace.ostask.running = running->next;
-  assert( running != running->next );
-  dll_detach_OSTask( running );
-  // running is now blocked until Finished is called
-
-  // Run code on this core, the running task just unlinked itself.
-  dll_attach_OSTask( release, &workspace.ostask.running );
-  assert( workspace.ostask.running == release );
-
-  return release;
+  return 0;
 }
 
 OSTask *TaskOpReleaseTask( svc_registers *regs )
@@ -397,25 +392,13 @@ OSTask *TaskOpFinished( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
 
-  OSTask *resume = current_controller( running );
+  if (running->home == 0) PANIC;
 
-  // Working for somebody?
-  if (resume == 0) PANIC; // FIXME (Error)
+  running->slot = running->home;
+  running->home = 0;
+  map_slot( running->slot );
 
-  save_task_state( regs );
-  workspace.ostask.running = running->next;
-  dll_detach_OSTask( running );
-
-  // Task is waiting, detached from the running list
-  // Place at head of this core's running list (replacing
-  // running).
-
-  assert( resume->next == resume );
-  assert( resume->prev == resume );
-
-  dll_attach_OSTask( resume, &workspace.ostask.running );
-
-  return resume;
+  return 0;
 }
 
 OSTask *TaskOpGetRegisters( svc_registers *regs )
@@ -633,6 +616,9 @@ Task_LogNewLine();
 
 OSTask *TaskOpSleep( svc_registers *regs )
 {
+#ifdef DEBUG__NO_SLEEP
+  return TaskOpYield( regs );
+#endif
   if (regs->r[0] == 0) return TaskOpYield( regs );
 
 #ifdef DEBUG__LOG_OS_TASKS
@@ -693,7 +679,7 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
 
 #ifdef DEBUG__FOLLOW_OS_TASKS
 Task_LogString( "Created task ", 13 );
-Task_LogHex( (uint32_t) task );
+Task_LogHex( ostask_handle( task ) );
 Task_LogString( ", starting at ", 14 );
 Task_LogHex( regs->r[0] );
 Task_LogString( ", in slot ", 0 );
@@ -1002,8 +988,8 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_AppMemoryTop:
     resume = TaskOpAppMemoryTop( regs );
     break;
-  case OSTask_RunThisForMe:
-    resume = TaskOpRunThisForMe( regs );
+  case OSTask_RunForTask:
+    resume = TaskOpRunForTask( regs );
     break;
   case OSTask_GetRegisters:
     resume = TaskOpGetRegisters( regs );
@@ -1176,6 +1162,8 @@ void __attribute__(( noreturn )) execute_svc( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;
 
+  regs->spsr &= ~VF;
+
   uint32_t number = get_svc_number( regs->lr );
   uint32_t swi = (number & ~Xbit); // A bit of RISC OS creeping in!
 
@@ -1242,7 +1230,6 @@ void __attribute__(( naked )) svc_handler()
   svc_registers *regs;
   asm volatile ( "mov %[regs], sp" : [regs] "=r" (regs) );
 
-  regs->spsr &= ~VF;
   execute_svc( regs );
 
   __builtin_unreachable();
@@ -1283,6 +1270,7 @@ void __attribute__(( naked, noreturn )) irq_handler()
         "\n  ldr lr, [lr]       // setting lr -> running->regs"
         "\n  stm lr!, {r0-r12}  // setting lr -> lr/spsr"
         "\n  pop { r0, r1 }     // Resume address, SPSR"
+"\n udf 0"
         "\n  stm lr, { r0, r1, sp, lr }^"
         "\n  sub lr, lr, #13*4 // restores its value"
         : "=r" (interrupted)
@@ -1589,6 +1577,7 @@ OSTask *__attribute__(( noinline )) c_prefetch_handler( OSTask *running )
 {
   // Report breakpoints to something
   // Queue the (no-longer) running task to be saved or killed.
+  for (;;) { asm ( "wfi" ); }
   PANIC;
 
   OSTask *resume = 0;
