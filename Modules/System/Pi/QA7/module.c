@@ -329,10 +329,7 @@ void nudge_other_cores( uint32_t core, uint32_t n )
 
 void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
 {
-  core_info cores = Task_Cores();
-  if (core != cores.current) asm ( "bkpt 11" );
-
-  uint32_t *core_irq_tasks = &ws->tasks[core].task[0];
+  Task_SwitchToCore( core );
 
   Task_EnablingInterrupts();
 
@@ -357,6 +354,8 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
   // is running with interrupts disabled, so there's no race condition.
   ws->tasks[core].core_irq_task = handle;
 
+  uint32_t *tasks_on_this_core = &ws->tasks[core].task[0];
+
   for (;;) {
     Task_WaitForInterrupt();
 
@@ -379,7 +378,7 @@ void core_irq_task( uint32_t handle, uint32_t core, workspace *ws )
       release_gpu_handlers( ws );
     }
 
-    release_irq_tasks( interrupts, core_irq_tasks );
+    release_irq_tasks( interrupts, tasks_on_this_core );
 
     // nudge_other_cores( core, cores.total );
   }
@@ -430,7 +429,8 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
       3840000; // 19.2 MHz clock, 38.4 MHz ticks, 100 ms ticks for qemu
 #endif
 #ifdef QEMU_SLOW
-      38400000; // 19.2 MHz clock, 38.4 MHz ticks, 1s ticks, for qemu with cpu tracing
+      //38400000; // 19.2 MHz clock, 38.4 MHz ticks, 1s ticks, for qemu with cpu tracing
+      384000000; // Ridiculously slow
 #endif
 #ifdef QEMU_FAST
       384000; // 19.2 MHz clock, 38.4 MHz ticks, 10ms ticks, for qemu with int tracing on fast hardware
@@ -503,33 +503,6 @@ void irq_manager( uint32_t handle, workspace *ws )
     uint32_t const stack_size = 256;
     uint8_t *stack = rma_claim( stack_size );
 
-    // Note: The above rma_claim may (probably will) result in the core
-    // we're running on to change.
-    // Therefore we have to run it before switching (or switch more than
-    // once).
-
-    Task_SwitchToCore( i );
-
-    if (0) {
-    register void *start asm( "r0" ) = core_mailbox_task;
-    register uint32_t sp asm( "r1" ) = 0x000bad00; // Unused, but must be 8-byte aligned (eabi)
-    register uint32_t r1 asm( "r2" ) = i;
-
-    register uint32_t handle asm( "r0" );
-    asm volatile (
-          "svc %[swi_create]"
-      "\n  mov r1, #0"
-      "\n  svc %[swi_release]"
-      : "=r" (sp)
-      , "=r" (handle)
-      : [swi_create] "i" (OSTask_Create)
-      , [swi_release] "i" (OSTask_ReleaseTask)
-      , "r" (start)
-      , "r" (sp)
-      , "r" (r1)
-      : "lr", "cc" );
-    }
-
     register void *start asm( "r0" ) = core_irq_task;
     register uint32_t sp asm( "r1" ) = aligned_stack( stack + stack_size );
     register uint32_t r1 asm( "r2" ) = i;
@@ -549,8 +522,10 @@ void irq_manager( uint32_t handle, workspace *ws )
       , "r" (r1)
       , "r" (r2)
       : "lr", "cc" );
+  }
 
-    // Wait for the task to be ready to accept interrupts
+  for (int i = 0; i < ws->cores.total; i++) {
+    // Wait for the tasks to be ready to accept interrupts
     // Without the volatile keyword this loop gets optimised to
     // if (0 == ws->tasks[i].core_irq_task)
     //   for (;;) Task_Yield();
@@ -561,10 +536,9 @@ void irq_manager( uint32_t handle, workspace *ws )
     while (0 == *h) {
       Task_Yield();
     }
-    // Note: Yield means this core could be running on any core now.
-
-    if (handle != ws->tasks[i].core_irq_task) asm ( "bkpt 10" );
   }
+
+  // Each core has an irq task running and waiting to be woken
 
   Task_EnablingInterrupts();
 
