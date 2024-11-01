@@ -314,6 +314,25 @@ OSTask *TaskOpReleaseTask( svc_registers *regs )
   OSTask *release = ostask_from_handle( regs->r[0] );
   svc_registers *context = (void*) regs->r[1];
 
+#ifdef DEBUG__FOLLOW_TASKS
+    { char const text[] = "Task ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( ostask_handle( running ) );
+    { char const text[] = " releasing ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( ostask_handle( release ) );
+    { char const text[] = " context ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( context );
+    Task_LogNewLine();
+    if (context != 0) {
+      for (int i = 0; i < 15; i++) {
+        Task_LogHex( ((uint32_t*)context)[i] );
+        Task_LogString( " ", 1 );
+      }
+    }
+    Task_LogNewLine();
+#endif
   if (release == 0) {
     return Error_NotATask( regs );
   }
@@ -333,10 +352,24 @@ OSTask *TaskOpReleaseTask( svc_registers *regs )
 
   // This must be done before the release Task is known to be runnable
   if (lock_to_core) {
+#ifdef DEBUG__FOLLOW_TASKS
+    { char const text[] = "Task ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( ostask_handle( release ) );
+    { char const text[] = " ready to run on same core\n";
+    Task_LogString( text, sizeof( text )-1 ); }
+#endif
     OSTask *next = running->next;
     dll_attach_OSTask( release, &next );
   }
   else {
+#ifdef DEBUG__FOLLOW_TASKS
+    { char const text[] = "Task ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( ostask_handle( release ) );
+    { char const text[] = " made runnable\n";
+    Task_LogString( text, sizeof( text )-1 ); }
+#endif
     // The caller's going to keep running, let one of the other cores
     // pick up the resumed task.
     //   TODO When should FP context be stored? Tasks put into runnable
@@ -531,7 +564,7 @@ OSTask *IdleTaskYield( svc_registers *regs )
   OSTask *resume = find_task_for_this_core();
 
   if (resume != 0) {
-#ifdef DEBUG__LOG_OS_TASKS
+#ifdef DEBUG__FOLLOW_TASKS
     Task_LogString( "F ", 2 );
     Task_LogHex( (uint32_t) resume );
     Task_LogString( " ", 1 );
@@ -548,17 +581,13 @@ OSTask *IdleTaskYield( svc_registers *regs )
     // notification if anyone adds to the list.
     resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
 
+#ifdef DEBUG__FOLLOW_TASKS
     if (resume != 0) {
-#ifdef DEBUG__LOG_OS_TASKS
       Task_LogString( "R ", 2 );
-      if (resume == workspace.ostask.idle)
-        Task_LogString( "I ", 2 );
-      Task_LogHex( (uint32_t) resume );
-      Task_LogString( " ", 1 );
-      Task_LogSmallNumber( workspace.core );
+      Task_LogHex( ostask_handle( resume ) );
       Task_LogNewLine();
-#endif
     }
+#endif
   }
 
   if (resume == 0
@@ -587,7 +616,7 @@ OSTask *TaskOpYield( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
 
-#ifdef DEBUG__LOG_OS_TASKS
+#ifdef DEBUG__FOLLOW_TASKS
 if (running == workspace.ostask.idle && resume != running) {
 Task_LogString( "Y ", 2 );
 if (running == workspace.ostask.idle)
@@ -608,6 +637,11 @@ Task_LogNewLine();
     workspace.ostask.running = resume;
     dll_detach_OSTask( running );
 
+#ifdef DEBUG__FOLLOW_TASKS
+    Task_LogString( "S ", 2 );
+    Task_LogHex( ostask_handle( running ) );
+    Task_LogNewLine();
+#endif
     mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, running );
   }
 
@@ -621,7 +655,7 @@ OSTask *TaskOpSleep( svc_registers *regs )
 #endif
   if (regs->r[0] == 0) return TaskOpYield( regs );
 
-#ifdef DEBUG__LOG_OS_TASKS
+#ifdef DEBUG__FOLLOW_TASKS
 Task_LogString( "S ", 2 );
 Task_LogHex( (uint32_t) workspace.ostask.running );
 Task_LogString( " ", 1 );
@@ -733,6 +767,8 @@ Task_LogNewLine();
     }
   }
 
+  // This has no purpose other than to sideline the task.
+  // There has to be a proper implementation
   return queue_running_OSTask( regs, *queue_handle, 0 );
 }
 
@@ -823,7 +859,7 @@ OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
   uint32_t core = regs->r[0];
 
-#ifdef DEBUG__LOG_OS_TASKS
+#ifdef DEBUG__FOLLOW_TASKS
 Task_LogString( "Switch ", 0 );
 Task_LogHex( (uint32_t) workspace.ostask.running );
 Task_LogString( " from ", 0 );
@@ -970,11 +1006,11 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   case OSTask_Sleep:
     resume = TaskOpSleep( regs );
     break;
-  case OSTask_Spawn:
-    resume = TaskOpCreate( regs, true );
-    break;
   case OSTask_Create:
     resume = TaskOpCreate( regs, false );
+    break;
+  case OSTask_Spawn:
+    resume = TaskOpCreate( regs, true );
     break;
   case OSTask_EndTask:
     resume = TaskOpEndTask( regs );

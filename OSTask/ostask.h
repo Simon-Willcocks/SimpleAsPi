@@ -139,9 +139,8 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
 
   union {
     struct __attribute__(( packed )) {
-      uint32_t offset:10; // Big enough for kernel SWIs
-      uint32_t core:8;
-      uint32_t res:14;
+      uint32_t offset:24; // Big enough for all SWIs
+      uint32_t core:8;    // Ever used?
     } swi;
     struct __attribute__(( packed )) {
       uint32_t swi_offset:6;

@@ -153,7 +153,7 @@ static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
 
   if (((da->pages + resize_by_pages) << 12) > da->max_size) {
     static error_block error = { 999, "DA maximum size exceeded" };
-    asm ( "bkpt 21" );
+    // asm ( "bkpt 21" );
     return &error;
   }
 

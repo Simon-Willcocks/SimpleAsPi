@@ -100,91 +100,25 @@ void __attribute__(( noreturn )) boot( char const *cmd, workspace *ws )
   static char const entering[] = "Entering default language: " DEFAULT_LANGUAGE " in ";
   Task_LogString( entering, sizeof( entering ) - 1 );
 
-if (0) Task_Sleep( 10 );
 if (0) {
-static char const starting[] = "About to start...";
-register char const *s asm( "r0" ) = starting;
-asm volatile ( "svc %[swi]" : "=r" (s) : [swi] "i" (OS_Write0), "r" (s) );
-}
-if (0) {
-static char const cmd[] = "Set Wimp$Font Trinity.Medium";
-register char const *s asm( "r0" ) = cmd;
-asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
-}
-if (0) {
-static char const cmd[] = "Echo <Wimp$Font>";
-register char const *s asm( "r0" ) = cmd;
-asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
-}
-
-
-if (1) {
-static char const varname[] = "Wimp$Font";
-static char const value[] = "Trinity.Medium";
-register char const *var asm( "r0" ) = varname;
-register char const *val asm( "r1" ) = value;
-register uint32_t len asm( "r2" ) = sizeof( value ) - 1;
-register uint32_t ctx asm( "r3" ) = 0;
-// register uint32_t type asm( "r4" ) = 0; // String to GSTrans on set
-register uint32_t type asm( "r4" ) = 0; // Literal String
-asm ( "svc %[swi]" : 
-    : [swi] "i" (OS_SetVarVal)
-    , "r" (var)
-    , "r" (val)
-    , "r" (len)
-    , "r" (ctx)
-    , "r" (type) );
-{
-static const char str[] = "Set ";
-register char const *s asm( "r0" ) = str;
-asm ( "svc %[swi]" : : [swi] "i" (OS_Write0), "r" (s) );
-}
-{
-register char const *s asm( "r0" ) = varname;
-asm ( "svc %[swi]" : : [swi] "i" (OS_Write0), "r" (s) );
-}
-{
-register char const *s asm( "r0" ) = " to ";
-asm ( "svc %[swi]" : : [swi] "i" (OS_Write0), "r" (s) );
-}
-{
-register char const *s asm( "r0" ) = value;
-asm ( "svc %[swi]" : : [swi] "i" (OS_Write0), "r" (s) );
-}
-}
-
-
-if (0) {
-static char const cmd[] = "Echo Hello world";
-register char const *s asm( "r0" ) = cmd;
-asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
-}
-
-if (0) {
-static char const cmd[] = "Show";
-register char const *s asm( "r0" ) = cmd;
-asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
-}
-
-    if (0) Task_Sleep( 10 );
-if (0) {
-char const cmd[] = "Status";
-register char const *s asm( "r0" ) = cmd;
-asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
-}
-
-    if (0) Task_Sleep( 10 );
-{
+Task_Sleep( 1 );
 char const cmd[] = "Modules";
 register char const *s asm( "r0" ) = cmd;
 asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
 }
 
-  for (int i = 2; i > 0; i--) {
-    Task_LogSmallNumber( i );
-    Task_LogString( " ", 1 );
-    Task_Sleep( 10 );
-  }
+if (1) {
+  Task_Sleep( 1 );
+  // Start modified qemu logging CPU
+
+  asm volatile ( "svc %[swi]" 
+    :
+    : [swi] "i" (0x66666)
+    : "r0"
+    );
+}
+
+Task_Sleep( 1 );
 {
 char const cmd[] = "Desktop";
 register char const *s asm( "r0" ) = cmd;
@@ -192,6 +126,8 @@ asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
 }
     Task_LogString( "Desktop returned!\n", 17 );
 
+Task_Sleep( 1 );
+asm ( "bkpt 2" );
   register uint32_t enter asm ( "r0" ) = 0; // RMRun
   register char const *module asm ( "r1" ) = "System:Modules."DEFAULT_LANGUAGE;
   register error_block *error asm ( "r0" );

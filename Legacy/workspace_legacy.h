@@ -20,9 +20,7 @@ typedef struct dynamic_area dynamic_area;
 
 typedef struct {
   uint32_t queue;
-  // owner is a pointer to a word in RMA, which is accessible to the
-  // usr32 mode task, as well as the kernel_swis code.
-  uint32_t *owner;
+  uint32_t owner;  // User task managing access to the legacy SVC stack
   // The SP when the task running legacy code was interrupted
   // If the task was in privileged mode at the time, there will be
   // a couple of words on the stack to restore the needed banked

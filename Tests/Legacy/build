@@ -30,6 +30,11 @@ INITIAL_MODULES+='SharedCLibrary\0' # Not 'CLib\0'
 INITIAL_MODULES+='BASIC\0'
 INITIAL_MODULES+='BASIC64\0'
 INITIAL_MODULES+='BASICVFP\0'
+
+# SpriteExtend does a lot of checking for platform features etc.
+INITIAL_MODULES+='SpriteExtend\0'
+INITIAL_MODULES+='SpriteUtils\0'
+
 INITIAL_MODULES+='BlendTable\0'
 INITIAL_MODULES+='BufferManager\0'
 INITIAL_MODULES+='ColourTrans\0'
@@ -72,11 +77,6 @@ INITIAL_MODULES+='ROMFonts\0'
 #INITIAL_MODULES+='SoundChannels\0'
 #INITIAL_MODULES+='SoundScheduler\0'
 
-# SpriteExtend does a lot of checking for platform features etc.
-# See how far we get without it.
-#INITIAL_MODULES+='SpriteExtend\0'
-
-INITIAL_MODULES+='SpriteUtils\0'
 INITIAL_MODULES+='Squash\0'
 INITIAL_MODULES+='BootFX\0'
 ##INITIAL_MODULES+='SuperSample\0'

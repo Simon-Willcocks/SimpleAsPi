@@ -115,7 +115,7 @@ OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
   if (queue->queue == 0) {
 #ifdef DEBUG__FOLLOW_QUEUES
   Task_LogString( "Blocking ", 9 );
-  Task_LogHex( (uint32_t) running );
+  Task_LogHex( ostask_handle( running ) );
   Task_LogString( " on ", 4 );
   Task_LogHex( queue_handle( queue ) );
   Task_LogNewLine();
@@ -168,7 +168,7 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
   Task_LogString( "Queuing SWI ", 12 );
   Task_LogHex( SWI );
   Task_LogString( " on ", 4 );
-  Task_LogHex( (uint32_t) queue_handle );
+  Task_LogHex( queue_handle );
   Task_LogNewLine();
 #endif
   OSTask *running = workspace.ostask.running;
@@ -224,7 +224,7 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
   if (matched_handler) {
 #ifdef DEBUG__FOLLOW_QUEUES
   Task_LogString( "Handled by ", 11 );
-  Task_LogHex( (uint32_t) matched_handler );
+  Task_LogHex( ostask_handle( matched_handler ) );
   Task_LogNewLine();
 #endif
     assert( 0xff1 == ((uint32_t) matched_handler) >> 20 );

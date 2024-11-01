@@ -17,25 +17,12 @@
 #include "kernel_swis.h"
 #include "ostaskops.h"
 
-static void __attribute__(( naked )) run_swi( uint32_t task, svc_registers *regs )
-{
-  asm ( "svc %[swi]"
-    "\n  mrs r11, cpsr  // Save cpsr"
-    "\n  svc %[finished]"
-    :
-    : [finished] "i" (OSTask_Finished)
-    , [swi] "i" (OS_CallASWIR12 | Xbit) );
-
-  // The above should never return.
-  for (;;) asm ( "udf #99" );
-}
-
-void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
+void manage_legacy_stack( uint32_t handle, uint32_t queue )
 {
   svc_registers regs;
 
   for (;;) {
-    queued_task client = Task_QueueWait( pipe );
+    queued_task client = Task_QueueWait( queue );
 
     Task_GetRegisters( client.task_handle, &regs );
 
@@ -58,12 +45,43 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     uint32_t r0 = regs.r[0];
     if (writeS) regs.r[0] = regs.lr;
 
-    regs.r[12] = writeS ? OS_Write0 : client.swi;
-    regs.lr = (uint32_t) run_swi;
+    uint32_t swi = writeS ? OS_Write0 : client.swi;
 
-    *owner = client.task_handle;
-    Task_RunThisForMe( client.task_handle, &regs );
-    *owner = 0;
+    regs.spsr &= 0x0fffffff;
+
+    // DO NOT USE THE STACK BETWEEN RunForTask AND Finished!
+    // Or create a stack in shared memory (RMA)
+
+    register uint32_t s asm( "r12" ) = swi | Xbit;
+    register svc_registers *r asm( "r14" ) = &regs;
+    asm ( "push {r0-r11}"
+      "\n  mov r10, %[client]"
+      "\n  ldm r14, {r0-r9}"
+      "\n  mov r11, r0"
+      "\n  mov r0, r10"
+      "\n  svc %[enter_slot]"
+      "\n  mov r0, r11"
+      "\n  svc %[swi]"
+      "\n  mrs r10, cpsr  // Save cpsr"
+      "\n  svc %[leave_slot]"
+      // Back in our context, with our stack!
+      "\n  stm r14, {r0-r9}"
+      "\n  ldr r1, [r14, #4 * 14]" // spsr
+      "\n  and r10, r10, #0xf0000000"
+      "\n  bic r1, r1, #0xf0000000"
+      "\n  orr r1, r1, r10"
+      "\n  str r1, [r14, #4 * 14]" // spsr
+      "\n  pop {r0-r11}"
+      :
+      : [swi] "i" (OS_CallASWIR12 | Xbit)
+      , [enter_slot] "i" (OSTask_RunForTask | Xbit)
+      , [leave_slot] "i" (OSTask_Finished | Xbit)
+      , "r" (r)
+      , "r" (s)
+      , [client] "r" (client.task_handle)
+      : "r10", "memory", "cc" );
+
+    bool generate_errors = (0 == (client.swi & Xbit));
 
 #ifdef DEBUG__SHOW_LEGACY_SWIS
     Task_LogString( "Legacy SWI ", 11 );
@@ -71,33 +89,39 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
     Task_LogString( " ended\n", 7 );
 #endif
 
-    Task_GetRegisters( client.task_handle, &regs );
+    if (0 != (VF & regs.spsr)) { // Error? Could be enter module request
+      error_block const *error = (void*) regs.r[0];
+      if (error->code == 0) {
+        // Special case: we just successfully ran an OS_Module call to
+        // enter a module either directly, or indirectly (what we called
+        // called OS_Module from SVC mode).
 
-    if (regs.r[12] != client.swi) {
-      // Special case: we just successfully ran an OS_Module call to
-      // enter a module. We reset the SVC stack and enter the code in
-      // usr32 mode.
+        // Treat this as a call to return the start and private addresses and
+        // run the code in usr32.
 
-      // These register choices have to match do_OS_Module
-      // regs.r[0] is the command line (not so much, at the moment!)
-      // Oh, wait, this is an OS_ChangeEnvironment thing, isn't it?
-      // Or OS_FSControl 2?
-      regs.r[0] = regs.r[2];
-      regs.r[12] = regs.r[3];
-      regs.lr = regs.r[4];
-      regs.spsr = 0x10; // usr32, interrupts enabled
-    }
-    else if (writeS) {
-      regs.spsr = regs.r[11]; // State on exit from SWI
-      regs.lr = (3 + regs.r[0]) & ~3; // R0 on exit from SWI (OS_WriteS)
-      regs.r[0] = r0;   // Restored to state before OS_WriteS
-      regs.r[12] = OS_WriteS;
+        regs.r[12] = regs.r[2];
+        regs.lr = regs.r[1];
+        regs.spsr = 0x10; // usr32, interrupts enabled
+      }
+      else if (generate_errors) {
+        // TODO GenerateError
+        asm ( "bkpt 7" );
+      }
+      else {
+        asm ( "bkpt 8" );
+      }
     }
     else {
-      regs.spsr = regs.r[11]; // State on exit from SWI
-      regs.r[11] = r11;
+      if (writeS) {
+        asm( "bkpt 9" );
+        regs.lr = (3 + regs.r[0]) & ~3; // R0 on exit from SWI (OS_WriteS)
+        regs.r[0] = r0;   // Restored to state before OS_WriteS
+      }
+      else {
+        regs.r[11] = r11;
+        regs.lr = lr;
+      }
       regs.r[12] = r12;
-      regs.lr = lr;
     }
 
     Task_ReleaseTask( client.task_handle, &regs );
@@ -105,8 +129,7 @@ void manage_legacy_stack( uint32_t handle, uint32_t pipe, uint32_t *owner )
 }
 
 void __attribute__(( naked, noreturn )) serve_legacy_swis( uint32_t handle,
-                                                           uint32_t pipe,
-                                                           uint32_t *owner )
+                                                           uint32_t queue )
 {
   // Running in usr32 mode, no stack, but my very own slot
   asm ( "mov r0, #0x9000"
@@ -116,7 +139,7 @@ void __attribute__(( naked, noreturn )) serve_legacy_swis( uint32_t handle,
     : [settop] "i" (OSTask_AppMemoryTop)
     : "r0", "r1" );
 
-  manage_legacy_stack( handle, pipe, owner );
+  manage_legacy_stack( handle, queue );
 
   __builtin_unreachable();
 }

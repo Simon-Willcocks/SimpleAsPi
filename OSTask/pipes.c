@@ -533,6 +533,11 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 
     if (workspace.ostask.running != running) PANIC;
 
+#ifdef DEBUG__FOLLOW_TASKS
+    Task_LogString( "< ", 2 );
+    Task_LogHex( ostask_handle( running ) );
+    Task_LogNewLine();
+#endif
     // Make the receiver ready to run; this could be taken up instantly,
     // this core has no more control over this task.
     mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, receiver );
@@ -706,6 +711,11 @@ OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
     sender->regs.r[1] = space_in_pipe( pipe );
     sender->regs.r[2] = write_location( pipe );
 
+#ifdef DEBUG__FOLLOW_TASKS
+    Task_LogString( "> ", 2 );
+    Task_LogHex( ostask_handle( running ) );
+    Task_LogNewLine();
+#endif
     // Make the sender ready to run; this could be taken up instantly,
     // this core has no more control over this task.
     mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, sender );

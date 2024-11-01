@@ -26,6 +26,20 @@ static inline void set_VF()
   asm ( "msr cpsr_f, #(1 << 28)" );
 }
 
+static int strlen( char const *s )
+{
+  char const *p = s;
+  while ('\0' < *p) { p++; }
+  return p - s;
+}
+
+static int rostrlen( char const *s )
+{
+  char const *p = s;
+  while (' ' < *p || '\t' == *p) { p++; }
+  return p - s;
+}
+
 typedef struct module_header module_header;
 
 typedef struct {
@@ -210,16 +224,28 @@ bool module_name_match( char const *left, char const *right )
 //static 
 module_header *find_module_in_list( char const *name, uint32_t const *list )
 {
+{ char const text[] = "Looking for module ";
+Task_LogString( text, sizeof( text ) - 1 ); }
+Task_LogString( name, rostrlen( name ) );
+Task_LogString( "... ", 4 );
+
   module_header *header = 0;
   uint32_t const *entry = list;
   while (*entry != 0) {
     header = (void*) (entry + 1);
 
     if (module_name_match( title_string( header ), name )) {
+{ char const text[] = "Match found ";
+Task_LogString( text, sizeof( text ) - 1 ); }
+Task_LogNewLine();
       return header;
     }
     entry += (*entry / sizeof( uint32_t ));
   }
+{ char const text[] = "No matching module ";
+Task_LogString( text, sizeof( text )-1 ); }
+Task_LogNewLine();
+
   return 0;
 }
 
@@ -513,8 +539,18 @@ OSTask *run_traditional_swi( svc_registers *regs, int swi )
 
   if (m->handlers != 0) { // MP-aware
     swi_action action = m->handlers->action[swi_offset];
-    if (is_queue( action ))
+    if (is_queue( action )) {
+#ifdef DEBUG__FOLLOW_SWIS
+    { char const text[] = "Queuing SWI ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( swi );
+    { char const text[] = " for task ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( ostask_handle( workspace.ostask.running ) );
+    Task_LogNewLine();
+#endif
       return queue_running_OSTask( regs, action.queue, swi_offset );
+    }
     else if (action.code == 0) {
       asm ( "bkpt 86" );
       return Error_UnknownSWI( regs );
@@ -854,20 +890,6 @@ typedef struct {
   module *module;
   module_command *command;
 } module_code;
-
-static int strlen( char const *s )
-{
-  char const *p = s;
-  while ('\0' < *p) { p++; }
-  return p - s;
-}
-
-static int rostrlen( char const *s )
-{
-  char const *p = s;
-  while (' ' < *p || '\t' == *p) { p++; }
-  return p - s;
-}
 
 static module_command *search_list( char const *command, const char *cmd )
 {
@@ -1257,6 +1279,10 @@ void start_usr32( void *start, uint32_t *private )
 
 OSTask *do_OS_Module( svc_registers *regs )
 {
+  // Hint to the caller that the stack should be reset, etc.
+  // Only for RMRun and RMEnter
+  static error_block no_error = { 0, "No error - enter module" };
+
   error_block const *error = 0;
   char const *const name = (void*) regs->r[1];
 
@@ -1291,13 +1317,37 @@ OSTask *do_OS_Module( svc_registers *regs )
   Task_LogString( name, e - name );
   Task_LogNewLine();
 #endif
-      // NOTE!!! This action will be completed in Legacy/user.c
-      // Bad, bad, breaking of modularity!
 
-      start_usr32( start, &m->private_word );
+      // Treat this as a call to return the start and private addresses
+      regs->r[0] = (uint32_t) &no_error;
+      regs->spsr |= VF;
+      regs->r[1] = (uint32_t) start;
+      regs->r[2] = (uint32_t) &m->private_word;
     }
     break;
   case 1: // RMLoad
+#ifdef DEBUG__CHECK_INTERRUPT_HANDLING
+  if (extract_module_name( name )[0] == '&') {
+    asm ( "cpsie i" );
+    for (;;) {
+      // V flag should never change in the inner loops
+      asm ( "msr cpsr_f, #0x10000000" );
+      asm ( "0:"
+        "\n  sub %[i], %[i], #1"
+        "\n  tst %[i], #27"
+        "\n  bne 0b"
+        :
+        : [i] "r" (0xffff0000) );
+      asm ( "msr cpsr_f, #0xe0000000" );
+      asm ( "0:"
+        "\n  sub %[i], %[i], #1"
+        "\n  tst %[i], #27"
+        "\n  bne 0b"
+        :
+        : [i] "r" (0xffff0000) );
+    }
+  }
+#endif
     error = load_and_initialise( name );
     break;
   case 2: // RMEnter
@@ -1309,7 +1359,11 @@ OSTask *do_OS_Module( svc_registers *regs )
       void *start = start_code( m->header );
       if (start == 0) PANIC;
 
-      start_usr32( start, &m->private_word );
+      // Treat this as a call to return the start and private addresses
+      regs->r[0] = (uint32_t) &no_error;
+      regs->spsr |= VF;
+      regs->r[1] = start;
+      regs->r[2] = &m->private_word;
     }
     break;
   case 12: // Extract module information
