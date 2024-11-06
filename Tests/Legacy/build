@@ -223,13 +223,6 @@ LEGACIES+=" "$( symbol VduInit )
 
 LEGACIES+=" "$( symbol HardFont )
 
-# These are commands that are reached in a wierd way.
-# It's been fixed in later versions of RO, but this is easier than
-# getting that to build with my old DDE
-LEGACIES+=" "$( symbol SCHCTab )
-
-LEGACIES+=" "$( symbol SysCommsModule )
-
 echo $LEGACIES
 echo $KERNEL_START, $KERNEL_OFFSET
 
@@ -340,6 +333,7 @@ arm-none-eabi-gcc-9.2.1 \
         -Wl,--defsym=global_kernel_page_tables=0xfff89000 \
         -Wl,--defsym=workspace=0xfffd0000 \
         -Wl,--defsym=shared=0xfffe0000 \
+        -Wl,--defsym=MOSworkspace=0xfa400000 \
         -Wl,--section-start=.init=0xfc000000 \
         -Wl,--section-start=.text=0xfc003000 \
         -Wl,--section-start=.romimage=$KERNEL_START \
