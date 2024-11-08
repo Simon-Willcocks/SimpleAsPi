@@ -1142,27 +1142,6 @@ handled run_aliased_command( uint32_t *regs )
     code = find_module_command( cmd0 );
   }
 
-#ifdef LEGACY_SPECIAL_SCHC
-  if (code.command == 0) {
-    // Special command list, removed in later versions?
-    // FIXME? Assuming not alias
-    extern char const SCHCTab;
-    extern char const SysCommsModule;
-    code.command = search_list( cmd0, &SCHCTab );
-
-    if (code.command != 0) {
-#ifdef DEBUG__LOG_COMMANDS
-      Task_LogString( "Special: ", 9 );
-      Task_LogString( cmd0, 0 );
-      Task_LogNewLine();
-#endif
-
-      static module const fake = { .header = &SysCommsModule };
-      code.module = &fake;
-    }
-  }
-#endif
-
   if (code.command == 0) {
 #ifdef DEBUG__LOG_COMMANDS
     Task_LogString( "Command ", 8 );
