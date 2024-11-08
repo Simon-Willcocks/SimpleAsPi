@@ -1,0 +1,1511 @@
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/BuildSys/Components/ROOL/CKernel ModifiedKernelAndWimp/BCM2835/RiscOS/BuildSys/Components/ROOL/CKernel
+--- Unchanged/BCM2835/RiscOS/BuildSys/Components/ROOL/CKernel	2024-11-08 14:13:07.850585507 +0000
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/BuildSys/Components/ROOL/CKernel	2024-10-31 14:42:21.000000000 +0000
+@@ -1 +1,220 @@
+-New file for CKernel
++#------------------------------------------------------------------------------
++# Components file for CKernel build
++#------------------------------------------------------------------------------
++%BaseAddress   0xFC000000
++%Image         Build$ImageName
++%Log           Build$ImageName
++%Messages      Sources.Internat.Messages
++%Joiner        romlinker
++%JoinerFormat  romlinker
++%noimagesize
++
++# BBE Support
++BuildApps
++BuildExport
++BuildSystem           -options COMPONENTFILE=CKernel COMPONENTFILE2=Universal
++BuildEnvironment      -options ENVFILE=CKernel
++BuildModules
++BuildTools
++
++#------------------------------------------------------------------------------
++# some headers
++#
++HdrSrc                -type EXP
++#------------------------------------------------------------------------------
++# we need the following exported for swis.h generation
++# change the type to EXP
++#
++CompressPNG           -type EXP
++DDEUtils              -type EXP
++Econet                -type EXP
++HostFS                -type EXP
++SCSIDriver            -type EXP
++PCCardFS              -type EXP
++PDriver               -type EXP
++
++# kernel is first module in ROM seen as the UtilityModule
++HAL_BCM2835
++Kernel                -at 0xFC010000 -options ASFLAGS="-PD \"CMOS_Override SETS \\\"= FileLangCMOS,fsnumber_SDFS,CDROMFSCMOS,&C0\\\"\""
++Podule                -type EXP
++PCI
++FileSwitch
++ResourceFS
++TerritoryManager
++Messages
++MessageTrans
++UK
++WindowManager         -options OPTIONS=Ursula
++TaskManager
++# Desktop is the 11th module (default language)
++Desktop
++SharedRISC_OSLib
++BASIC105
++BASIC64
++BASICVFP
++BlendTable
++BufferManager
++ColourTrans
++Debugger
++#DADebug
++DeviceFS
++BCMSupport
++PortableHAL
++RTSupport
++USBDriver
++DWCDriver
++XHCIDriver
++VCHIQ
++BCMSound
++ScreenModes
++BCMVideo
++DisplayManager
++DMAManager
++DragASprite
++DragAnObj
++DrawMod
++BBCEconet
++FileCore
++ADFS                  -type EXP
++RamFS
++Filer
++FilerSWIs
++FSLock
++FontManager           
++FPEmulator            -options FPE_APCS=3/32bit FPEANCHOR=High
++VFPSupport
++Free
++Hourglass
++IIC
++International
++InternationalKeyboard -options KEYBOARD=All
++ITable
++NetFS
++NetFiler
++NetPrint
++NetStatus
++Obey
++Pinboard
++PipeFS
++RAMFSFiler
++ResourceFiler
++ROMFonts
++RTC
++ScreenBlanker
++ScrSaver              -options SCRSAVERAPP=No
++DualSerial
++SerialDeviceDriver    -type EXP
++SerialDeviceSupport
++#SerialMouse
++ShellCLI
++SoundDMA_HAL
++SoundControl
++SoundChannels
++SoundScheduler
++SpriteExtend
++SpriteUtils
++Squash
++BootFX
++SuperSample
++SystemDevices
++TaskWindow            
++WindowUtils
++FilterManager
++WaveSynth
++StringLib
++Percussion
++SharedSnd
++Filer_Action          
++DOSFS                 -options PCMCIA=TRUE
++SCSISwitch
++SCSISoftUSB
++SCSIFS
++SCSIFiler             -options ASFLAGS="-PD \"SCSI SETL {TRUE}\"" TEMPLATES=yes
++SDIODriver
++SDFS
++SDFSFiler             -options ASFLAGS="-PD \"SDFS SETL {TRUE}\"" TEMPLATES=yes
++SDCMOS
++ColourPicker
++DrawFile
++BootCommands
++WindowScroll
++MManager
++Internet
++Resolver
++Net
++BootNet
++Freeway
++ShareFS
++MimeMap
++LanManFS              -options OPTIONS=-DCHECK_ARMBOOT_EXISTS ROMSPRITES=TRUE
++EtherGENET
++EtherUSB
++DHCP                  -options OPTIONS=-DMINIMUM_OPTIONS_LENGTH=4
++Edit
++Draw
++Paint
++Alarm
++Chars
++Help2
++
++#
++# Toolbox Modules/Libs
++#
++tboxlib
++ToolboxLib            -type EXP
++Toolbox
++Window
++ToolAction
++Menu
++Iconbar
++ColourDbox
++ColourMenu
++DCS_Quit
++FileInfo
++FontDbox
++FontMenu
++PrintDbox
++ProgInfo
++SaveAs
++Scale
++Gadgets
++#
++# CDFS
++#
++CDFSDriver
++CDFSSoftSCSI
++CDFS
++CDFSFiler
++
++UnSqzAIF
++InetRes               -options TYPE=EmergencyUtils
++GPIO
++HeroNames
++
++# some libraries and bits
++#
++callx
++AsmUtils              -type EXP
++TCPIPheaders          -type EXP
++socklib
++inetlib
++unixlib
++xolib
++UnicodeLib            -type EXP
++ConfigLib             -type EXP
++OSLib
++DeskLib
++ModMallocLib
++PlainArgvLib
++RemoteDebug
++PDebug
++DDTLib
++Wild
++Trace
++DebugLib
++SyncLib
++SDIOLib
++
++ABRelease
++
++# end
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp
+--- Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp	2019-12-14 20:52:08.000000000 +0000
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp	2024-11-08 15:43:04.209458967 +0000
+@@ -74,6 +74,9 @@
+ true	SETL	{TRUE}
+ false	SETL	{FALSE}
+ 
++	GBLL	CKernel ; TODO FIXME
++CKernel	SETL	{TRUE}
++
+         GBLS    LoadWimpOptions
+       [ Options = ""
+ LoadWimpOptions SETS "GET Options.s.<System>"
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp01 ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp01
+--- Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp01	2023-06-24 12:58:51.000000000 +0100
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp01	2024-11-08 15:43:06.253461335 +0000
+@@ -56,6 +56,32 @@
+               ]
+ u_scroll        #       8               ; x,y scroll-offsets (for user scroll)
+ 
++  [ CKernel
++; FIXME: these have to match OSTask/ostaskops.h
++XOSTask_Yield                   * 0x20300
++XOSTask_Sleep                   * 0x20301
++XOSTask_Create                  * 0x20302
++XOSTask_Spawn                   * 0x20303
++XOSTask_RegisterSWIHandlers     * 0x20306
++XOSTask_AppMemoryTop            * 0x20308
++XOSTask_RunForTask              * 0x20309
++XOSTask_GetRegisters            * 0x2030a
++XOSTask_SetRegisters            * 0x2030b
++XOSTask_Finished                * 0x2030c
++XOSTask_ReleaseTask             * 0x2030d
++XOSTask_ChangeController        * 0x2030e
++XOSTask_LogString               * 0x2031b
++
++XOSTask_QueueCreate             * 0x20330
++XOSTask_QueueDelete             * 0x20331
++XOSTask_QueueWait               * 0x20332
++
++                ^       0
++svcr            #       4 * 13
++svclr           #       4
++svcpsr          #       4
++svcr_size       #       0
++  ]
+ 
+ 
+ ;;-----------------------------------------------------------------------------
+@@ -112,6 +138,41 @@
+ 
+         MEND
+ 
++  [ CKernel
++        MACRO
++        Log $string
++        Push    "R0,R1,LR"
++        ADR     R0, %FT91
++        MOV     R1, #%FT92 - %FT91
++        SWI     XOSTask_LogString
++        B       %FT93
++91      
++        DCB     "$string"
++92
++        ALIGN
++93
++        Pull    "R0,R1,LR"
++        MEND
++
++        MACRO
++        LogNum  $reg, $term
++        Push    "R0,R1,R2,LR"
++
++        SUB     SP, SP, #16     ; Space for hex
++        MOV     R0, $reg
++        MOV     R1, SP
++        MOV     R2, #16
++        SWI     XOS_ConvertHex8
++        MOV     R1, #$term
++        STR     R1, [SP, #8]
++        MOV     R0, SP
++        MOV     R1, #9
++        SWI     XOSTask_LogString
++
++        ADD     SP, SP, #16     ; Space for hex
++        Pull    "R0,R1,R2,LR"
++        MEND
++  ]
+ 
+         MACRO
+ $l      CallFilter $name,$nohandle
+@@ -724,6 +785,16 @@
+ 
+ tempworkspace   #       8*4             ; can be used easily
+ 
++  [ CKernel
++controller_task #       4
++recurse_ret     #       4               ; return address in support task
++ultimate_client #       4               ; The task calling the Wimp from usr32
++ckernel_res     #       4
++ckernel_end     #       0               ; Keep this section a multiple of
++                                        ; four words because otherwise things
++                                        ; seem to break
++  ]
++
+ vduoutput       #       0
+ log2px          #       4
+ log2py          #       4
+@@ -3416,6 +3487,397 @@
+         STR     R1,[sp,#0*4]            ; overwrite stacked value
+         B       ExitWimp
+ 
++  [ CKernel
++
++;-----------------------------------------------------------------------------
++; CKernel tasks to handle SWIs
++;-----------------------------------------------------------------------------
++
++show_regs
++        Push    "r0, lr"
++        LogNum  r14, 10
++        LDR     r14, [r0, #4 * 0]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 1]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 2]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 3]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 4]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 5]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 6]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 7]
++        LogNum  r14, 10
++
++        LDR     r14, [r0, #4 * 8]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 9]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 10]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 11]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 12]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 13]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 14]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 15]
++        LogNum  r14, 10
++
++        SWI     XOSTask_Yield
++        ; ends
++        Pull    "r0, pc"
++
++        LTORG
++        ; When swi_done is reached, the r0 to return is in r0 and the
++        ; flags are set appropriately.
++        ; First thing we do is store the flags.
++
++swi_done
++        MRS     R14,CPSR
++        Push    "r14"
++        ; We have one more word on the stack below the frame, so +4
++
++        ; Noise starts
++        Log "Resuming after Wimp SWI (ret) "
++
++        LogNum  r11, 32
++        LDR     r14, [sp, #4 * 14]      ; Return address
++        LogNum  r14, 32
++        LDR     R14, polltaskhandle
++        CMP     R14, #0         ; sometimes 0
++        LDRNE   r14, [wsptr, r14]
++        TEQNE   R14, #task_unused
++        LDRNE   r14, [r14, #task_slotptr]
++        LogNum  r14, 10
++
++        MOV     r0, sp
++        BL      show_regs
++
++        LDR     r14, [sp, #4 * 12]
++        STR     r14, longjumpSP
++        LDR     r14, [sp, #4 * 13]
++        STR     r14, polltaskhandle
++
++        LDR     r14, [sp, #4 * 14]
++        TEQ     r14, #0
++
++        BEQ     return_to_original_caller
++
++        ; Call was recursive, "simply" return
++        Pull    "r1"
++        MSR     CPSR_f, r1      ; PSR
++        Pull    "r1-r11"
++        ADD     sp, sp, #12     ; old_polltask, longjump, return
++        BX      r14
++
++return_to_original_caller
++        Pull    "r11"
++        AND     r11, r11, #0xf0000000
++
++        SWI     XOSTask_Finished
++
++        Push    "r0"            ; need r0 for ChangeController
++
++        ; No longer in a recursive call (even if have been)
++        MOV     R1, #0
++        STR     R1, recurse_ret
++
++        ; Hand the client task back to the control task to resume
++        LDR     R0, ultimate_client
++        LDR     R1, controller_task
++        SWI     XOSTask_ChangeController
++
++        LDM     sp, {r0-r6}
++        ADD     sp, sp, #4 * 15 ; Stacked registers, r0-r11, longjmpsp, task, ret
++        SWI     XWimp_Initialise
++        ; This is never reached, the above is a clue for the manager task
++
++bork
++        BKPT    111
++        LTORG
++
++        ; control_task is a spawned task with its own application space
++        ; If it needed a stack, it would use XOSTask_AppMemoryTop to allocate
++        ; space and set SP to the top of it, for example.
++        ; But we don't (yet)
++control_task
++        ; r0 = task handle (unused)
++        ; r1 = module workspace address
++        ; r2 = wimp task queue
++
++        MOV     wsptr, R1
++        MOV     R9, R2
++
++        MOV     R0, #0x9000
++        SWI     XOSTask_AppMemoryTop
++        ; When we need a stack...
++        ; We need one for LogNum
++        MOV     SP, R0
++
++        ; All other registers are freely usable, this is an independent task
++
++        ; Create a stack that all slots can access for the task to run the SWIs
++        ; TODO Task specific storage
++        MOV     R3,#65536 ; 64k stack?
++        SUB     R3,R3,#12 ; nearly 64k stack!
++        MOV     R0,#ModHandReason_Claim
++        SWI     XOS_Module
++        BVS     bork
++
++        ; Create task that will execute the Wimp SWIs, in the old-fashioned way
++        ADD     R1, R2, R3      ; top of stack
++        BIC     R1, R1, #15     ; Aligned (down) to 16 byte boundary
++
++        ; Only the stack (in R1) is relevant for the new task
++        SWI     XOSTask_Create  ; New task shares this slot, naturally
++
++        ; Task is controlled by this task, until it is released to run
++        ; asynchronously before reporting completion by...
++        ;  (first thought):
++        ;  Wimp_Initialise as if called from a Wimp SWI (hopefully that 
++        ;  never happens in the wild!)
++        MOV     R8, R0  ; support_task handle
++
++        Log     "Entering Wimp control task loop\n"
++
++control_task_loop
++        MOV     R0, R9
++        SWI     XOSTask_QueueWait
++        ; r0 = queued task handle
++        ; r1 = swi number (offset)
++        ; r2 = core number (usually irrelevant)
++
++        MOV     R10, R0 ; Remember client task
++        MOV     R11, R1 ; Remember swi number
++
++        ; We're going to want to know/modify the SWI caller's
++        ; registers whatever happens. Put them at 0x8000.
++
++        MOV     R1, #0x8000
++        SVC     XOSTask_GetRegisters
++
++        Push    "r0, lr"
++        MOV     r0, r1
++        BL      show_regs
++        Pull    "r0, lr"
++
++; TODO Remove this noise
++        Log     "Wimp SWI "
++        LogNum  r11, 32
++        Log     "OSTask "
++        LogNum  r10, 32
++        Log     "Task "
++        LDR     r2, taskhandle
++        LogNum  r0, 32
++        Log     "at "
++        LDR     r2, [R1, #svclr]
++        LogNum  r2, 10
++; End noise
++
++        TEQ     R10, R8         ; Called from support task?
++        BNE     client_swi      ; No? External SWI call
++
++        TEQ     R11, #0         ; Fake Wimp_Initialise?
++        BNE     recursing_swi   ; No? Call within a Wimp SWI
++
++return_from_swi
++        ; returning from a Wimp SWI
++        ; read the client's registers, update r0-r6, and the flags
++        ; resume the client task
++
++        LDR     R0, ultimate_client
++        ADD     R1, R1, #svcr_size
++        SVC     XOSTask_GetRegisters
++
++        Push    "r0, lr"
++        MOV     r0, r1
++        BL      show_regs
++        Pull    "r0, lr"
++
++        MOV     R2, R1          ; client registers before SWI
++        MOV     R1, #0x8000     ; SWI registers on exit, flags in r11
++
++; TODO Remove this noise
++        Log     "Wimp SWI return to Task "
++        LogNum  R0, 32
++        Log     "at "
++        LDR     R3, [R2, #svclr]
++        LogNum  R3, 32
++        LDR     R3, [R1, #4 * 11]       ; r11 contains return flags
++        LogNum  R3, 10
++; End noise
++
++        ; R1 -> SWI result registers (with flags in R11)
++        ; R2 -> client registers (to be modified)
++
++        ; Update flags
++        LDR     R3, [R1, #4 * 11]
++        LDR     R4, [R2, #svcpsr]
++        BIC     R4, #0xf0000000
++        ORR     R4, R4, R3
++        STR     R4, [R2, #svcpsr]
++
++        TST     R3, #0x10000000 ; V flag. Error?
++        LDRNE   R4, [R1]        ; Just R0 changed on error
++        STRNE   R4, [R2]
++        LDMIAEQ R1!, {R4-R7}    ; returned r0-r3
++        STMIAEQ R2!, {R4-R7}
++        LDMIAEQ R1!, {R4-R6}    ; returned r4-r6
++        STMIAEQ R2!, {R4-R6}
++
++        ; r1, r2 probably corrupted
++
++        LDR     R0, ultimate_client
++        MOV     R1, #0                  ; clear it.
++        STR     R1, ultimate_client
++
++        MOV     R1, #0x8000
++        ADD     R1, R1, #svcr_size
++        SWI     XOSTask_ReleaseTask
++
++        ; The support task is sitting, owned by this task, waiting
++        ; to be woken again on the next SWI.
++
++        B       control_task_loop
++
++recursing_swi
++        ; The support task is under our control (it just came out of
++        ; a queue), the client task is still under the support task's
++        ; control.
++
++        ; When the SWI is complete, this is where to resume
++        LDR     R2, [R1, svclr]
++        STR     R2, recurse_ret
++
++        ADR     R3, support_task_wimp_swi
++        STR     R3, [R1, svclr]
++
++        ; We need to preserve the (internal) caller's registers, so
++        ; don't change the caller's registers.
++        STMIA   wsptr, {r10-r11}        ; tempworkspace
++
++        MOV     R0, R8  ; support_task handle
++        MOV     R1, #0x8000
++        SWI     XOSTask_ReleaseTask
++
++        B       control_task_loop
++
++client_swi
++        ; Note: The task we're working for will remember its register values
++        ; until we release it, so we can mess with this copy...
++        ADR     R0, support_task_top_level_wimp_swi
++        STR     R0, [R1, svclr]
++        MOV     R0, #0x10
++        STR     R0, [R1, svcpsr]
++
++        STR     R10, ultimate_client
++        STR     R11, [R1, svcr + 4 * 11] ; swi number
++        STR     R12, [R1, svcr + 4 * 12] ; wsptr
++
++        ; Hand the client task off to the support task to control
++        ; (It has to be handed back when the SWI's completed.)
++        MOV     R0, R10
++        MOV     R1, R8  ; support_task handle
++        SWI     XOSTask_ChangeController
++
++        MOV     R0, R8  ; support_task handle
++        MOV     R1, #0x8000
++        SWI     XOSTask_ReleaseTask
++
++        B       control_task_loop
++
++support_task_top_level_wimp_swi
++        MOV     R14, R0
++        LDR     R0, ultimate_client
++        SWI     XOSTask_RunForTask
++        MOV     R0, R14
++
++support_task_wimp_swi
++        ; A SWI called from usr32 by an application or program,
++        ; maybe called from within a Wimp SWI...
++        ; Registers r0-r6 are those of the calling task.
++        ; Wimp SWIs modify at most the first 7 registers, r0-r6
++        ; r11 = swi chunk offset being called
++        ; r12 -> workspace
++        ; This routine is run by the support task, which owns the
++        ; original Wimp SWI calling task.
++
++        ; The legacy code expects r1-r11 to be the bottom items on 
++        ; the stack (see sysinfo_exitR0R1), and ExitWimp expects old
++        ; values of longjumpSP and polltaskhandle above that.
++
++        LDR     R14, recurse_ret
++        CMP     R14, #0
++        Push    "r14"
++
++        LDR     R14,polltaskhandle
++        Push    "r14"
++        LDR     R14,longjumpSP
++        Push    "r0-r11, r14"
++        ; Now we have the frame SWI code expects, plus r0 below it
++
++        ADD     R0, SP, #4
++        STR     R0,longjumpSP
++        LDR     R0,taskhandle
++        STR     R0,polltaskhandle
++
++        LDMIANE wsptr, {r10-r11}        ; tempworkspace
++
++        ; OK, so, the contents of taskhandle (and now polltaskhandle) could
++        ; be a Wimp task handle.
++        ; It might also not be.... Wimp_Initialise is called before the task
++        ; is a Wimp task.
++
++        Pull    "r0"
++        ; Now we have just the frame SWI code expects to be given at sp
++        ; and the input r0 in r0
++
++        LDR     R14,wimpswiintercept
++        TEQ     R14,#0
++                BEQ callaswi
++                BKPT    &ff90
++        MOVNE   PC,R14
++
++callaswi        ; How wimpswiintercept routines resume a SWI
++        ADRL    R14, jptable
++        ADDS    R14, R14, R11, ASL#2
++        MOV     userblk,R1              ; get userblk (r14) (--> parameters)
++        ADDS    PC, R14, #0             ; ENTER THE SWI ROUTINE! (clears V)
++
++        MyXError  WimpBadOp
++        B       ExitWimp_noswitch
++        MakeErrorBlock WimpBadOp
++
++; CKernel style functions
++; On entry:
++; R0    -> regs
++; R1    -> private word
++; R2    =  core number
++; R3    =  task handle
++; FIXME doesn't deal with errors!
++do_SWIWimp_ReadSysInfo
++        Push    "r0-r2,r11,r12,lr"
++        MOV     R11, R0
++        MOV     R12, R1
++        LDM     R11, { r0-r2 }
++        BL      SWIWimp_ReadSysInfo
++        STM     R11, { r0-r2 }
++        Pull    "r0-r2,r11,r12,pc"
++
++do_SWIWimp_CommandWindow
++        MOV     pc, lr ; May never happen!
++        ; Seriously: redirect the output to a pipe, if anything's
++        ; written to it, open an appropriate window to display
++        ; the output.
++  ] ; CKernel
++
+ 
+ ;-----------------------------------------------------------------------------
+ ; Initialisation - claim work area
+@@ -3513,6 +3975,87 @@
+ gotwork
+         MOV     wsptr,R2
+ 
++  [ CKernel
++        ; The private word is in system heap, hidden from user mode, but
++        ; the workspace is in RMA, which isn't.
++
++        ; Spawn a task to handle SWIs
++        ; That will create a task to execute the SWIs removed from the
++        ; queue. While the execute task is running, any Wimp SWIs from other
++        ; tasks will be stacked for later execution. (Actually, to start with,
++        ; I'll just panic!)
++
++        ; Recursive calls to Wimp SWIs will come through to the control task
++        ; which will then (once again) be in control of the worker task, which
++        ; it will use to run the SWI code.
++
++        ; On completion of a recursed SWI, the worker task simply resumes
++        ; where the SWI was supposed to return to.
++        ; On completion of the top level SWI, the worker task makes a dummy
++        ; call to Wimp_Initialise to block itself until the next SWI. The
++        ; control task will resume either the task that called the SWI, or
++        ; the one that the Wimp has scheduled to return from Wimp_Initialise,
++        ; Wimp_Poll(Idle), (etc.?)
++
++        Push    "R0-R4,LR"
++
++        SWI     XOSTask_QueueCreate
++        MOV     R3, R0
++        ADRL    R0, control_task
++        MOV     R1, #0                  ; No initial stack
++        MOV     R2, wsptr
++        SWI     XOSTask_Spawn
++
++        STR     R0, controller_task
++
++
++        ; The spawned task, in its own slot (aka AMB), is blocked, under
++        ; the control of this OSTask
++        ; Release it, let it fly!
++        MOV     R1, #0          ; No new context
++        SWI     XOSTask_ReleaseTask
++        BVC     %FT55
++        BKPT    55
++55
++
++        MOV     R0, SP
++        SUB     SP, SP, #64*4
++        MOV     R1, #0  ; Unknown SWI
++
++        GBLA    unused
++unused  SETA    63
++        WHILE   unused > 61 ; should be maxnewswi, but it's not defined yet
++        STR     R1, [R0, #-4]!
++unused  SETA    unused-1
++        WEND
++
++56
++        STR     R3, [R0, #-4]!
++        CMP     R0, SP
++        BNE     %BT56
++
++        ; Inline call, run in svc...
++        ADR     R2, do_SWIWimp_ReadSysInfo
++        STR     R2, [R0, #4 * 0x32]
++        ADR     R2, do_SWIWimp_CommandWindow
++        STR     R2, [R0, #4 * 0x2f]
++
++        ; STR     R4, [R0, #4 * 0x29]     ; Wimp_SpriteOp
++
++        SWI     XOSTask_RegisterSWIHandlers
++        ; Any Wimp-Chunk SWIs will be sent to the queue
++        ADD     SP, SP, #64*4
++
++        Log     "Registered SWI handlers\n"
++
++        Pull    "R0-R4,LR"
++  ] ; CKernel
++
++  [ CKernel
++        ; Legacy stuff...
++        ; When are they used, and when can they be eliminated?
++        ; (The pointers are into privileged memory.)
++  |
+         MOV     R0,#6
+         MOV     R1,#0
+         MOV     R2,#OSRSI6_IRQsema
+@@ -3528,6 +4071,7 @@
+         CMP     R2,#0
+         LDREQ   R2,=Legacy_DomainId
+         STR     R2,ptr_DomainId
++  ] ; CKernel
+ 
+         MOV     R1, #0
+         STR     R1, messages            ; no messsages open, in case of error lookups
+@@ -5216,6 +5760,7 @@
+ ;;-----------------------------------------------------------------------------
+ 
+ Wimp_SWIdecode
++  [ :LNOT: CKernel
+         Push    "LR"
+ ;
+       [ debugints
+@@ -5269,6 +5814,8 @@
+         MyXError  WimpBadOp
+         B       ExitWimp_noswitch
+         MakeErrorBlock WimpBadOp
++  ] ; :LNOT: CKernel
++
+ err_badpointer
+         MyXError  WimpBadPtrInR1
+         B       ExitWimp_noswitch
+@@ -5282,6 +5829,10 @@
+    ;    MOVVS   R14,#nullptr            ; CAN'T CLEAR THIS JUST BECAUSE V SET!
+    ;    STRVS   R14,redrawhandle
+ ;
++  [ CKernel ; debug
++        ; FIXME Don't forget the fonts, etc.
++        B       swi_done
++  |
+         Pull    "R1-R11"
+ return
+         LDR     R14,[sp],#4
+@@ -5339,14 +5890,20 @@
+         Debug   err,"SWI #, task",R11,#taskhandle
+ 
+         Pull    "PC",VS
++  ] ; CKernel
+ 
+ ExitWimp2
++  [ CKernel ; Exit Wimp passing output values in r0-r6
++        STM     sp, {r1-r6}
++        B       swi_done
++  |
+         LDR     R14,polltaskhandle      ; ensure no illegal task swaps occur!
+         Task    R14,,"ExitWimp2"
+ ;
+         ADD     sp,sp,#6*4              ; leave R1-R6 as on exit
+         Pull    "R7-R11"
+         B       return
++  ] ; CKernel
+ 
+ ;
+ ; jump table - contains branches to entry points
+@@ -5563,22 +6120,38 @@
+ 
+ err_badR0
+         MyXError  WimpBadSysInfo
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+         MakeErrorBlock WimpBadSysInfo
+ 
+ ;..............................................................................
+ 
+ sysinfo_TaskCount
+         LDR     R0,taskcount            ; R0 = number of active tasks
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_WimpMode
+         LDR     R0,currentmode          ; R0 = current desktop mode
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_SpriteSuffix
+         ADR     R0,romspr_suffix
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_DesktopState
+         LDR     R0,taskcount
+@@ -5586,11 +6159,19 @@
+         LDRNE   R0,commandflag
+         EORNES  R0,R0,#cf_active        ; R0=0 => command window active
+         MOVNE   R0,#1                   ; R0=1 => desktop vdu state set
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_WriteDir
+         LDR     R0,writeabledir         ; R0 = write direction
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_CurrentTask
+         LDR     R0,taskhandle           ; R0 = task handle
+@@ -5603,19 +6184,31 @@
+         MOVNE   R0,R14
+         MOVEQ   R0,#0                   ; setup meaningful task handle =0 if none, else current
+ ;
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_Swapping
+       [ Swapping
+         ADR     R0,swapping
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+       |
+         B       err_badR0
+       ]
+ 
+ sysinfo_Version
+         LDR     R0,=Module_Version
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+         LTORG
+ 
+ sysinfo_SystemFont
+@@ -5629,7 +6222,11 @@
+ 
+ sysinfo_ToolSprites
+         ADRL    R0,tool_areaCB
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_IconBarInt
+         ADRL    R0,iconbarhandle
+@@ -5638,7 +6235,11 @@
+         ADRL    R3,iconbarleft
+         ADRL    R4,iconbarright
+         STMIA   sp,{R1-R4}
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_textselection
+         MOV     R0,#-1                  ; fg always from icon's own colours
+@@ -5648,14 +6249,22 @@
+                     (WimpTextSelection_EffectCut:SHL:WimpTextSelection_DeleteEffectShift) :OR: \
+                     (WimpTextSelection_EffectClear:SHL:WimpTextSelection_MoveEffectShift)
+         STMIA   sp,{R1-R2}
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_dragging
+         LDRB    R0,drag_movelimit
+         LDR     R1,drag_timelimit
+ sysinfo_exitR0R1
+         STR     R1,[sp]
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_doubleclicks
+         LDRB    R0,doubleclick_movelimit
+@@ -5665,7 +6274,11 @@
+ sysinfo_3Dpatch
+       [ ThreeDPatch
+         LDR     R0,ThreeDFlags
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+       |
+         B       err_badR0
+       ]
+@@ -5682,7 +6295,11 @@
+ 
+ sysinfo_appspace
+         LDR     R0,orig_applicationspacesize
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_messages
+         ADR     R0,headpointer
+@@ -5690,7 +6307,11 @@
+         ADRL    R1,lastpointer
+         B       sysinfo_exitR0R1
+       |
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+       ]
+ 
+ sysinfo_memclaim
+@@ -5698,14 +6319,22 @@
+         ADRL    R0,memory_claims
+         LDR     R0,[R0]
+       ]
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_transtables
+         LDR     R0,tpixtable_at
+         ADRL    R2,tool_plotparams
+         LDR     R1,[R2]
+         STMIA   sp,{R1-R2}
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_baseofsprites
+       [ SpritePriority
+@@ -5737,7 +6366,11 @@
+       |
+         MOV     R0, #0
+       ]
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ ;;-----------------------------------------------------------------------------
+ ;; Command Window handling
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp02 ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp02
+--- Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp02	2023-01-14 11:42:27.000000000 +0000
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp02	2024-11-08 15:43:06.897462081 +0000
+@@ -44,7 +44,11 @@
+         Pull    "R3"
+         BVS     %FT99
+ ;
++  [ CKernel
++        LDR     R14, controller_task
++  |
+         MOV     R14,#nullptr            ; null slot if new task
++  ] ; CKernel
+         STR     R14,[R2,#task_slotptr]
+ 
+         MOV     R14,#0                  ; no fp registers saved
+@@ -194,7 +198,11 @@
+         BLVC    resetkeycodes           ; (but don't remember old settings)
+         Debug   task1,"New task:",#taskhandle
+ ;
++  [ CKernel
++        B       exitinit
++  |
+         B       rationalisememory
++  ]
+ 
+       [ true ; debug
+ taskidentifier2 DCB "TASK"
+@@ -508,7 +516,9 @@
+ 
+ skipupcall
+         BL      setdefaulthandlers      ; looks at [handlerword]
++  [ :LNOT: CKernel
+         BL      findpages               ; initialise free pool, if possible
++  ] ; CKernel
+ 
+         BVS     exitinit                ; DO THIS FIRST - MEMORY MAY MOVE!!!
+ ;
+@@ -532,6 +542,13 @@
+         BPL     %BT01
+ 02
+ 
++  [ CKernel
++        ; Make sure all tasks have an associated slot
++        LDR     R14,taskhandle
++        LDR     R0, controller_task
++        LDR     R14, [wsptr, R14]
++        STR     R0, [R14, #task_slotptr]
++  |
+ ; deallocate application memory if it isn't being used
+ 
+ rationalisememory
+@@ -583,6 +600,7 @@
+         MOVVC   R1,#nullptr             ; R1 = bhandle (open at front)
+         BLVC    openfullsize
+ ;
++  ] ; CKernel
+         B       exitinit
+ 
+ ;..............................................................................
+@@ -591,7 +609,7 @@
+ ; handler and then exit.
+ 
+ CallEveryHandler Entry "R0-R1"
+-
++  [ :LNOT: CKernel
+         [ No32bitCode
+         MOV     R0,PC
+         TEQP    PC,#SVC_mode            ; back to SVC mode IRQs on
+@@ -603,11 +621,15 @@
+         MSR     CPSR_c,R1
+         ]
+         Push    "R0,LR"                 ; preserve SVC_R0 and SVC_R14
++  ] ; :LNOT: CKernel
+ 
+         ADR     R0,callback
+         MOV     R1,WsPtr                ; -> callback routine
+         SWI     XOS_AddCallBack
+ 
++  [ CKernel
++        EXIT
++  |
+         Pull    "R0,LR"
+         [ No32bitCode
+         TEQP    PC,R0                   ; back to original mode
+@@ -616,6 +638,7 @@
+         MSR     CPSR_c,R0
+         ]
+         Pull    "R0-R1,PC"              ; and then back to original handler
++  ] ; CKernel
+ 
+ ;..............................................................................
+ 
+@@ -3010,8 +3033,10 @@
+         STR     R14,taskhandle          ; points to task pointer array
+         STR     R14,nulltaskhandle
+ ;
++  [ :LNOT: CKernel ; go away, Stuart! (accessing privileged memory doesn't work)
+         LDR     R0,ptr_DomainId
+         STR     R14,[R0]                ; for Stuart
++  ]
+ ;
+ ; initialise message queue and iconbar window
+ ;
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp03 ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp03
+--- Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp03	2023-01-14 11:42:27.000000000 +0000
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp03	2024-11-08 15:43:07.161462386 +0000
+@@ -60,6 +60,23 @@
+         TEQ     R0,R14
+         LDREQ   R14,flagword
+         BEQ     pageintaskdone          ; DON'T RELOAD userblk if not nec.!!!
++
++  [ CKernel
++        ; Continue in another task
++        ; R14 new task handle
++
++        STR     R14,taskhandle
++        LDR     r14, [wsptr, r14]
++        LDR     R0,[R14,#task_slotptr]
++
++        Log     "Switching to task "
++        LogNum  R0, 10
++
++        SWI     XOSTask_Finished
++                                        SWI     XOSTask_Yield ; Just for logging, remove FIXME
++        SWI     XOSTask_RunForTask
++        ; Now running in new task's slot
++  |
+         Push    "R14"
+         LDR     R14,[wsptr,R14]
+         TST     R14,#task_unused
+@@ -68,6 +85,8 @@
+         STR     R14,taskhandle
+         BL      mapslotin
+         LDR     R14,taskhandle
++  ] ; CKernel
++
+         LDR     R14,[wsptr,R14]
+         TST     R14,#task_unused        ; tasks are sometimes allowed
+       [ debugtask1                      ; to be dead here
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp04 ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp04
+--- Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp04	2021-07-10 11:45:14.000000000 +0100
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp04	2024-11-08 15:43:07.537462822 +0000
+@@ -6462,12 +6462,40 @@
+ ;;-----------------------------------------------------------------------------
+ 
+ pointeroff
++  [ CKernel
++        ; Why not run a command, here?
++        ; Because, in general, commands don't have to return!
++        ; (Also because it gets run by the legacy manager task.)
++        ; (Do we really need to preserve flags?)
++        ; Taken from Pointer0_Code
++        EntryS  "R0,R11"
++        MOV     R0,#0
++        BL      int_set_pointer_shape
++        EXITS                           ; can't handle errors here
++zero_param DCB "0", 0
++        ALIGN
++  |
+         EntryS  "R0"
+         ADR     R0,ptr_off
+         SWI     XOS_CLI
+         EXITS                           ; can't handle errors here
++  ] ; CKernel
+ 
+ pointeron
++  [ CKernel
++        ; Why not run a command, here?
++        ; Because, in general, commands don't have to return!
++        ; (Do we really need to preserve flags?)
++        EntryS  "R0,R11"
++        ; Taken from Pointer1_Code
++        BL      readvduvars2            ; including screen size
++
++        ADRLVC  R2,ptr_default
++        MOVVC   R3,#1                   ; program shape 1, set ptr and palette
++        BLVC    setptr_shape            ; active point at top-left
++        BLVC    clearpointerwindow
++        EXITS                           ; can't handle errors here
++  |
+         EntryS  "R0"
+         ADR     R0,ptr_on
+         SWI     XOS_CLI
+@@ -6476,6 +6504,7 @@
+ ptr_off DCB     "Pointer 0", 0
+ ptr_on  DCB     "Pointer", 0
+         ALIGN
++  ] ; CKernel
+ 
+ 
+ ;;----------------------------------------------------------------------------
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp07 ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp07
+--- Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp07	2023-01-14 11:42:27.000000000 +0000
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp07	2024-11-08 15:43:08.241463637 +0000
+@@ -830,6 +830,28 @@
+ 
+ SWIWimp_StartTask
+         MyEntry "StartTask"
++
++        [ CKernel  ; noise!
++        MOV     R5, LR
++        Log "StartTask "
++        MOV r1, #0
++01
++        ldr     r2, [r0, r1]
++        cmp     r2, #32
++        addgt   r1, r1, #1
++        bgt     %BT01
++        SWI     XOSTask_LogString
++        Log     "\n"
++        SWI     XOSTask_Yield
++        MOV     LR, R5
++        ] ; CKernel
++
++  [ CKernel
++        ; Now anyone can start a task. If the Wimp is in use, this request will
++        ; have been delayed until now. (In reality, still a TODO)
++        MOV     R5, #nullptr
++        STR     R5, singletaskhandle ; It's 2024 - nothing single tasks in the Wimp
++  |
+ ;
+ ; you can only start a task if you are a live Wimp task yourself
+ ;
+@@ -839,6 +861,12 @@
+         LDRNE   R4,[wsptr,R5]                   ; check that parent is alive
+         TEQNE   R4,#task_unused                 ; note TEQ not TST !!!
+         MyXError  WimpCantTask,EQ
++  ] ; CKernel
++
++  [ CKernel
++        ; Not saving FP context here, will be done by the kernel
++        ; Although at this time that's still a TODO
++  |
+ ;
+ ; save FP registers on Wimp_StartTask if task knows about Wimp 2.23 onwards
+ ;
+@@ -855,6 +883,7 @@
+         Debug   fp,"VFP on Wimp_StartTask entry",R0
+         STR     R0,[R4,#task_vfpcontext]
+         Pull    "R0-R1"
++  ] ; CKernel
+ ;
+ ; find a spare task handle for the new task
+ ;
+@@ -891,9 +920,11 @@
+  [ CnP
+ 92
+  ]
+-;
++
++  [ :LNOT: CKernel
+         BL      mapslotout              ; map parent out of the way
+-;
++  ] ; CKernel
++
+         LDR     R14,taskSP
+         LDR     handle,polltaskhandle
+         STR     handle,[R14],#4         ; empty ascending stack
+@@ -915,6 +946,39 @@
+         STR     R14,handlerword
+         STR     R14,parentquithandler   ; must start application !!!
+         BL      setdefaulthandlers
++
++  [ CKernel
++        ; Spawn a task to run the program
++        ADR     R0, spawned
++        MOV     R1, #0          ; SP (must be multiple of 8)
++        LDR     R2, slotsize     ; no. of pages
++        MOV     R2, R2, LSL#12    ; ASSUMES 4k pages
++        ADRL    R3, taskbuffer   ; Command
++        SWI     XOSTask_Spawn
++        Log     "Wimp Spawned task "
++        LogNum  R0, 32
++        LDR     R1, taskhandle   ; NOT NOISE!
++        LogNum  R1, 10
++        LDR     R1,[wsptr,R1] ; isn't this already in R5?
++        STR     R0,[R1,#task_slotptr]
++        ; The spawned task, in its own slot (AMB), is blocked, under
++        ; the control of this OSTask
++        ; But that's not the right controller task, it should be
++        ; controlled by the manager task, as are all Wimp Tasks that
++        ; have called Wimp_Poll...
++        LDR     R1, controller_task
++        SWI     XOSTask_ChangeController
++
++        ; OK, run the command by pretending it's the current wimp task
++        ; TODO: whatever the rest of this function sets up!
++        ; TODO: Trap OS_Exit to resume the caller (with r0 = 0)
++        ; TODO: When a recently started Wimp Task calls Wimp_Initialise,
++        ;       update the parent's r0 to contain the handle.
++        ; Or maybe I could do that now and zero it on OS_Exit?
++        LDR     R0, taskhandle
++        STR     R0, polltaskhandle
++        B       ExitWimp
++  |
+ ;
+ ; allocate memory for the new task, then use callback to start it up
+ ; [taskbuffer..] contains the *command to execute
+@@ -932,6 +996,7 @@
+         BIC     R14,R14,#2_11101111     ; get USR26/USR32, ARM, FIQs+IRQs on
+         STR     R14,[R5,#task_registers+4*16]
+ 
++  ] ; CKernel
+ 
+ ;
+ ; to be on the safe side, bring up a text window if any chars printed
+@@ -952,6 +1017,16 @@
+ ;         entered in USR mode (I hope!)
+ ;
+ 
++  [ CKernel
++spawned
++        MOV     R0, R2
++        SWI     XOSTask_AppMemoryTop
++        ; Now we have memory...
++        MOV     R0, R3
++        SWIVC   OS_CLI
++        SWI     OS_Exit
++  |
++
+ runthetask
+  [ CnP
+  ; r0 points to taskbuffer always
+@@ -998,6 +1073,7 @@
+         SWI     OS_CLI                  ; R0 --> OS_CLI command
+         SWI     OS_Exit                 ; exit back to Wimp
+  ]
++  ] ; CKernel
+ ;
+ ; set up default environment handlers (Wimp should replace them all)
+ ; only reset the ones corresponding to 0 bits in [handlerword]
+@@ -1194,8 +1270,10 @@
+ 
+         LDR     handle,taskhandle
+ ;
++  [ :LNOT: CKernel ; go away, Stuart! (accessing privileged memory doesn't work)
+         LDR     R14,ptr_DomainId
+         STR     handle,[R14]            ; for Stuart
++  ] ; CKernel
+ 
+         Debug   task,"Exit Poll: (old),task,reason =",#polltaskhandle,handle,R0
+ 
+@@ -1292,6 +1370,8 @@
+         STRNE   R0,[R4,#task_eventtime]
+       ]
+ 
++  [ :LNOT: CKernel
++
+ ; restore FP registers if they were saved (ie. save block present)
+ 
+         LDRNE   R0,[R4,#task_fpblock]
+@@ -1334,6 +1414,8 @@
+         TEQNE   R0,#0 ; We should already be on the null context, so only call if user does have a context to restore
+         DebugIf NE,fp,"VFP on Wimp_Poll exit",R0
+         SWINE   XVFPSupport_ChangeContext
++  ] ; :LNOT: CKernel
++
+         Pull    "R0-R1"
+ 
+       [ AutoHourglass
+@@ -1397,6 +1479,8 @@
+         STRNE   R0,[R5,#task_registers+4*15]
+         STREQ   R0,[R5,#task_registers+4*16]
+       ]
++
++  [ :LNOT: CKernel
+ ;
+ ; set up callback handler
+ ; NOTE: since the task is already paged in, its handlers are set up already
+@@ -1427,6 +1511,7 @@
+         MSR     CPSR_cf,R14             ; restore flags+ints, ready for exit
+       ]
+ ;
++  ] ; Not CKernel  ; No need for a callback to set R2 if the expected version is < whatever
+         B       ExitWimp_noswitch       ; pulls registers & exits to callback
+ 
+ ;..............................................................................
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp08s ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp08s
+--- Unchanged/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp08s	2016-05-23 22:53:13.000000000 +0100
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Desktop/Wimp/s/Wimp08s	2024-11-08 15:43:10.793466593 +0000
+@@ -813,6 +813,8 @@
+ ;                              else [freepool] --> free pool block
+ ;
+ 
++  ; I can probably comment out more of this, if not the whole file
++  [ :LNOT: CKernel
+ findpages       ROUT
+         Push    "R1-R11,LR"
+ ;
+@@ -841,6 +843,7 @@
+         CLRV
+ 
+         Pull    "R1-R11,PC"
++  ] ; CKernel
+ ;01
+ ;
+ ;;
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Kernel/hdr/KernelWS ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Kernel/hdr/KernelWS
+--- Unchanged/BCM2835/RiscOS/Sources/Kernel/hdr/KernelWS	2023-01-14 11:42:56.000000000 +0000
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Kernel/hdr/KernelWS	2024-11-07 08:40:42.000000000 +0000
+@@ -249,7 +249,11 @@
+ ProcVecs            * &00000000
+  ]
+ ; Currently, zero page must be located at the processor vectors
++  [ CKernel
++ZeroPage            * &fff40000
++  |
+ ZeroPage            * ProcVecs
++  ] ; CKernel
+ 
+  [ CompatibilityPage
+         ASSERT ZeroPage != 0 :LAND: ProcVecs != 0
+diff -ru -x Makefile -x '*.mk' -x AutoGenMfS Unchanged/BCM2835/RiscOS/Sources/Kernel/hdr/Options ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Kernel/hdr/Options
+--- Unchanged/BCM2835/RiscOS/Sources/Kernel/hdr/Options	2021-07-28 14:36:08.000000000 +0100
++++ ModifiedKernelAndWimp/BCM2835/RiscOS/Sources/Kernel/hdr/Options	2024-10-31 18:51:35.000000000 +0000
+@@ -29,6 +29,10 @@
+ 
+ AssemblingArthur SETL  {TRUE}
+ ; defined in hdr.system to allow conditionals in macros
++                                               
++                ; FIXME: There must be a neat way to do this without affecting anyone else
++                GBLL    CKernel ; Multi-processing
++CKernel      SETL    {TRUE}
+ 
+                 GBLL    CacheOff
+ CacheOff        SETL    {FALSE}
