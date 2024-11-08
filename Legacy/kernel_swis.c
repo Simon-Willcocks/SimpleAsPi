@@ -137,11 +137,12 @@ void setup_MOS_workspace()
 {
   // Includes workspace for GSInit, etc. fa645800
   uint32_t size = 0x100000;
+  extern uint8_t MOSworkspace;
 
   memory_mapping map = {
     .base_page = claim_contiguous_memory( size >> 12 ),
     .pages = size >> 12,
-    .va = 0xfa600000,
+    .vap = &MOSworkspace,
     .type = CK_MemoryRWX,
     .map_specific = 0,
     .all_cores = 1,
@@ -354,7 +355,7 @@ void fill_legacy_zero_page()
 
   legacy_zero_page.OsbyteVars.Shadow = 1; // No shadow modes (0 turns on)
 
-  // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME 
+  // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
   legacy_zero_page.vdu_drivers.ws.ScreenStart = 0xc0000000;
   legacy_zero_page.vdu_drivers.ws.YWindLimit = 1080;
   legacy_zero_page.vdu_drivers.ws.LineLength = 1920 * 4;
@@ -362,7 +363,7 @@ void fill_legacy_zero_page()
   legacy_zero_page.vdu_drivers.ws.DisplayXWindLimit = 1919;
   legacy_zero_page.vdu_drivers.ws.DisplayYWindLimit = 1079;
   legacy_zero_page.vdu_drivers.ws.DisplayLog2BPP = 5;
-  // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME 
+  // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
 }
 
 static uint32_t const ZPOFF_OsbyteVars = ZP_OFF( OsbyteVars );
@@ -482,7 +483,7 @@ OSTask *do_OS_PlatformFeatures( svc_registers *regs )
     case 54 ... 57:
     case 59:
       regs->r[0] = 1; break;
-    case 0: 
+    case 0:
     case 13:
     case 15:
     case 22:
@@ -753,6 +754,31 @@ called_during_initialisation:
   case OS_PlatformFeatures: do_OS_PlatformFeatures( legacy_regs ); break;
   case OS_ReadSysInfo: do_OS_ReadSysInfo( legacy_regs ); break;
 
+  case OS_GetEnv:
+    {
+      legacy_regs->r[0] = (uint32_t*) "This should be the command";
+      legacy_regs->r[1] = 0x400000; // FIXME
+      legacy_regs->r[2] = 200; // FIXME
+    }
+    break;
+  case OS_ReadMemMapInfo:
+    {
+      legacy_regs->r[0] = 4096; // Page size
+      legacy_regs->r[1] = (1 << 20); // Lie: 1GiB
+    }
+    break;
+
+  case OS_SynchroniseCodeAreas: break;
+  case OS_SWINumberFromString:
+    {
+      // TODO in Modules
+      static error_block const error = { 292, "SWI name not known" };
+
+      legacy_regs->r[0] = (uint32_t) &error;
+      legacy_regs->spsr |= VF;
+    }
+    break;
+
   case OS_SetCallBack:
     // Legacy's legacy. I think this is depricated in favour of
     // AddCallBack, but it's still used by at least the Wimp.
@@ -761,7 +787,7 @@ called_during_initialisation:
 
   case OS_WriteS: // Called from SVC mode, when owner of legacy stack.
     // manage_legacy_stack takes care of calls from usr32.
-    // We need both because the return address for top_swi is back to 
+    // We need both because the return address for top_swi is back to
     // manage_legacy_stack in user.c.
     {
       uint32_t r0 = legacy_regs->r[0];
@@ -801,7 +827,7 @@ called_during_initialisation:
       Task_LogNewLine();
 #ifdef DEBUG__NOPOINTER
       if (cmd[0] == 'P' && cmd[1] == 'o') { // Pointer
-        break; // FIXME FIXME FIXME FIXME FIXME FIXME FIXME 
+        break; // FIXME FIXME FIXME FIXME FIXME FIXME FIXME
       }
 #endif
       // DROPPING THROUGH!
@@ -1056,7 +1082,7 @@ void interrupting_privileged_code( OSTask *task )
   shared.legacy.sp[1] = svc_lr;
   shared.legacy.sp[2] = task->regs.lr;
 
-  // Now, when the task resumes, make it run our code to restore the 
+  // Now, when the task resumes, make it run our code to restore the
   // privileged state.
   task->regs.lr = (uint32_t) ResumeLegacy;
   // Don't let the ResumeLegacy routine be interrupted while that's happening!

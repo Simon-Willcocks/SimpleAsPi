@@ -104,7 +104,7 @@ INITIAL_MODULES+='Filer_Action\0'
 # INITIAL_MODULES+='ColourPicker\0' # Init calls exit?
 INITIAL_MODULES+='DrawFile\0'
 INITIAL_MODULES+='BootCommands\0'
-INITIAL_MODULES+='WindowScroll\0'
+#INITIAL_MODULES+='WindowScroll\0'      # Returns UseDesktop error...
 #INITIAL_MODULES+='MbufManager\0' # calls SWI 6ee00
 
 # Skipping internet stuff for now
