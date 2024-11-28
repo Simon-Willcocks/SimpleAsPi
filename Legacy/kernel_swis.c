@@ -639,17 +639,18 @@ OSTask *execute_swi( svc_registers *regs, int number )
   }
 #ifdef DEBUG__SHOW_LEGACY_SWIS
   if (number != 0x1001) { // Not timer tick
-  Task_LogString( "SWI: ", 5 );
-  Task_LogHex( number );
-  Task_LogString( "  ", 2 );
-  Task_LogHex( regs->r[0] );
-  Task_LogString( " ", 1 );
-  Task_LogHex( regs->r[1] );
-  Task_LogString( " ", 1 );
-  Task_LogHex( regs->r[2] );
-  Task_LogString( " ", 1 );
-  Task_LogHex( regs->r[3] );
-  Task_LogNewLine();
+    Task_LogString( "SWI: ", 5 );
+    Task_LogHex( number );
+    Task_LogString( "  ", 2 );
+    Task_LogHex( regs->r[0] );
+    Task_LogString( " ", 1 );
+    Task_LogHex( regs->r[1] );
+    Task_LogString( " ", 1 );
+    Task_LogHex( regs->r[2] );
+    Task_LogString( " ", 1 );
+    Task_LogHex( regs->r[3] );
+    Task_LogNewLine();
+    // Task_Yield(); yielding here seems to break stuff
   }
 #endif
 
@@ -731,6 +732,9 @@ called_during_initialisation:
     if (0 != (VF & legacy_regs->spsr)) {
       error_block const *err = (void*) legacy_regs->r[0];
       if (err->code == 0) {
+        char const text[] = "Resetting SVC stack and entering module\n";
+        Task_LogString( text, sizeof( text ) - 1 );
+
         svc_registers *top_regs = ((svc_registers*) legacy_top)-1;
         top_regs->r[0] = legacy_regs->r[0];
         top_regs->r[1] = legacy_regs->r[1];
@@ -804,6 +808,12 @@ called_during_initialisation:
       if (regs->r[0] == 0xa1 && regs->r[1] == 0x8c) {
         regs->r[2] = 3; // System font, 3D look.
         // Alternative approach: set 1, and Wimp$Font... variables
+      }
+      else if (regs->r[0] == 0xa1 && regs->r[1] == 134) { // FontSize (in pages)
+        regs->r[2] = 32;
+      }
+      else if (regs->r[0] >= 0x7c && regs->r[0] <= 0x7e) { // Esc condition
+        regs->r[1] = 0; // No escape condition (if ack)
       }
       else if (regs->r[0] >= 0x7c && regs->r[0] <= 0x7e) { // Esc condition
         regs->r[1] = 0; // No escape condition (if ack)
@@ -908,9 +918,11 @@ Task_LogNewLine();
         callback_entry *entry = legacy_zero_page.CallBack_Vector;
         while (entry != 0) {
           callback_entry run = *entry;
-Task_LogString(   "Callback ", 9 );
-Task_LogHex(   run.code );
-Task_LogNewLine();
+#ifdef DEBUG__SHOW_CALLBACKS
+  Task_LogString( "Callback ", 9 );
+  Task_LogHex( run.code );
+  Task_LogNewLine();
+#endif
           legacy_zero_page.CallBack_Vector = entry->next;
           cba_free( legacy_zero_page.ChocolateCBBlocks, entry );
           register uint32_t workspace asm ( "r12" ) = run.workspace;
@@ -1050,8 +1062,10 @@ void __attribute__(( naked, noreturn )) ResumeLegacy()
     "\n  push { r0 }"           // Now 4 words on the stack
     "\n  ldr r0, [sp, #4]"      // old_legacy_sp
     "\n  str r0, [lr]"
-"\n mrs r0, cpsr"
-"\n udf 0"
+#ifdef DEBUG__UDF_ON_RESUME_LEGACY
+    "\n mrs r0, cpsr"
+    "\n udf 0"
+#endif
     "\n  pop { r0, lr }" // Don't care about the lr value, but adds 8 to sp
 
     "\n  cpsie i"
