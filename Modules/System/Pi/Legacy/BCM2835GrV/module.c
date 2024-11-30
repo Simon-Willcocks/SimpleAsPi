@@ -142,13 +142,13 @@ static uint32_t GraphicsV_ReadItem( uint32_t item, uint32_t *buffer, uint32_t le
 static inline
 uint32_t get_pixel( int x, int y )
 {
-  return *(uint32_t*) (0xc0000000 + 4 * x + 4 * 1920 * (1080 - y));
+  return *(uint32_t*) (0xc0000000 + 4 * x + 4 * 1920 * (1079 - y));
 }
 
 static inline
 void set_pixel( int x, int y, uint32_t p )
 {
-  *(uint32_t*) (0xc0000000 + 4 * x + 4 * 1920 * (1080 - y)) = p;
+  *(uint32_t*) (0xc0000000 + 4 * x + 4 * 1920 * (1079 - y)) = p;
 }
 
 typedef struct {
@@ -416,9 +416,7 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     break; // Vet mode 2 	FG 	SVC
   }
 
-#ifdef VERBOSE
   Task_LogNewLine();
-#endif
 
   regs[4] = 0; // Indicate to caller that call was intercepted
 

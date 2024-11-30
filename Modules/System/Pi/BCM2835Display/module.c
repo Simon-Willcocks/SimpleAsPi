@@ -167,26 +167,7 @@ void open_display( uint32_t handle, workspace *ws )
 
   uint32_t *screen = Task_MapFrameBuffer( base_page, pages );
 
-  for (int y = 0; y < 1080; y++) {
-    for (int x = 0; x < 1920; x++) {
-      screen[1920 * y + x] = ~((x << 6) | (y << 12));
-    }
-  }
-
-  Task_FlushCache( screen, pages << 12 );
-
   Task_LogString( "Display ready\n", 0 );
-
-  // screen = (void*) 0xc0000000;
-  for (int y = 0; y < 1080; y++) {
-    for (int x = 0; x < 1920; x++) {
-      screen[1920 * y + x] = 0xf040f080;
-    }
-  }
-
-  Task_FlushCache( screen, pages << 12 );
-
-  Task_LogString( "Screen coloured\n", 0 );
 
   for (;;) {
     queued_task client = Task_QueueWait( ws->queue );
