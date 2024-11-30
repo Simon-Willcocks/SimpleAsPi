@@ -81,7 +81,7 @@ void setup_system_heap()
     .type = CK_MemoryRW,
     .map_specific = 0,
     .all_cores = 1,
-    .usr32_access = 0 };
+    .usr32_access = 1 };
   map_memory( &map_system_heap );
 
   // OS_Heap won't run until shared.legacy.owner has been set, but that's
