@@ -193,7 +193,8 @@ Task_LogNewLine();
     // memory areas that memory_fault_handlers might use are mapped into this
     // core's translation tables. (The first core in already has them.)
 
-    // This is not the prettiest approach, but I think it should work.
+    // This is not the prettiest approach, but I think it should trigger
+    // a data abort.
     asm volatile ( "ldr r0, [%[mem]]" : : [mem] "r" (&OSTaskSlot_free_pool) );
 
     asm ( "mov sp, %[reset_sp]"
@@ -279,23 +280,35 @@ DEFINE_ERROR( NotATask, 0x666, "Programmer error: Not a task" );
 DEFINE_ERROR( NotYourTask, 0x667, "Programmer error: Not your task" );
 DEFINE_ERROR( InvalidInitialStack, 0x668, "Tasks must always be started with 8-byte aligned stack" );
 
+static inline
 OSTask *TaskOpRunForTask( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *client = ostask_from_handle( regs->r[0] );
 
-#if 0
-  { char const text[] = "Switching to slot of Task ";
+#ifdef DEBUG__FOLLOW_TASKS
+  { char const text[] = "Task ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHex( (uint32_t) running );
+  { char const text[] = " switching to slot of Task ";
   Task_LogString( text, sizeof( text )-1 ); }
   Task_LogHex( regs->r[0] );
+  { char const text[] = ", slot ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHex( (uint32_t) client->slot );
+  { char const text[] = ", from slot ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHex( (uint32_t) running->slot );
   Task_LogNewLine();
 #endif
 
   if (client == 0) {
+    PANIC;      // FIXME remove
     return Error_NotATask( regs );
   }
 
   if (current_controller( client ) != running) {
+    PANIC;      // FIXME remove
     return Error_NotYourTask( regs );
   }
 
@@ -305,9 +318,12 @@ OSTask *TaskOpRunForTask( svc_registers *regs )
   running->slot = client->slot;
   map_slot( running->slot );
 
+  if (running->home == 0) PANIC;
+
   return 0;
 }
 
+static inline
 OSTask *TaskOpReleaseTask( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
@@ -380,6 +396,7 @@ OSTask *TaskOpReleaseTask( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpChangeController( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
@@ -399,6 +416,7 @@ OSTask *TaskOpChangeController( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpSetController( svc_registers *regs )
 {
   PANIC; // No longer needed?
@@ -421,9 +439,20 @@ OSTask *TaskOpSetController( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpFinished( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
+
+#ifdef DEBUG__FOLLOW_TASKS
+  { char const text[] = "Task ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHex( (uint32_t) running );
+  { char const text[] = " finished running for another Task, slot ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHex( (uint32_t) running->slot );
+  Task_LogNewLine();
+#endif
 
   if (running->home == 0) PANIC;
 
@@ -434,6 +463,7 @@ OSTask *TaskOpFinished( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpGetRegisters( svc_registers *regs )
 {
   OSTask *controlled = ostask_from_handle( regs->r[0] );
@@ -449,9 +479,26 @@ OSTask *TaskOpGetRegisters( svc_registers *regs )
 
   *context = controlled->regs;
 
+#ifdef DEBUG__FOLLOW_TASKS
+    { char const text[] = "Task ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( ostask_handle( controlled ) );
+    { char const text[] = " registers requested to ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( context );
+    Task_LogNewLine();
+    if (context != 0) {
+      for (int i = 0; i < 15; i++) {
+        Task_LogHex( ((uint32_t*)context)[i] );
+        Task_LogString( " ", 1 );
+      }
+    }
+    Task_LogNewLine();
+#endif
   return 0;
 }
 
+static inline
 OSTask *TaskOpSetRegisters( svc_registers *regs )
 {
   OSTask *controlled = ostask_from_handle( regs->r[0] );
@@ -498,7 +545,8 @@ static __attribute__(( noinline )) OSTask *for_core( OSTask *volatile *head, voi
   return 0;
 }
 
-static inline
+//static inline
+__attribute__(( noinline ))
 OSTask *find_task_for_this_core()
 {
   OSTask *volatile *head = &shared.ostask.moving;
@@ -511,6 +559,8 @@ OSTask *find_task_for_this_core()
                                                        (void*)workspace.core );
 }
 
+// static inline
+__attribute__(( noinline ))
 OSTask *IdleTaskYield( svc_registers *regs )
 {
   // Special case; the idle task never leaves its core.
@@ -558,7 +608,7 @@ OSTask *IdleTaskYield( svc_registers *regs )
 
   save_task_state( regs );
 
-  // Pull a task from either the queue of tasks for this core, 
+  // Pull a task from either the queue of tasks for this core,
   // or from the general runnable list.
 
   OSTask *resume = find_task_for_this_core();
@@ -581,7 +631,7 @@ OSTask *IdleTaskYield( svc_registers *regs )
     // notification if anyone adds to the list.
     resume = mpsafe_detach_OSTask_at_head( &shared.ostask.runnable );
 
-#ifdef DEBUG__FOLLOW_TASKS
+#ifdef DEBUG__FOLLOW_TASKS_A_LOT
     if (resume != 0) {
       Task_LogString( "R ", 2 );
       Task_LogHex( ostask_handle( resume ) );
@@ -592,9 +642,12 @@ OSTask *IdleTaskYield( svc_registers *regs )
 
   if (resume == 0
    && next == workspace.ostask.idle) {
+    // Only the idle task is runnable on this core right now.
+
+    asm  ( "udf 99" );
     // Pause, then drop back to idle task (interrupts enabled),
     // after which the runnable list will be checked again.
-    wait_for_event();
+    // wait_for_event();
   }
 
   if (resume != 0) {
@@ -604,19 +657,19 @@ OSTask *IdleTaskYield( svc_registers *regs )
     // Now resume and idle are in the list (resume at the head)
   }
   else { // workspace.ostask.running != workspace.ostask.idle
-    resume = next;
-    workspace.ostask.running = resume;
+    workspace.ostask.running = workspace.ostask.running->next;
   }
 
   return resume;
 }
 
+static inline
 OSTask *TaskOpYield( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
 
-#ifdef DEBUG__FOLLOW_TASKS
+#ifdef DEBUG__FOLLOW_TASKS_A_LOT
 if (running == workspace.ostask.idle && resume != running) {
 Task_LogString( "Y ", 2 );
 if (running == workspace.ostask.idle)
@@ -637,7 +690,7 @@ Task_LogNewLine();
     workspace.ostask.running = resume;
     dll_detach_OSTask( running );
 
-#ifdef DEBUG__FOLLOW_TASKS
+#ifdef DEBUG__FOLLOW_TASKS_A_LOT
     Task_LogString( "S ", 2 );
     Task_LogHex( ostask_handle( running ) );
     Task_LogNewLine();
@@ -648,6 +701,7 @@ Task_LogNewLine();
   return resume;
 }
 
+static inline
 OSTask *TaskOpSleep( svc_registers *regs )
 {
 #ifdef DEBUG__NO_SLEEP
@@ -677,6 +731,7 @@ Task_LogNewLine();
   return resume;
 }
 
+static inline
 OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
 {
   // Check parameters BEFORE allocating resources.
@@ -712,12 +767,26 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
   if (!push_controller( task, running )) PANIC;
 
 #ifdef DEBUG__FOLLOW_OS_TASKS
+#ifndef DEBUG__FOLLOW_OS_TASKS_CREATION
+#define DEBUG__FOLLOW_OS_TASKS_CREATION
+#endif
+#endif
+
+#ifdef DEBUG__FOLLOW_OS_TASKS_CREATION
 Task_LogString( "Created task ", 13 );
-Task_LogHex( ostask_handle( task ) );
+Task_LogHex( task->regs.r[0] );
 Task_LogString( ", starting at ", 14 );
 Task_LogHex( regs->r[0] );
 Task_LogString( ", in slot ", 0 );
 Task_LogHex( (uint32_t) task->slot );
+Task_LogString( ": ", 2 );
+Task_LogHex( task->regs.r[1] );
+Task_LogString( ", ", 2 );
+Task_LogHex( task->regs.r[2] );
+Task_LogString( ", ", 2 );
+Task_LogHex( task->regs.r[3] );
+Task_LogString( ", ", 2 );
+Task_LogHex( task->regs.r[4] );
 Task_LogNewLine();
 #endif
 
@@ -730,6 +799,7 @@ Task_LogNewLine();
   return 0;
 }
 
+static inline
 OSTask *TaskOpEndTask( svc_registers *regs )
 {
 #ifdef DEBUG__FOLLOW_OS_TASKS
@@ -772,6 +842,7 @@ Task_LogNewLine();
   return queue_running_OSTask( regs, *queue_handle, 0 );
 }
 
+static inline
 OSTask *TaskOpWaitForInterrupt( svc_registers *regs )
 {
   OSTask *running = workspace.ostask.running;
@@ -815,6 +886,7 @@ OSTask *TaskOpWaitForInterrupt( svc_registers *regs )
 
 app_memory_block block_containing( uint32_t va );
 
+static inline
 OSTask *TaskOpPhysicalFromVirtual( svc_registers *regs )
 {
   uint32_t va = regs->r[0];
@@ -835,6 +907,7 @@ OSTask *TaskOpPhysicalFromVirtual( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpInvalidateCache( svc_registers *regs )
 {
   uint32_t va = regs->r[0];
@@ -845,6 +918,7 @@ OSTask *TaskOpInvalidateCache( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpFlushCache( svc_registers *regs )
 {
   uint32_t va = regs->r[0];
@@ -855,6 +929,7 @@ OSTask *TaskOpFlushCache( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpSwitchToCore( svc_registers *regs )
 {
   uint32_t core = regs->r[0];
@@ -910,6 +985,7 @@ OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpMapDevicePages( svc_registers *regs )
 {
   uint32_t virt = regs->r[0];
@@ -962,7 +1038,7 @@ OSTask *TaskOpMapFrameBuffer( svc_registers *regs )
     uint32_t next = base + (pages << 12);
     old = change_word_if_equal( &shared.ostask.frame_buffer_base, base, next );
 
-    if (next >= fb_top) PANIC; // FIXME: Deal with running out of space 
+    if (next >= fb_top) PANIC; // FIXME: Deal with running out of space
   } while (old != base);
 #else
   uint32_t base = 0xc0000000;
@@ -983,6 +1059,7 @@ OSTask *TaskOpMapFrameBuffer( svc_registers *regs )
   return 0;
 }
 
+static inline
 OSTask *TaskOpAppMemoryTop( svc_registers *regs )
 {
   regs->r[0] = app_memory_top( regs->r[0] );
@@ -997,7 +1074,7 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   if (running->next == running
    && running != workspace.ostask.idle) PANIC;
 
-  uint32_t swi = number & ~Xbit;
+  uint32_t swi = (number & ~Xbit); // A bit of RISC OS creeping in!
 
   switch (swi) {
   case OSTask_Yield:
@@ -1195,57 +1272,11 @@ Task_LogString( tmp, 4 );
 
 void __attribute__(( noreturn )) execute_svc( svc_registers *regs )
 {
-  OSTask *running = workspace.ostask.running;
-  OSTask *resume = 0;
-
   regs->spsr &= ~VF;
 
   uint32_t number = get_svc_number( regs->lr );
-  uint32_t swi = (number & ~Xbit); // A bit of RISC OS creeping in!
 
-  switch (swi) {
-  case OSTask_Yield ... OSTask_Yield + 63:
-    resume = ostask_svc( regs, number );
-    break;
-  default:
-    resume = execute_swi( regs, number );
-    break;
-  }
-
-  if (workspace.ostask.running->next == workspace.ostask.running
-   && workspace.ostask.running != workspace.ostask.idle) PANIC;
-
-  if (resume != 0) {
-    asm ( "msr sp_usr, %[sp]"
-      "\n  msr lr_usr, %[lr]"
-        :
-        : [sp] "r" (resume->banked_sp_usr)
-        , [lr] "r" (resume->banked_lr_usr) );
-
-    map_slot( resume->slot );
-  }
-
-  // Restore the stack pointer to where it was before the SVC
-  // (nothing is going to use it; interrupts are disabled.)
-  // (Make no function calls after this point!)
-
-  asm (
-      "add sp, %[regs], %[size]"
-      :
-      : [regs] "r" (regs)
-      , [size] "i" (sizeof( svc_registers )) );
-
-  if (resume != 0) {
-    regs = &resume->regs;
-  }
-
-  // Resume after the SWI
-  register svc_registers *lr asm ( "lr" ) = regs;
-  asm (
-      "\n  ldm lr!, {r0-r12}"
-      "\n  rfeia lr // Restore execution and SPSR"
-      :
-      : "r" (lr) );
+  execute_swi( regs, number );
 
   __builtin_unreachable();
 }
@@ -1306,7 +1337,6 @@ void __attribute__(( naked, noreturn )) irq_handler()
         "\n  ldr lr, [lr]       // setting lr -> running->regs"
         "\n  stm lr!, {r0-r12}  // setting lr -> lr/spsr"
         "\n  pop { r0, r1 }     // Resume address, SPSR"
-"\n udf 0"
         "\n  stm lr, { r0, r1, sp, lr }^"
         "\n  sub lr, lr, #13*4 // restores its value"
         : "=r" (interrupted)

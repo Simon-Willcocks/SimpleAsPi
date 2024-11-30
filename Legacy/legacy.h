@@ -20,8 +20,11 @@ void __attribute__(( naked, noreturn )) serve_legacy_swis( uint32_t pipe );
 // weakly linked.
 OSTask *do_OS_Module( svc_registers *regs );
 OSTask *do_OS_ServiceCall( svc_registers *regs );
-bool needs_legacy_stack( uint32_t swi );
 OSTask *run_module_swi( svc_registers *regs, int swi );
+
+// Return true if the module providing the swi has handlers
+// registered (even if the specific SWI is unknown).
+bool handler_available( uint32_t swi );
 
 // These are provided by Legacy/memory.c
 void do_OS_ReadDynamicArea( svc_registers *legacy_regs );

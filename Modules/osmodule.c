@@ -421,37 +421,13 @@ static module *find_module_by_chunk( uint32_t swi )
   return instance;
 }
 
-bool needs_legacy_stack( uint32_t swi )
+// TODO: Cache these searches, you wouldn't be asking if you weren't
+// about to call it!
+bool handler_available( uint32_t swi )
 {
-  // if (swi >= OS_ConvertHex1 && swi <= OS_ConvertSpacedCardinal4) return false;
-  if (swi < 0x200) return true; // kernel SWIs, currently all legacy
-
   module *m = find_module_by_chunk( swi );
 
-#if 0
-  if (m != 0) {
-    Task_LogString( title_string( m->header ), 0 );
-    if (m->handlers == 0) {
-      char const text[] = " Legacy\n";
-      Task_LogString( text, sizeof( text ) - 1 );
-    }
-    else {
-      char const text[] = " MP\n";
-      Task_LogString( text, sizeof( text ) - 1 );
-    }
-  }
-  else {
-    char const text[] = "No module providing ";
-    Task_LogString( text, sizeof( text ) - 1 );
-    Task_LogHex( swi );
-    Task_LogNewLine();
-  }
-#endif
-
-  // We don't need a legacy stack to return unknown SWI, or if
-  // the module has registered handlers.
-
-  return (m != 0) && (m->handlers == 0);
+  return (m != 0) && (m->handlers != 0);
 }
 
 OSTask *TaskOpRegisterSWIHandlers( svc_registers *regs )

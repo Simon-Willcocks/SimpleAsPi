@@ -481,7 +481,7 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
 
     // Blocked, waiting for space.
     dll_detach_OSTask( running );
-    
+
     return next;
   }
 
@@ -533,7 +533,7 @@ OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 
     if (workspace.ostask.running != running) PANIC;
 
-#ifdef DEBUG__FOLLOW_TASKS
+#ifdef DEBUG__FOLLOW_TASKS_A_LOT
     Task_LogString( "< ", 2 );
     Task_LogHex( ostask_handle( running ) );
     Task_LogNewLine();
@@ -620,7 +620,7 @@ OSTask *PipeNoMoreData( svc_registers *regs, OSPipe *pipe )
     // for more data than available.
     if (pipe->receiver_waiting_for != 0) PANIC;
   }
-  return 0; 
+  return 0;
 }
 
 OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
@@ -711,7 +711,7 @@ OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
     sender->regs.r[1] = space_in_pipe( pipe );
     sender->regs.r[2] = write_location( pipe );
 
-#ifdef DEBUG__FOLLOW_TASKS
+#ifdef DEBUG__FOLLOW_TASKS_A_LOT
     Task_LogString( "> ", 2 );
     Task_LogHex( ostask_handle( running ) );
     Task_LogNewLine();
@@ -776,7 +776,7 @@ OSTask *PipeNotListening( svc_registers *regs, OSPipe *pipe )
     if (pipe->sender_waiting_for != 0) PANIC;
   }
 
-  return 0; 
+  return 0;
 }
 
 OSTask *TaskOpGetLogPipe( svc_registers *regs )
@@ -849,7 +849,8 @@ OSTask *TaskOpLogString( svc_registers *regs )
   // PipeSpaceFilled only looks at the given length, but fills in
   // the caller's idea of the state of the pipe, which we're not
   // interested in.
-  svc_registers tmp = { .r[1] = length };
+  svc_registers tmp;    // Note: don't initialise here, or memset gets called
+  tmp.r[1] = length;
   OSTask *resume = PipeSpaceFilled( &tmp, pipe );
 
   // It also never changes the running task

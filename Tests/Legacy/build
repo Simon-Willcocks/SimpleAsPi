@@ -78,8 +78,8 @@ INITIAL_MODULES+='ROMFonts\0'
 #INITIAL_MODULES+='SoundScheduler\0'
 
 INITIAL_MODULES+='Squash\0'
-INITIAL_MODULES+='BootFX\0'
-##INITIAL_MODULES+='SuperSample\0'
+# INITIAL_MODULES+='BootFX\0' # problems running, closes down - needs to be direct call or work out some way to return...
+INITIAL_MODULES+='SuperSample\0'
 ##INITIAL_MODULES+='SystemDevices\0'
 
 # TaskWindow fiddles with internal kernel variables that are no longer valid.
@@ -127,7 +127,8 @@ INITIAL_MODULES+='ToolAction\0'
 INITIAL_MODULES+='Menu\0'
 INITIAL_MODULES+='Iconbar\0'
 # INITIAL_MODULES+='ColourDbox\0' # Requires ColourPicker
-INITIAL_MODULES+='ColourMenu\0'
+# INITIAL_MODULES+='ColourMenu\0' # Command ColourMenu$Path not found in modules
+
 INITIAL_MODULES+='DCS\0'
 INITIAL_MODULES+='FileInfo\0'
 ## INITIAL_MODULES+='FontDbox\0' init error: Not enough memory (may be I've not allocated enough to a DA)

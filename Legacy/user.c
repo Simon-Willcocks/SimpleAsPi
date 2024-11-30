@@ -17,10 +17,16 @@
 #include "kernel_swis.h"
 #include "ostaskops.h"
 
+static struct locals {
+  svc_registers regs;
+  uint32_t sp; // May be corrupted by OS_CallASWI call
+  uint32_t registers[12];
+} *locals = (void*) 0x8000;
+
+#define regs locals->regs
+
 void manage_legacy_stack( uint32_t handle, uint32_t queue )
 {
-  svc_registers regs;
-
   for (;;) {
     queued_task client = Task_QueueWait( queue );
 
@@ -38,6 +44,7 @@ void manage_legacy_stack( uint32_t handle, uint32_t queue )
       Task_LogHex( regs.r[i] );
       Task_LogString( i == 9 ? "\n" : " ", 1 );
     }
+    Task_Yield();
 #endif
 
     bool writeS = ((client.swi & ~Xbit) == OS_WriteS);
@@ -49,37 +56,54 @@ void manage_legacy_stack( uint32_t handle, uint32_t queue )
 
     regs.spsr &= 0x0fffffff;
 
-    // DO NOT USE THE STACK BETWEEN RunForTask AND Finished!
-    // Or create a stack in shared memory (RMA)
-
+    // This gets a bit ugly.
+    // RISC OS thinks it's a good idea for OS code to be interruptable.
+    // I don't, so most of this kernel doesn't allow it.
+    // When an interrupt occurs, the handler always stores the current
+    // usr_SP, usr_LR for the currently running task; a reasonable
+    // action considering only usr mode code should be interruptable.
+    // Unfortunately for the legacy handling, that will be this task,
+    // but the usr context can be from a totally different task.
+    // That's not a problem until the legacy swi finishes and returns
+    // to this usr code with an invalid sp and lr.
+    // To avoid this problem, the simplest approach I can think of is
+    // simply to use storage at a fixed address in this slot to
+    // maintain a consistent context.
     register uint32_t s asm( "r12" ) = swi | Xbit;
-    register svc_registers *r asm( "r14" ) = &regs;
-    asm ( "push {r0-r11}"
-      "\n  mov r10, %[client]"
+    register uint32_t c asm( "r10" ) = client.task_handle;
+    asm ( "mov r14, #0x8000"
+      "\n  add r14, %[sp]"
+      "\n  str sp, [r14], #4"
+      "\n  stm r14, {r0-r11}"
+      "\n  mov r14, #0x8000"
       "\n  ldm r14, {r0-r9}"
       "\n  mov r11, r0"
       "\n  mov r0, r10"
-      "\n  svc %[enter_slot]"
+      "\n  svc %[enter_slot]" // No access to locals now
       "\n  mov r0, r11"
       "\n  svc %[swi]"
       "\n  mrs r10, cpsr  // Save cpsr"
       "\n  svc %[leave_slot]"
-      // Back in our context, with our stack!
+      // Back in our slot!
+      "\n  mov r14, #0x8000"
       "\n  stm r14, {r0-r9}"
-      "\n  ldr r1, [r14, #4 * 14]" // spsr
+      "\n  ldr r1, [r14, %[spsr]]"
       "\n  and r10, r10, #0xf0000000"
       "\n  bic r1, r1, #0xf0000000"
       "\n  orr r1, r1, r10"
-      "\n  str r1, [r14, #4 * 14]" // spsr
-      "\n  pop {r0-r11}"
+      "\n  str r1, [r14, %[spsr]]"
+      "\n  add r14, %[sp]"
+      "\n  ldr sp, [r14], #4"
+      "\n  ldm r14, {r0-r11}"
       :
       : [swi] "i" (OS_CallASWIR12 | Xbit)
       , [enter_slot] "i" (OSTask_RunForTask | Xbit)
       , [leave_slot] "i" (OSTask_Finished | Xbit)
-      , "r" (r)
+      , [sp] "i" (offset_of( struct locals, sp ))
       , "r" (s)
-      , [client] "r" (client.task_handle)
-      : "r10", "memory", "cc" );
+      , "r" (c)
+      , [spsr] "i" (offset_of( svc_registers, spsr ))
+      : "memory", "cc", "r14" );
 
     bool generate_errors = (0 == (client.swi & Xbit));
 
@@ -105,7 +129,18 @@ void manage_legacy_stack( uint32_t handle, uint32_t queue )
       }
       else if (generate_errors) {
         // TODO GenerateError
+        Task_LogHex( error->code );
+        Task_LogString( " ", 1 );
+        Task_LogString( error->desc, 0 );
+        Task_LogString( " ", 1 );
+        Task_LogHex( client.swi );
+        Task_LogString( " ", 1 );
+        Task_LogHex( lr );
+        Task_LogNewLine();
+#ifdef DEBUG__BREAK_ON_REPORTABLE_ERROR
+        Task_Sleep( 2 );
         asm ( "bkpt 7" );
+#endif
       }
       else {
         asm ( "bkpt 8" );

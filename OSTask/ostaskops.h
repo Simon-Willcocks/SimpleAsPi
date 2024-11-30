@@ -42,8 +42,8 @@ enum {
   , OSTask_ChangeController     // 0x30e Pass the controlled task to another
   , OSTask_SetController        // 0x30f Allow another task to control me
 
-  , OSTask_LockClaim            // 0x310        As yet unused and untested!
-  , OSTask_LockRelease          // 0x311        As yet unused and untested!
+  , OSTask_LockClaim            // 0x310
+  , OSTask_LockRelease          // 0x311
 
   , OSTask_EnablingInterrupts   // 0x312 Disable IRQs while I get
   , OSTask_WaitForInterrupt     // 0x313 ready to wait.
@@ -764,19 +764,20 @@ error_block *Task_Finished()
 // the caller.
 // The caller can then pass it off to another task, ask them to run code
 // on its behalf (and with its permissions), or release it to run freely.
-// Task_SpawnService{3,2,1,0}
-// Task_CreateService{3,2,1,0}
+// Task_SpawnService{4,3,2,1,0}
+// Task_CreateService{4,3,2,1,0}
 // See also Queues, which put tasks under the control of the task that
 // removes them from a queue.
 
 static inline
-uint32_t Task_SpawnTask3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+uint32_t Task_SpawnTask4( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2, uint32_t p3 )
 {
   register void *s asm( "r0" ) = start;
   register uint32_t p asm( "r1" ) = sp;
   register uint32_t r1 asm( "r2" ) = p0;
   register uint32_t r2 asm( "r3" ) = p1;
   register uint32_t r3 asm( "r4" ) = p2;
+  register uint32_t r4 asm( "r5" ) = p3;
   register uint32_t handle asm( "r0" );
   asm volatile ( // Volatile because we ignore the outputs
         "svc %[swi_spawn]"
@@ -791,9 +792,16 @@ uint32_t Task_SpawnTask3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, ui
     , "r" (r1)
     , "r" (r2)
     , "r" (r3)
+    , "r" (r4)
     : "lr", "cc" );
 
   return handle;
+}
+
+static inline
+uint32_t Task_SpawnTask3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+{
+  return Task_SpawnTask4( start, sp, p0, p1, p2, 0 );
 }
 
 static inline
@@ -805,40 +813,46 @@ uint32_t Task_SpawnTask2( void *start, uint32_t sp, uint32_t p0, uint32_t p1 )
 static inline
 uint32_t Task_SpawnTask1( void *start, uint32_t sp, uint32_t p0 )
 {
-  return Task_SpawnTask3( start, sp, p0, 0, 0 );
+  return Task_SpawnTask2( start, sp, p0, 0 );
 }
 
 static inline
 uint32_t Task_SpawnTask0( void *start, uint32_t sp )
 {
-  return Task_SpawnTask3( start, sp, 0, 0, 0 );
+  return Task_SpawnTask1( start, sp, 0 );
 }
 
 static inline
-uint32_t Task_CreateTask3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+uint32_t Task_CreateTask4( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2, uint32_t p3 )
 {
   register void *s asm( "r0" ) = start;
   register uint32_t p asm( "r1" ) = sp;
   register uint32_t r1 asm( "r2" ) = p0;
   register uint32_t r2 asm( "r3" ) = p1;
   register uint32_t r3 asm( "r4" ) = p2;
+  register uint32_t r4 asm( "r5" ) = p3;
   register uint32_t handle asm( "r0" );
   asm volatile ( // Volatile because we ignore the outputs
         "svc %[swi_create]"
     "\n  mov r1, #0"    // No extra context
-    "\n  svc %[swi_release]"
     : "=r" (p) // Corrupted
     , "=r" (handle)
     : [swi_create] "i" (OSTask_Create)
-    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (s)
     , "r" (p)
     , "r" (r1)
     , "r" (r2)
     , "r" (r3)
+    , "r" (r4)
     : "lr", "cc" );
 
   return handle;
+}
+
+static inline
+uint32_t Task_CreateTask3( void *start, uint32_t sp, uint32_t p0, uint32_t p1, uint32_t p2 )
+{
+  return Task_CreateTask4( start, sp, p0, p1, p2, 0 );
 }
 
 static inline
@@ -850,13 +864,13 @@ uint32_t Task_CreateTask2( void *start, uint32_t sp, uint32_t p0, uint32_t p1 )
 static inline
 uint32_t Task_CreateTask1( void *start, uint32_t sp, uint32_t p0 )
 {
-  return Task_CreateTask3( start, sp, p0, 0, 0 );
+  return Task_CreateTask2( start, sp, p0, 0 );
 }
 
 static inline
 uint32_t Task_CreateTask0( void *start, uint32_t sp )
 {
-  return Task_CreateTask3( start, sp, 0, 0, 0 );
+  return Task_CreateTask1( start, sp, 0 );
 }
 
 static inline

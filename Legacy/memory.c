@@ -224,11 +224,18 @@ static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
     uint32_t physical = claim_contiguous_memory( new_pages );
     if (physical == 0) PANIC;
 
-    Task_LogString( "Expanding DA\n", 13 );
+    Task_LogString( "Expanding DA ", 13 );
+    Task_LogSmallNumber( da->number );
+    Task_LogString( " by ", 4 );
+    Task_LogSmallNumber( resize_by_pages );
+    Task_LogString( " pages, to 0x", 12 );
+    Task_LogHex( da->pages << 12 );
+    Task_LogNewLine();
+    uint32_t new_va = da->va_start + (da->actual_pages << 12);
     memory_mapping map = {
         .base_page = physical,
         .pages = new_pages,
-        .va = da->va_start + (da->actual_pages << 12),
+        .va = new_va,
         .type = CK_MemoryRW,
         .map_specific = 0,
         .all_cores = 1,
@@ -539,7 +546,6 @@ void do_OS_Memory( svc_registers *regs )
           .usr32_access = 1 };
         map_memory( &mapping );
       }
-*/
 uint32_t *screen = (void*) base;
 uint32_t colour = 0x12845678;
 for (int y = 0; y < 1080; y++) {
@@ -547,6 +553,7 @@ for (int y = 0; y < 1080; y++) {
     screen[x + 1920 * y] = colour++;
   }
 }
+*/
       regs->r[3] = base;
     }
     break;
@@ -555,7 +562,7 @@ for (int y = 0; y < 1080; y++) {
       enum { DRAM = 1, VRAM, ROM, IO, Soft_ROM };
       switch (regs->r[0] >> 8) {
       case Soft_ROM:
-        regs->r[1] = 5 << 8;
+        regs->r[1] = 6 << 8; // FIXME!
         regs->r[2] = 4096;
         break;
       default:

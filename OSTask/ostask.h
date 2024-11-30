@@ -26,10 +26,19 @@
 // limited svc stack in workspace.
 void __attribute__(( noreturn )) startup();
 
-// Run a non-OSTask SWI
-// Return 0 to continue the current task, an OSTask to run otherwise
-OSTask *execute_swi( svc_registers *regs, int number );
+// Run the SWI (by calling ostask_svc for OSTask SWIs), finishing by
+// calling return_to_swi_caller.
+void execute_swi( svc_registers *regs, int number );
 
+// The provided execute_swi routine must call this routine for all
+// SWIs in the range OSTask_Yield ... OSTask_Yield + 63
+OSTask *ostask_svc( svc_registers *regs, int number );
+
+static inline
+void __attribute__(( noreturn )) return_to_swi_caller( 
+                        OSTask *task,
+                        svc_registers *regs,
+                        uint32_t svc_sp );
 
 #define assert( x ) do { if (!(x)) asm ( "bkpt %[line]" : : [line] "i" (__LINE__) ); } while (false)
 
@@ -272,8 +281,11 @@ static inline bool push_controller( OSTask *task, OSTask *controller )
     return false;
   }
 
-  for (int i = MAX_CONTROLLERS-1; i >= 1; i--) {
+  int i = 0;
+  while (task->controller[i] != 0) i++;
+  while (i > 1) {
     task->controller[i] = task->controller[i-1];
+    i++;
   }
   task->controller[0] = controller;
 
@@ -363,4 +375,38 @@ static inline void change_current_controller( OSTask *task, OSTask *new )
 #endif
   if (0 == task->controller[0]) PANIC;
   task->controller[0] = new;
+}
+
+static inline
+void __attribute__(( noreturn )) return_to_swi_caller( 
+                        OSTask *task,
+                        svc_registers *regs,
+                        uint32_t svc_sp )
+{
+  if (task != 0) {
+    assert( task == workspace.ostask.running );
+    if ((regs->spsr & 0x1f) == 0x10) {
+      asm ( "msr sp_usr, %[sp]"
+        "\n  msr lr_usr, %[lr]"
+        "\n  udf 0x203"
+        :
+        : [sp] "r" (task->banked_sp_usr)
+        , [lr] "r" (task->banked_lr_usr) );
+    }
+       asm ( "udf 0x204" );
+  }
+
+  if (task != 0) map_slot( task->slot );
+
+  // Resume after the SWI
+  register svc_registers *lr asm ( "lr" ) = regs;
+  asm (
+          "mov sp, %[sp]"
+      "\n  ldm lr!, {r0-r12}"
+      "\n  rfeia lr // Restore execution and SPSR"
+      :
+      : [sp] "r" (svc_sp)
+      , "r" (lr) );
+
+  __builtin_unreachable();
 }
