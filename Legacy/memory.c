@@ -164,7 +164,7 @@ static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
     register uint32_t current_size asm ( "r4" ) = da->pages << 12;
     register uint32_t page_size asm ( "r5" ) = 4096;
     register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
-    register uint32_t error asm( "r0" );
+    register error_block const *error asm( "r0" );
     register int32_t permitted asm ( "r3" );
     asm ( "blx %[preshrink]"
       "\n  movvc r0, #0"
@@ -193,7 +193,7 @@ static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
     register uint32_t current_size asm ( "r4" ) = da->pages << 12;
     register uint32_t page_size asm ( "r5" ) = 4096;
     register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
-    register uint32_t error asm( "r0" );
+    register error_block const *error asm( "r0" );
     asm ( "blx %[pregrow]"
       "\n  movvc r0, #0"
         : "=r" (error)
@@ -255,7 +255,7 @@ static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
     register uint32_t current_size asm ( "r4" ) = da->pages << 12;
     register uint32_t page_size asm ( "r5" ) = 4096;
     register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
-    register uint32_t error asm( "r0" );
+    register error_block const *error asm( "r0" );
     asm ( "blx %[postgrow]"
       "\n  movvc r0, #0"
         : "=r" (error)
@@ -280,7 +280,7 @@ static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
     register uint32_t current_size asm ( "r4" ) = da->pages << 12;
     register uint32_t page_size asm ( "r5" ) = 4096;
     register uint32_t workspace asm ( "r12" ) = da->workspace == -1 ? da->va_start : da->workspace;
-    register uint32_t error asm( "r0" );
+    register error_block const *error asm( "r0" );
     asm ( "blx %[postgrow]"
       "\n  movvc r0, #0"
         : "=r" (error)
@@ -326,7 +326,7 @@ void do_OS_DynamicArea( svc_registers *regs )
   case Create:
     {
       char const *name = (void*) regs->r[8];
-      int len = (strlen( name ) + 4 & ~3);
+      int len = (strlen( name ) + 4) & ~3;
       dynamic_area *new_da = system_heap_allocate( sizeof( *new_da ) + len );
       dll_new_dynamic_area( new_da );
 
