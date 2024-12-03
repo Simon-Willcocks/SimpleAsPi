@@ -148,7 +148,7 @@ void append_module_to_list( module *m )
   }
 }
 
-static void *pointer_at_offset_from( void *base, uint32_t off )
+static void *pointer_at_offset_from( void const *base, uint32_t off )
 {
   return (off == 0) ? 0 : ((uint8_t*) base) + off;
 }
@@ -959,7 +959,7 @@ error_block const *run_command( module *m, uint32_t code_offset, const char *tai
 
   register uint32_t non_kernel_code asm( "r14" ) = code_offset + (uint32_t) m->header;
   // Bodge for funny commands
-  register uint32_t private_word asm( "r12" ) = m == 0 ? 0 : &m->private_word;
+  register uint32_t *private_word asm( "r12" ) = (m == 0) ? 0 : &m->private_word;
   register const char *p asm( "r0" ) = tail;
   register uint32_t c asm( "r1" ) = count;
 
@@ -1317,15 +1317,15 @@ OSTask *do_OS_Module( svc_registers *regs )
       // Treat this as a call to return the start and private addresses
       regs->r[0] = (uint32_t) &no_error;
       regs->spsr |= VF;
-      regs->r[1] = start;
-      regs->r[2] = &m->private_word;
+      regs->r[1] = (uint32_t) start;
+      regs->r[2] = (uint32_t) &m->private_word;
     }
     break;
   case 12: // Extract module information
     // Called from legacy RMEnsure
     {
       uint32_t number = regs->r[1];
-      uint32_t inst = regs->r[2];
+      // unused uint32_t inst = regs->r[2];
 
       module *m = shared.module.modules;
       uint32_t n = 0;
