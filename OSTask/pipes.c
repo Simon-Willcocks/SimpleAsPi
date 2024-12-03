@@ -99,19 +99,6 @@ static inline void free_pipe( OSPipe* pipe )
   mpsafe_insert_OSPipe_at_tail( &shared.ostask.pipe_pool, pipe );
 }
 
-bool this_is_debug_receiver()
-{
-  OSTask *running = workspace.ostask.running;
-  OSPipe *pipe = workspace.ostask.log_pipe;
-  return running == pipe->receiver;
-}
-
-static inline
-bool in_range( uint32_t value, uint32_t base, uint32_t size )
-{
-  return (value >= base && value < (base + size));
-}
-
 DECLARE_ERROR( NotATask );
 DEFINE_ERROR( NotYourPipe, 0x888, "Pipe not owned by this task" );
 DEFINE_ERROR( PipeCreationError, 0x888, "Pipe creation error" );

@@ -217,6 +217,9 @@ void __attribute__(( naked, noreturn )) idle_task()
   // and schedule one or return immediately. When called by the core's
   // idle OSTask, it will not return until an OSTask has become runnable
   // (and that one yields or blocks).
+  // NOTE!!! If this task is changed to do anything else, IdleTaskYield
+  // will need changing to save its state.
+  // Supplemental: Do not change this task!
   asm ( "svc %[yield]"
     "\n  b idle_task"
     :
@@ -580,13 +583,14 @@ OSTask *IdleTaskYield( svc_registers *regs )
     // assert( next == running );
     if (next != running) {
       workspace.ostask.running = next;
+      // Not saving state; the only thing the idle task does is yield
       return next;
     }
 
     if (0 != workspace.ostask.interrupted_tasks) {
       // Without skipping the interrupted task it is possible that running
-      // more than the number of cores tasks in infinite loops will lock
-      // out all other tasks.
+      // more tasks than the number of cores with lots to do between SWIs
+      // will lock out all other tasks.
       workspace.ostask.running = workspace.ostask.interrupted_tasks->next;
       workspace.ostask.interrupted_tasks = 0;
 
@@ -656,8 +660,9 @@ OSTask *IdleTaskYield( svc_registers *regs )
     dll_attach_OSTask( resume, &workspace.ostask.running );
     // Now resume and idle are in the list (resume at the head)
   }
-  else { // workspace.ostask.running != workspace.ostask.idle
-    workspace.ostask.running = workspace.ostask.running->next;
+  else if (running != next) {
+    workspace.ostask.running = next;
+    resume = next;
   }
 
   return resume;
@@ -1261,8 +1266,6 @@ Task_LogString( tmp, 4 );
     break;
   default: asm ( "bkpt 0xffff" );
   }
-
-  if (resume != 0 && resume != workspace.ostask.running) PANIC;
 
   // If running has been put into some shared queue by the SWI, it may already
   // have been picked up by another core. DO NOT make any more changes to it!

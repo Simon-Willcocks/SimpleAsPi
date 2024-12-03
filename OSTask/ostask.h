@@ -388,12 +388,10 @@ void __attribute__(( noreturn )) return_to_swi_caller(
     if ((regs->spsr & 0x1f) == 0x10) {
       asm ( "msr sp_usr, %[sp]"
         "\n  msr lr_usr, %[lr]"
-        "\n  udf 0x203"
         :
         : [sp] "r" (task->banked_sp_usr)
         , [lr] "r" (task->banked_lr_usr) );
     }
-       asm ( "udf 0x204" );
   }
 
   if (task != 0) map_slot( task->slot );
