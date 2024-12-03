@@ -27,9 +27,7 @@ typedef struct {
   // registers.
   uint32_t *sp;
 
-  void    *blocked_sp;
-  uint32_t blocked_lr;
-  uint32_t blocked_spsr;
+  uint32_t blocked_sp; // Blocked other than by an interrupt
 
   dynamic_area *dynamic_areas;
   uint32_t last_allocated_da;

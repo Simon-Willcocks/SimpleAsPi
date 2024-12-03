@@ -122,6 +122,14 @@ void manage_legacy_stack( uint32_t handle, uint32_t queue )
 
         // Treat this as a call to return the start and private addresses and
         // run the code in usr32.
+        {
+          char const text[] = "Entering module at ";
+          Task_LogString( text, sizeof( text ) - 1 );
+          Task_LogHex( regs.r[1] );
+          Task_LogString( ", ", 2 );
+          Task_LogHex( regs.r[2] );
+          Task_LogNewLine();
+        }
 
         regs.r[12] = regs.r[2];
         regs.lr = regs.r[1];

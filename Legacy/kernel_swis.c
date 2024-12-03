@@ -631,7 +631,7 @@ OSTask *do_OS_ConvertHex8( svc_registers *regs )
   return 0;
 }
 
-void __attribute__(( naked, noreturn )) ResumeLegacyTask();
+void __attribute__(( naked, noreturn )) ResumeLegacy();
 
 static uint32_t const legacy_top = (uint32_t) &legacy_svc_stack_top;
 static uint32_t const std_top = (uint32_t) ((&workspace.svc_stack)+1);
@@ -689,6 +689,7 @@ void execute_swi( svc_registers *regs, int number )
   if (swi == OS_ConvertHex8) {
     resume = do_OS_ConvertHex8( regs );
     assert( resume == 0 );
+
     return_to_swi_caller( 0, regs, regs+1 );
   }
 
@@ -738,7 +739,7 @@ void execute_swi( svc_registers *regs, int number )
   if (resume == 0) switch (swi) {
   case OS_Module:
     {
-      OSTask *resume = do_OS_Module( swi_regs );
+      resume = do_OS_Module( swi_regs );
 
       // If this call was successful, the serve_legacy_swis function in
       // Legacy/user.c will cause the module to start using the changed
@@ -746,8 +747,11 @@ void execute_swi( svc_registers *regs, int number )
       if (resume == 0 && 0 != (VF & swi_regs->spsr)) {
         error_block const *err = (void*) swi_regs->r[0];
         if (err->code == 0) {
-          char const text[] = "Resetting SVC stack and entering module\n";
-          Task_LogString( text, sizeof( text ) - 1 );
+          char const text[] = "Resetting SVC stack and entering module at ";
+          Task_LogHex( swi_regs->r[1] );
+          Task_LogString( ", ", 2 );
+          Task_LogHex( swi_regs->r[2] );
+          Task_LogNewLine();
 
           // Where the user mode code should resume
           swi_regs->lr = top_legacy_regs->lr;
@@ -825,9 +829,6 @@ void execute_swi( svc_registers *regs, int number )
       }
       else if (swi_regs->r[0] == 0xa1 && swi_regs->r[1] == 134) { // FontSize (in pages)
         swi_regs->r[2] = 32;
-      }
-      else if (swi_regs->r[0] >= 0x7c && swi_regs->r[0] <= 0x7e) { // Esc condition
-        swi_regs->r[1] = 0; // No escape condition (if ack)
       }
       else if (swi_regs->r[0] >= 0x7c && swi_regs->r[0] <= 0x7e) { // Esc condition
         swi_regs->r[1] = 0; // No escape condition (if ack)
@@ -987,18 +988,37 @@ Task_LogNewLine();
     return_to_swi_caller( 0, swi_regs, regs+1 );
   }
   else {
-    if (legacy) {
+    // Here is where switching to and from the legacy task under
+    // program control is dealt with.
+    // For interrupts in SVC mode (yuck!), see ResumeLegacy.
+    if (legacy && swi_regs + 1 != std_top) {
       // Legacy task has been blocked, we'll need to restore the stack
       // before it can continue.
-      shared.legacy.blocked_lr = running->regs.lr;
-      shared.legacy.blocked_spsr = running->regs.spsr;
+      assert( shared.legacy.blocked_sp == 0 );
+      { char const text[] = "legacy task blocked ";
+      Task_LogString( text, sizeof( text )-1 ); }
+      Task_LogHex( shared.legacy.blocked_sp );
+      { char const text[] = " -> ";
+      Task_LogString( text, sizeof( text )-1 ); }
       shared.legacy.blocked_sp = swi_regs + 1;
-      running->regs.lr = (uint32_t) ResumeLegacyTask;
-      running->regs.spsr = 0x93;
+      Task_LogHex( shared.legacy.blocked_sp );
+      Task_LogNewLine();
     }
     assert( resume != running );
     assert( resume == workspace.ostask.running );
-    return_to_swi_caller( resume, &resume->regs, std_top );
+    uint32_t stack = std_top;
+    if (resume == shared.legacy.owner
+     && 0 != shared.legacy.blocked_sp
+     && ResumeLegacy != resume->regs.lr) { // Not return from interrupt
+      { char const text[] = "legacy task released ";
+      Task_LogString( text, sizeof( text )-1 ); }
+      Task_LogHex( shared.legacy.blocked_sp );
+      Task_LogNewLine();
+
+      stack = shared.legacy.blocked_sp;
+      shared.legacy.blocked_sp = 0;
+    }
+    return_to_swi_caller( resume, &resume->regs, stack );
   }
 }
 
@@ -1147,41 +1167,3 @@ void interrupting_privileged_code( OSTask *task )
   // Don't let the ResumeLegacy routine be interrupted while that's happening!
   task->regs.spsr |= 0x80;
 }
-
-void __attribute__(( naked, noreturn )) ResumeLegacyTask()
-{
-  // Can use registers freely, we're going to restore them from
-  // the task anyway.
-
-  register shared_legacy *legacy asm( "r2" ) = &shared.legacy;
-  asm ( "ldr sp, [r2, %[blocked_sp]]"
-
-    "\n  ldr r0, [r2, %[owner]]"
-    "\n  ldr r1, [r2, %[blocked_spsr]]"
-    "\n  str r1, [r0, %[task_spsr]]"
-    "\n  ldr r3, [r2, %[blocked_lr]]"
-    "\n  str r3, [r0, %[task_lr]]"
-    "\n  mov lr, r0"
-    // The usr sp, lr registers will not have been restored when this
-    // task was re-entered, because the mode was artifically svc32
-    "\n  tst r1, #0x0f"
-    "\n  ldreq r4, [r0, %[task_sp_usr]]"
-    "\n  msreq sp_usr, r4"
-    "\n  ldreq r5, [r0, %[task_lr_usr]]"
-    "\n  msreq lr_usr, r5"
-
-    "\n  ldm lr!, {r0-r12}"
-    "\n  rfeia lr // Restore execution and SPSR"
-    :
-    : "r" (legacy)
-    , [blocked_sp] "i" (offset_of( shared_legacy, blocked_sp ))
-    , [blocked_lr] "i" (offset_of( shared_legacy, blocked_lr ))
-    , [blocked_spsr] "i" (offset_of( shared_legacy, blocked_spsr ))
-    , [owner] "i" (offset_of( shared_legacy, owner ))
-    , [task_spsr] "i" (offset_of( OSTask, regs.spsr ))
-    , [task_lr] "i" (offset_of( OSTask, regs.lr ))
-    , [task_lr_usr] "i" (offset_of( OSTask, banked_lr_usr ))
-    , [task_sp_usr] "i" (offset_of( OSTask, banked_sp_usr ))
-    );
-}
-
