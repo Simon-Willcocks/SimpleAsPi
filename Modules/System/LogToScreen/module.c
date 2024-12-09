@@ -222,7 +222,7 @@ void start_log( uint32_t handle, workspace *ws )
 
   core_info cores = Task_Cores();
 
-  for (int i = 0; i < cores.total; i++) {
+  for (int i = cores.total - 1; i >= 0; i--) {
     window *win = rma_claim( sizeof( window ) );
 
     // Note: The above rma_claim may (probably will) result in the core
@@ -237,6 +237,9 @@ void start_log( uint32_t handle, workspace *ws )
     Task_LogHex( pipe ); Task_LogNewLine();
     
     if (pipe != 0) {
+      // Just use this task for core 0
+      if (i == 0) core_debug_task( handle, 0, win, pipe );
+
       register void *start asm( "r0" ) = core_debug_task;
       register uint32_t sp asm( "r1" ) = aligned_stack( win + 1 );
       register uint32_t r1 asm( "r2" ) = i;
@@ -260,42 +263,6 @@ void start_log( uint32_t handle, workspace *ws )
         : "lr", "cc" );
     }
     else asm ( "bkpt 6" );
-  }
-
-  Task_LogString( "Log starting\n", 13 );
-
-  struct task {
-    uint32_t regs_etc[20];
-    uint32_t next;
-    uint32_t prev;
-  } *tasks = (void*) 0xe0000000;
-
-  for (int col = 0; col < 16; col++) {
-    show_word( screen, 220, 40+col, rgb( col ), 0x00ffffff );
-    show_word( screen, 230, 40+col, rgb( col ), rgb( col ) );
-  }
-  for (;;) {
-    Task_Sleep( 100 );
-    int next = 0;
-    uint32_t col = 0;
-    uint32_t shown = 0;
-    while (tasks[next].prev < 0xff101000) {
-      uint32_t fg = rgb( ++col );
-      int index = next++;
-      struct task *t = &tasks[index];
-      while (0 == (shown & (1 << index))) {
-        shown |= (1 << index);
-        show_word( screen, 2, 60 + index, 0xff100000 | (uint32_t) t, fg );
-        uint32_t *words = &t->regs_etc;
-        for (int w = 0; w < 22; w++) {
-          uint32_t word = words[w];
-          show_word( screen, 12 + w * 9, 60 + index, word, fg );
-        }
-        t = (void*) ((t->next & ~0xfff00000) | 0xe0000000);
-        index = t - tasks;
-      }
-    }
-    Task_FlushCache( screen, 0x800000 );
   }
 }
 
