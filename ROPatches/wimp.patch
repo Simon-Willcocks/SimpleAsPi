@@ -1,0 +1,1865 @@
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp ckernel/Desktop/Wimp/s/Wimp
+--- orig/Desktop/Wimp/s/Wimp	2019-12-14 21:52:08.000000000 +0100
++++ ckernel/Desktop/Wimp/s/Wimp	2024-11-09 11:35:21.940000000 +0100
+@@ -74,6 +74,9 @@
+ true	SETL	{TRUE}
+ false	SETL	{FALSE}
+ 
++	GBLL	CKernel ; TODO FIXME
++CKernel	SETL	{TRUE}
++
+         GBLS    LoadWimpOptions
+       [ Options = ""
+ LoadWimpOptions SETS "GET Options.s.<System>"
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp01 ckernel/Desktop/Wimp/s/Wimp01
+--- orig/Desktop/Wimp/s/Wimp01	2023-06-24 13:58:51.000000000 +0200
++++ ckernel/Desktop/Wimp/s/Wimp01	2024-12-09 22:16:17.250000000 +0100
+@@ -56,6 +56,37 @@
+               ]
+ u_scroll        #       8               ; x,y scroll-offsets (for user scroll)
+ 
++  [ CKernel
++; FIXME: these have to match OSTask/ostaskops.h
++XOSTask_Yield                   * 0x20300
++XOSTask_Sleep                   * 0x20301
++XOSTask_Create                  * 0x20302
++XOSTask_Spawn                   * 0x20303
++XOSTask_RegisterSWIHandlers     * 0x20306
++XOSTask_AppMemoryTop            * 0x20308
++XOSTask_RunForTask              * 0x20309
++XOSTask_GetRegisters            * 0x2030a
++XOSTask_SetRegisters            * 0x2030b
++XOSTask_Finished                * 0x2030c
++XOSTask_ReleaseTask             * 0x2030d
++XOSTask_ChangeController        * 0x2030e
++XOSTask_LogString               * 0x2031b
++
++XOSTask_QueueCreate             * 0x20330
++XOSTask_QueueDelete             * 0x20331
++XOSTask_QueueWait               * 0x20332
++
++; Internal use only!
++; Any other task than the Wimp support task using this will be
++; dealt with with extreme prejudice
++XWimp_TaskSwitch                  * 0x600ff
++
++                ^       0
++svcr            #       4 * 13
++svclr           #       4
++svcpsr          #       4
++svcr_size       #       0
++  ]
+ 
+ 
+ ;;-----------------------------------------------------------------------------
+@@ -112,6 +143,41 @@
+ 
+         MEND
+ 
++  [ CKernel
++        MACRO
++        Log $string
++        Push    "R0,R1,LR"
++        ADR     R0, %FT91
++        MOV     R1, #%FT92 - %FT91
++        SWI     XOSTask_LogString
++        B       %FT93
++91
++        DCB     "$string"
++92
++        ALIGN
++93
++        Pull    "R0,R1,LR"
++        MEND
++
++        MACRO
++        LogNum  $reg, $term
++        Push    "R0,R1,R2,LR"
++
++        SUB     SP, SP, #16     ; Space for hex
++        MOV     R0, $reg
++        MOV     R1, SP
++        MOV     R2, #16
++        SWI     XOS_ConvertHex8
++        MOV     R1, #$term
++        STR     R1, [SP, #8]
++        MOV     R0, SP
++        MOV     R1, #9
++        SWI     XOSTask_LogString
++
++        ADD     SP, SP, #16     ; Space for hex
++        Pull    "R0,R1,R2,LR"
++        MEND
++  ]
+ 
+         MACRO
+ $l      CallFilter $name,$nohandle
+@@ -562,6 +628,10 @@
+ task_flagword     #     4                       ; flag word on entry to Poll
+ task_slotptr      #     4                       ; if switched, block of pages
+ task_wimpver      #     4                       ; R0 on entry to Wimp_Initialise
++  [ CKernel
++task_userblk      #     4                       ; R1 on entry to Wimp_Poll(Idle)
++task_idletime     #     4                       ; R2 on entry to Wimp_PollIdle
++  ]
+ task_pollword     #     4                       ; R3 on entry to Wimp_Poll(Idle)
+ task_fpblock      #     4                       ; FP register save block
+               [ Swapping
+@@ -588,7 +658,9 @@
+ priority_top      *     1:SHL:20
+ 
+ task_environment  #     4*3*MaxEnvNumber        ; environment pointers
++  [ :LNOT: CKernel
+ task_registers    #     4*17                    ; USR register set
++  ]
+ task_vfpcontext   #     4                       ; VFPSupport context ID
+ task_datasize     #     0
+ 
+@@ -724,6 +796,16 @@
+ 
+ tempworkspace   #       8*4             ; can be used easily
+ 
++  [ CKernel
++controller_task #       4
++recurse_ret     #       4               ; return address in support task
++root_task       #       4
++closed_task     #       4               ; OSTask calling Wimp_CloseDown (?)
++ckernel_end     #       0               ; Keep this section a multiple of
++                                        ; four words because otherwise things
++                                        ; seem to break
++  ]
++
+ vduoutput       #       0
+ log2px          #       4
+ log2py          #       4
+@@ -3416,6 +3498,507 @@
+         STR     R1,[sp,#0*4]            ; overwrite stacked value
+         B       ExitWimp
+ 
++  [ CKernel
++
++;-----------------------------------------------------------------------------
++; CKernel tasks to handle SWIs
++;-----------------------------------------------------------------------------
++
++show_regs
++        Push    "r0, lr"
++        LogNum  r14, 10
++        LDR     r14, [r0, #4 * 0]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 1]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 2]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 3]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 4]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 5]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 6]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 7]
++        LogNum  r14, 10
++
++        LDR     r14, [r0, #4 * 8]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 9]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 10]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 11]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 12]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 13]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 14]
++        LogNum  r14, 32
++        LDR     r14, [r0, #4 * 15]
++        LogNum  r14, 10
++
++        SWI     XOSTask_Yield
++        ; ends
++        Pull    "r0, pc"
++
++        LTORG
++        ; When swi_done is reached, the r0 to return is in r0 and the
++        ; flags are set appropriately.
++        ; First thing we do is store the flags.
++
++swi_done
++        DCD     &e7fffffe
++        MRS     R14,CPSR
++        Push    "r14"
++        ; We have one more word on the stack below the frame, so +4
++
++        ; Noise starts
++        Log "Resuming after Wimp SWI (ret) "
++
++        LogNum  r11, 32
++        LDR     r14, [sp, #4 * 14]      ; Return address
++        LogNum  r14, 32
++        LDR     R14, polltaskhandle
++        CMP     R14, #0         ; sometimes 0
++        LDRNE   r14, [wsptr, r14]
++        TEQNE   R14, #task_unused
++        LDRNE   r14, [r14, #task_slotptr]
++        LogNum  r14, 10
++
++;        Push    "r0"
++;        MOV     r0, sp
++;        BL      show_regs
++;        Pull    "r0"
++
++        LDR     r14, [sp, #4 * 12]
++        STR     r14, longjumpSP
++        LDR     r14, [sp, #4 * 13]
++        STR     r14, polltaskhandle
++
++        LDR     r14, [sp, #4 * 14]
++        TEQ     r14, #0
++
++        BEQ     return_to_original_caller
++
++        ; Call was recursive, "simply" return, staying in this OSTask
++        Pull    "r1"
++        MSR     CPSR_f, r1      ; PSR
++        Pull    "r1-r11"
++        ADD     sp, sp, #12     ; old_polltask, longjump, return
++        BX      r14
++
++return_to_original_caller
++        Pull    "r11"
++        AND     r11, r11, #0xf0000000
++
++        SWI     XOSTask_Finished
++
++        Push    "r0"            ; need r0 for ChangeController
++
++        ; No longer in a recursive call (even if have been)
++        MOV     R1, #0
++        STR     R1, recurse_ret
++
++        ; Hand the client task back to the control task to resume
++        LDR     R0, taskhandle
++        LDR     R0, [wsptr, R0]
++        TEQ     R0, #task_unused
++
++        ; Assuming the only reason a task becomes unused is because it's
++        ; being closed down. ICBW
++        LDRNE   R0, [R0, #task_slotptr]
++        LDREQ   R0, closed_task
++
++        LDR     R1, controller_task
++        SWI     XOSTask_ChangeController
++
++        LDM     sp, {r0-r6}
++        ADD     sp, sp, #4 * 15 ; Stacked registers, r0-r11, longjmpsp, task, ret
++        MOV     r9, #0  ; Resume taskhandle task, do not return here
++        SWI     XWimp_TaskSwitch
++        ; This is never reached, the above is a clue for the manager task
++
++bork
++        BKPT    111
++        LTORG
++
++        ; control_task is a spawned task with its own application space
++        ; If it needed a stack, it would use XOSTask_AppMemoryTop to allocate
++        ; space and set SP to the top of it, for example.
++        ; But we don't (yet)
++control_task
++        ; r0 = task handle (unused)
++        ; r1 = module workspace address
++        ; r2 = wimp task queue
++
++        MOV     wsptr, R1
++        MOV     R9, R2
++
++        MOV     R0, #0x9000
++        SWI     XOSTask_AppMemoryTop
++        ; When we need a stack...
++        ; We need one for LogNum
++        MOV     SP, R0
++
++        ; All other registers are freely usable, this is an independent task
++
++        ; Create a stack that all slots can access for the task to run the SWIs
++        ; TODO Task specific storage
++        MOV     R3,#65536 ; 64k stack?
++        SUB     R3,R3,#12 ; nearly 64k stack!
++        MOV     R0,#ModHandReason_Claim
++        SWI     XOS_Module
++        BVS     bork
++
++        ; Create task that will execute the Wimp SWIs, in the old-fashioned way
++        ADD     R1, R2, R3      ; top of stack
++        BIC     R1, R1, #15     ; Aligned (down) to 16 byte boundary
++
++        ; Only the stack (in R1) is relevant for the new task
++        SWI     XOSTask_Create  ; New task shares this slot, naturally
++
++        ; Task is controlled by this task, until it is released to run
++        ; asynchronously before reporting completion by Wimp_TaskSwitch
++
++        MOV     R8, R0  ; support_task handle
++
++        Log     "Entering Wimp control task loop\n"
++        MOV     R10, #0 ; No SWIs processed
++
++control_task_loop
++        MOV     R0, R9
++        SWI     XOSTask_QueueWait
++        ; r0 = queued task handle
++        ; r1 = swi number (offset)
++        ; r2 = core number (usually irrelevant)
++
++        TEQ     R10, #0
++        STREQ   R0, root_task
++
++        MOV     R10, R0 ; Remember client task
++        MOV     R11, R1 ; Remember swi number
++
++        ; We're going to want to know/modify the SWI caller's
++        ; registers whatever happens. Put them at 0x8000.
++
++        MOV     R1, #0x8000
++        SVC     XOSTask_GetRegisters
++
++; TODO Remove this noise
++        Push    "r0, lr"
++        MOV     r0, r1
++        BL      show_regs
++        Pull    "r0, lr"
++
++        Log     "Wimp SWI "
++        LogNum  r11, 32
++        Log     "OSTask "
++        LogNum  r10, 32
++        Log     "Task "
++        LDR     r2, taskhandle
++        LogNum  r2, 32
++        Log     "at "
++        LDR     r2, [R1, #svclr]
++        LogNum  r2, 10
++; End noise
++
++        TEQ     R10, R8         ; Called from support task?
++        BNE     client_swi      ; No? External SWI call
++
++        TEQ     R11, #63        ; Wimp_TaskSwitch?
++        BNE     recursing_swi   ; No? Call made within a Wimp SWI
++
++        LDR     R0, [R1, #4 * 9]
++        CMP     R0, #0
++        BEQ     return_from_swi
++
++task_swap       ; switch to Wimp Task in R0 (support task's R9)
++
++        CMP     R0, #-1
++
++        ; Give the support task control of the task
++        MOVNE   R1, R8  ; support_task handle
++        SVCNE   XOSTask_ChangeController
++
++        ; Carry on where it left off
++        MOV     R0, R8  ; support_task handle
++        MOV     R1, #0  ; leave support task registers unchanged
++        SVC     XOSTask_ReleaseTask
++
++        B       control_task_loop
++
++return_from_swi
++        ; returning from a Wimp SWI
++        ; read the client's registers, update r0-r6, and the flags,
++        ; resume the client task
++
++        LDR     R0, taskhandle
++        LDR     R0, [wsptr, R0]
++        TEQ     R0, #task_unused
++        LDRNE   R0, [R0, #task_slotptr]
++        LDREQ   R0, closed_task
++
++        ADD     R1, R1, #svcr_size
++        SVC     XOSTask_GetRegisters
++
++;        Push    "r0, lr"
++;        MOV     r0, r1
++;        BL      show_regs
++;        Pull    "r0, lr"
++
++        MOV     R2, R1          ; client registers before SWI
++        MOV     R1, #0x8000     ; SWI registers on exit, flags in r11
++
++;; TODO Remove this noise
++;        Log     "Wimp SWI return to Task "
++;        LogNum  R0, 32
++;        Log     "at "
++;        LDR     R3, [R2, #svclr]
++;        LogNum  R3, 32
++;        LDR     R3, [R1, #4 * 11]       ; r11 contains return flags
++;        LogNum  R3, 10
++;        MOV     R0, #0x8000
++;        BL      show_regs
++;        ADD     R0, R0, #svcr_size
++;        BL      show_regs
++;; End noise
++
++        ; R1 -> SWI result registers (with flags in R11)
++        ; R2 -> client registers (to be modified)
++
++        ; Update flags
++        LDR     R3, [R1, #4 * 11]
++        LDR     R4, [R2, #svcpsr]
++        BIC     R4, #0xf0000000
++        ORR     R4, R4, R3
++        STR     R4, [R2, #svcpsr]
++
++        TST     R3, #0x10000000 ; V flag. Error?
++        LDRNE   R4, [R1]        ; Just R0 changed on error
++        STRNE   R4, [R2]
++        LDMIAEQ R1!, {R4-R7}    ; returned r0-r3
++        STMIAEQ R2!, {R4-R7}
++        LDMIAEQ R1!, {R4-R6}    ; returned r4-r6
++        STMIAEQ R2!, {R4-R6}
++
++; TODO Remove this noise
++        MOV     R0, #0x8000
++        ADD     R0, R0, #svcr_size
++        BL      show_regs
++; End noise
++
++        ; r1, r2 probably corrupted
++
++        LDR     R0, taskhandle
++        LDR     R0, [wsptr, R0]
++
++        ; FIXME (minor) duplication of above code
++        TEQ     R0, #task_unused
++        LDRNE   R0, [R0, #task_slotptr]
++        LDREQ   R0, closed_task
++
++        MOV     R1, #0x8000
++        ADD     R1, R1, #svcr_size
++        SWI     XOSTask_ReleaseTask
++
++        ; The support task is sitting, owned by this task, waiting
++        ; to be woken again on the next SWI.
++
++        B       control_task_loop
++
++recursing_swi
++        ; The support task is under our control (it just came out of
++        ; a queue), the client task is still under the support task's
++        ; control.
++
++;        TEQ     R11, #XWimp_Initialise - XWimp_Initialise
++;        TEQNE   R11, #XWimp_CreateWindow - XWimp_Initialise
++;
++;        BEQ     %FT01
++;        BKPT    &8003
++;01
++
++        ; When the SWI is complete, this is where to resume
++        LDR     R2, [R1, svclr]
++        STR     R2, recurse_ret
++
++        ADR     R3, support_task_wimp_swi
++        STR     R3, [R1, svclr]
++
++        ; We need to preserve the (internal) caller's registers, so
++        ; don't change the caller's registers.
++        ; These are only read if recurse_ret is non-zero
++        STMIA   wsptr, {r10-r11}        ; tempworkspace
++
++        MOV     R0, R8  ; support_task handle
++        MOV     R1, #0x8000
++        SWI     XOSTask_ReleaseTask
++
++        B       control_task_loop
++
++client_swi
++        ; Note: The task we're working for will remember its register values
++        ; until we release it, so we can mess with this copy...
++
++        ADR     R0, support_task_top_level_wimp_swi
++        STR     R0, [R1, svclr]
++        MOV     R0, #0x10
++        STR     R0, [R1, svcpsr]
++
++        STR     R10, [R1, svcr + 4 * 10] ; OSTask
++        STR     R11, [R1, svcr + 4 * 11] ; swi number
++        STR     R12, [R1, svcr + 4 * 12] ; wsptr
++
++        LDR     R0, taskhandle
++        LDR     R2, [wsptr, R0]
++        TEQ     R2, #task_unused
++
++        ; My understanding is that the value of r1 on entry to most, if not
++        ; all Wimp SWIs are stored in the task structure and kept in r11
++        ; (userblk) and restored when tasks switch.
++
++        ; I think it's used for more that just Poll SWIs, as implied by the
++        ; existing comments. e.g. SWIWimp_UpdateWindow certainly expects it!
++
++        ; With the CKernel, the caller registers are preserved in the
++        ; OSTask, but rather than read them repeatedly, it and the idle
++        ; timeout will be stored locally.
++
++        LDRNE   R3, [R1, #4 * 1]
++        STRNE   R3, [R2, #task_userblk]
++
++        LDRNE   R3, [R2, #task_slotptr]
++        TEQNE   R3, R10         ; Sanity check
++
++        BEQ     %FT99
++        BKPT    &8000
++99
++
++        TEQ     R11, #XWimp_CloseDown - XWimp_Initialise
++        STREQ   R10, closed_task
++
++        TEQ     R11, #XWimp_PollIdle - XWimp_Initialise
++        LDREQ   R3, [R1, #4 * 2]
++        STREQ   R3, [R2, #task_idletime]
++
++        ; Hand the client task off to the support task to control
++        ; (It has to be handed back when the SWI's completed.)
++        MOV     R0, R10
++        MOV     R1, R8  ; support_task handle
++        SWI     XOSTask_ChangeController
++
++        MOV     R0, R8  ; support_task handle
++        MOV     R1, #0x8000
++        SWI     XOSTask_ReleaseTask
++
++        B       control_task_loop
++
++support_task_top_level_wimp_swi
++                        DCD &e7fffff1
++        MOV     R14, R0
++
++        LDR     R0, taskhandle
++        LDR     R0, [wsptr, R0]
++        TEQ     R0, #task_unused
++        MOVEQ   R0, R10
++        LDRNE   R0, [R0, #task_slotptr]
++
++        SWI     XOSTask_RunForTask
++        MOV     R0, R14
++
++        Log     "Client "
++
++support_task_wimp_swi
++        ; A SWI called from usr32 by an application or program,
++        ; maybe called from within a Wimp SWI...
++        ; Registers r0-r6 are those of the calling task.
++        ; Wimp SWIs modify at most the first 7 registers, r0-r6
++        ; r11 = swi chunk offset being called
++        ; r12 -> workspace
++        ; This routine is run by the support task, which owns the
++        ; original Wimp SWI calling task.
++
++        ; The legacy code expects r1-r11 to be the bottom items on 
++        ; the stack (see sysinfo_exitR0R1), and ExitWimp expects old
++        ; values of longjumpSP and polltaskhandle above that.
++
++        LDR     R14, recurse_ret
++        Push    "r14"
++
++        LDR     R14,polltaskhandle
++        Push    "r14"
++        LDR     R14,longjumpSP
++        Push    "r0-r11, r14"
++        ; Now we have the frame SWI code expects, plus r0 below it
++
++        ADD     R0, SP, #4
++        STR     R0,longjumpSP
++        LDR     R0,taskhandle
++        STR     R0,polltaskhandle
++
++        LDR     R14, recurse_ret
++        CMP     R14, #0
++        LDMIANE wsptr, {r10-r11}        ; tempworkspace
++
++        ; Noise
++        Log     "Wimp SWI "
++        ADD     R11, R11, #&40000
++        ADD     R11, R11, #&c0
++        LogNum  R11, 10
++        AND     R11, R11, #&3f
++        ; End noise
++
++        ; OK, so, the contents of taskhandle (and now polltaskhandle) could
++        ; be a Wimp task handle.
++        ; It might also not be.... Wimp_Initialise is called before the task
++        ; is a Wimp task.
++
++        Pull    "r0"
++        ; Now we have just the frame SWI code expects to be given at sp,
++        ; the input r0 in r0, and the SWI offset in r11.
++
++        LDR     R14,wimpswiintercept
++        TEQ     R14,#0
++                BEQ callaswi
++                BKPT    &ff90
++        MOVNE   PC,R14
++
++callaswi        ; How wimpswiintercept routines resume a SWI
++        ADRL    R14, jptable
++
++        ADDS    R14, R14, R11, ASL#2    ; Resets V
++        MOV     userblk,R1              ; get userblk (r11) (--> parameters)
++        BX      LR
++
++        MakeErrorBlock WimpBadOp
++
++; CKernel style functions
++; On entry:
++; R0    -> regs
++; R1    -> private word
++; R2    =  core number
++; R3    =  task handle
++; FIXME doesn't deal with errors!
++do_SWIWimp_ReadSysInfo
++        Push    "r0-r2,r11,r12,lr"
++        MOV     R11, R0
++        MOV     R12, R1
++        LDM     R11, { r0-r2 }
++        BL      SWIWimp_ReadSysInfo
++        STM     R11, { r0-r2 }
++        Pull    "r0-r2,r11,r12,pc"
++
++do_SWIWimp_CommandWindow
++        MOV     pc, lr ; May never happen!
++        ; Seriously: redirect the output to a pipe, if anything's
++        ; written to it, open an appropriate window to display
++        ; the output.
++  ] ; CKernel
++
+ 
+ ;-----------------------------------------------------------------------------
+ ; Initialisation - claim work area
+@@ -3513,6 +4096,90 @@
+ gotwork
+         MOV     wsptr,R2
+ 
++  [ CKernel
++        ; The private word is in system heap, hidden from user mode, but
++        ; the workspace is in RMA, which isn't.
++
++        ; Spawn a task to handle SWIs
++        ; That will create a task to execute the SWIs removed from the
++        ; queue. While the execute task is running, any Wimp SWIs from other
++        ; tasks will be stacked for later execution. (Actually, to start with,
++        ; I'll just panic!)
++
++        ; Recursive calls to Wimp SWIs will come through to the control task
++        ; which will then (once again) be in control of the worker task, which
++        ; it will use to run the SWI code.
++
++        ; On completion of a recursed SWI, the worker task simply resumes
++        ; where the SWI was supposed to return to.
++        ; On completion of the top level SWI, the worker task makes a 
++        ; call to Wimp_TaskSwitch to block itself until the next SWI. The
++        ; control task will resume either the task that called the SWI, or
++        ; the one that the Wimp has scheduled to return from Wimp_Initialise,
++        ; Wimp_Poll(Idle), (etc.?)
++
++        Push    "R0-R4,LR"
++
++        ; RMA allocations don't come initialised...
++        ; Strictly speaking, only recurse_ret needs zeroing.
++        MOV     R0, #0
++        STR     R0, controller_task
++        STR     R0, recurse_ret
++        STR     R0, root_task
++        STR     R0, closed_task
++
++        SWI     XOSTask_QueueCreate
++        MOV     R3, R0
++        ADRL    R0, control_task
++        MOV     R1, #0                  ; No initial stack
++        MOV     R2, wsptr
++        SWI     XOSTask_Spawn
++
++        Log     "Wimp controller task is "
++        LogNum  R0, 10
++
++        STR     R0, controller_task
++
++        ; The spawned task, in its own slot (aka AMB), is blocked, under
++        ; the control of this OSTask
++        ; Release it, let it fly!
++        MOV     R1, #0          ; No new context
++        SWI     XOSTask_ReleaseTask
++        BVC     %FT55
++        BKPT    55
++55
++
++        MOV     R0, SP
++        SUB     SP, SP, #64*4
++
++56
++        STR     R3, [R0, #-4]!  ; To queue, exceptions below
++        CMP     R0, SP
++        BNE     %BT56
++
++        ; Exceptions:
++        MOV     R1, #0  ; Unknown SWI
++        STR     R1, [R0, #4 * 0x3e]  ; 400fe No such SWI
++        ; Inline call, run in svc...
++        ADR     R2, do_SWIWimp_ReadSysInfo
++        STR     R2, [R0, #4 * 0x32]
++        ADR     R2, do_SWIWimp_CommandWindow
++        STR     R2, [R0, #4 * 0x2f]
++
++        SWI     XOSTask_RegisterSWIHandlers
++
++        ADD     SP, SP, #64*4
++
++        Log     "Registered SWI handlers\n"
++
++        Pull    "R0-R4,LR"
++  ] ; CKernel
++
++  [ CKernel
++        ; Legacy stuff...
++        ; When are they used, and when can they be eliminated?
++        ; (The pointers are into privileged memory.)
++  |
+         MOV     R0,#6
+         MOV     R1,#0
+         MOV     R2,#OSRSI6_IRQsema
+@@ -3528,6 +4195,7 @@
+         CMP     R2,#0
+         LDREQ   R2,=Legacy_DomainId
+         STR     R2,ptr_DomainId
++  ] ; CKernel
+ 
+         MOV     R1, #0
+         STR     R1, messages            ; no messsages open, in case of error lookups
+@@ -3853,12 +4521,22 @@
+         MOVVC   R14,#0                  ; no sprites defined
+         STRVC   R14,[R2,#saNumber]
+ ;
++  [ CKernel
++        ; FIXME
++        ADRVC   R0,str_wimpcom
++        ADRLVC   R1,str_commands2
++        MOVVC   R2,#?str_commands2
++        MOVVC   R3,#0
++        MOVVC   R4,#VarType_LiteralString
++        SWIVC   XOS_SetVarVal
++  |
+         ADRVC   R0,str_wimpcom
+         ADRVC   R1,CommandWindow_var
+         MOVVC   R2,#CommandWindow_varsize
+         MOVVC   R3,#0
+         MOVVC   R4,#VarType_Code
+         SWIVC   XOS_SetVarVal
++  ]
+ ;
+         BL      defaultfilters          ; reset the filter handlers + broadcast service
+ ;
+@@ -5216,6 +5894,7 @@
+ ;;-----------------------------------------------------------------------------
+ 
+ Wimp_SWIdecode
++  [ :LNOT: CKernel
+         Push    "LR"
+ ;
+       [ debugints
+@@ -5269,6 +5948,8 @@
+         MyXError  WimpBadOp
+         B       ExitWimp_noswitch
+         MakeErrorBlock WimpBadOp
++  ] ; :LNOT: CKernel
++
+ err_badpointer
+         MyXError  WimpBadPtrInR1
+         B       ExitWimp_noswitch
+@@ -5282,6 +5963,10 @@
+    ;    MOVVS   R14,#nullptr            ; CAN'T CLEAR THIS JUST BECAUSE V SET!
+    ;    STRVS   R14,redrawhandle
+ ;
++  [ CKernel ; debug
++        ; FIXME Don't forget the fonts, etc.
++        B       swi_done
++  |
+         Pull    "R1-R11"
+ return
+         LDR     R14,[sp],#4
+@@ -5339,14 +6024,20 @@
+         Debug   err,"SWI #, task",R11,#taskhandle
+ 
+         Pull    "PC",VS
++  ] ; CKernel
+ 
+ ExitWimp2
++  [ CKernel ; Exit Wimp passing output values in r0-r6
++        STM     sp, {r1-r6}
++        B       swi_done
++  |
+         LDR     R14,polltaskhandle      ; ensure no illegal task swaps occur!
+         Task    R14,,"ExitWimp2"
+ ;
+         ADD     sp,sp,#6*4              ; leave R1-R6 as on exit
+         Pull    "R7-R11"
+         B       return
++  ] ; CKernel
+ 
+ ;
+ ; jump table - contains branches to entry points
+@@ -5563,22 +6254,38 @@
+ 
+ err_badR0
+         MyXError  WimpBadSysInfo
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+         MakeErrorBlock WimpBadSysInfo
+ 
+ ;..............................................................................
+ 
+ sysinfo_TaskCount
+         LDR     R0,taskcount            ; R0 = number of active tasks
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_WimpMode
+         LDR     R0,currentmode          ; R0 = current desktop mode
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_SpriteSuffix
+         ADR     R0,romspr_suffix
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_DesktopState
+         LDR     R0,taskcount
+@@ -5586,11 +6293,19 @@
+         LDRNE   R0,commandflag
+         EORNES  R0,R0,#cf_active        ; R0=0 => command window active
+         MOVNE   R0,#1                   ; R0=1 => desktop vdu state set
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_WriteDir
+         LDR     R0,writeabledir         ; R0 = write direction
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_CurrentTask
+         LDR     R0,taskhandle           ; R0 = task handle
+@@ -5603,19 +6318,31 @@
+         MOVNE   R0,R14
+         MOVEQ   R0,#0                   ; setup meaningful task handle =0 if none, else current
+ ;
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_Swapping
+       [ Swapping
+         ADR     R0,swapping
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+       |
+         B       err_badR0
+       ]
+ 
+ sysinfo_Version
+         LDR     R0,=Module_Version
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+         LTORG
+ 
+ sysinfo_SystemFont
+@@ -5629,7 +6356,11 @@
+ 
+ sysinfo_ToolSprites
+         ADRL    R0,tool_areaCB
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_IconBarInt
+         ADRL    R0,iconbarhandle
+@@ -5638,7 +6369,11 @@
+         ADRL    R3,iconbarleft
+         ADRL    R4,iconbarright
+         STMIA   sp,{R1-R4}
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_textselection
+         MOV     R0,#-1                  ; fg always from icon's own colours
+@@ -5648,14 +6383,22 @@
+                     (WimpTextSelection_EffectCut:SHL:WimpTextSelection_DeleteEffectShift) :OR: \
+                     (WimpTextSelection_EffectClear:SHL:WimpTextSelection_MoveEffectShift)
+         STMIA   sp,{R1-R2}
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_dragging
+         LDRB    R0,drag_movelimit
+         LDR     R1,drag_timelimit
+ sysinfo_exitR0R1
+         STR     R1,[sp]
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_doubleclicks
+         LDRB    R0,doubleclick_movelimit
+@@ -5665,7 +6408,11 @@
+ sysinfo_3Dpatch
+       [ ThreeDPatch
+         LDR     R0,ThreeDFlags
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+       |
+         B       err_badR0
+       ]
+@@ -5682,7 +6429,11 @@
+ 
+ sysinfo_appspace
+         LDR     R0,orig_applicationspacesize
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_messages
+         ADR     R0,headpointer
+@@ -5690,7 +6441,11 @@
+         ADRL    R1,lastpointer
+         B       sysinfo_exitR0R1
+       |
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+       ]
+ 
+ sysinfo_memclaim
+@@ -5698,14 +6453,22 @@
+         ADRL    R0,memory_claims
+         LDR     R0,[R0]
+       ]
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_transtables
+         LDR     R0,tpixtable_at
+         ADRL    R2,tool_plotparams
+         LDR     R1,[R2]
+         STMIA   sp,{R1-R2}
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ sysinfo_baseofsprites
+       [ SpritePriority
+@@ -5737,7 +6500,11 @@
+       |
+         MOV     R0, #0
+       ]
++  [ CKernel
++        MOV     PC, lr
++  |
+         B       ExitWimp
++  ]
+ 
+ ;;-----------------------------------------------------------------------------
+ ;; Command Window handling
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp02 ckernel/Desktop/Wimp/s/Wimp02
+--- orig/Desktop/Wimp/s/Wimp02	2023-01-14 12:42:27.000000000 +0100
++++ ckernel/Desktop/Wimp/s/Wimp02	2024-11-23 23:19:35.260000000 +0100
+@@ -311,7 +311,14 @@
+         BLVC    markinitialised         ; increase 'task version number'
+         BVS     exitinit
+         Debug   task1,"First task:",#taskhandle
+-;
++
++  [ CKernel
++        LDR     R0, taskhandle
++        LDR     R14, [wsptr,R0]
++        LDR     R0, root_task
++        STR     R0, [R14, #task_slotptr]
++  ]
++
+         MOV     R0,#-1
+         SWI     XTerritory_WriteDirection
+         MOVVS   R0,#WriteDirection_LeftToRight
+@@ -508,7 +515,9 @@
+ 
+ skipupcall
+         BL      setdefaulthandlers      ; looks at [handlerword]
++  [ :LNOT: CKernel
+         BL      findpages               ; initialise free pool, if possible
++  ] ; CKernel
+ 
+         BVS     exitinit                ; DO THIS FIRST - MEMORY MAY MOVE!!!
+ ;
+@@ -537,6 +546,9 @@
+ rationalisememory
+         Debug   task1,"into rationalisememory"
+ 
++  [ CKernel
++        ; Free application memory?
++  |
+       [ :LNOT:Medusa
+         LDR     R14,freepool            ;; Wimp 1.89o onwards
+         CMP     R14,#nullptr            ;; don't bother if no free pool
+@@ -562,6 +574,7 @@
+         DebugE  task1,"exitinit with "
+         BVS     exitinit
+ ;
++  ] ; CKernel
+ 
+         MOV     R14,#nullptr            ; can't call this while redrawing!
+         STR     R14,redrawhandle
+@@ -591,7 +604,8 @@
+ ; handler and then exit.
+ 
+ CallEveryHandler Entry "R0-R1"
+-
++  [ :LNOT: CKernel
++  |
+         [ No32bitCode
+         MOV     R0,PC
+         TEQP    PC,#SVC_mode            ; back to SVC mode IRQs on
+@@ -603,11 +617,15 @@
+         MSR     CPSR_c,R1
+         ]
+         Push    "R0,LR"                 ; preserve SVC_R0 and SVC_R14
++  ] ; CKernel
+ 
+         ADR     R0,callback
+         MOV     R1,WsPtr                ; -> callback routine
+         SWI     XOS_AddCallBack
+ 
++  [ CKernel
++        EXIT
++  |
+         Pull    "R0,LR"
+         [ No32bitCode
+         TEQP    PC,R0                   ; back to original mode
+@@ -616,6 +634,7 @@
+         MSR     CPSR_c,R0
+         ]
+         Pull    "R0-R1,PC"              ; and then back to original handler
++  ] ; CKernel
+ 
+ ;..............................................................................
+ 
+@@ -3010,8 +3029,10 @@
+         STR     R14,taskhandle          ; points to task pointer array
+         STR     R14,nulltaskhandle
+ ;
++  [ :LNOT: CKernel ; go away, Stuart! (accessing privileged memory doesn't work)
+         LDR     R0,ptr_DomainId
+         STR     R14,[R0]                ; for Stuart
++  ]
+ ;
+ ; initialise message queue and iconbar window
+ ;
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp03 ckernel/Desktop/Wimp/s/Wimp03
+--- orig/Desktop/Wimp/s/Wimp03	2023-01-14 12:42:27.000000000 +0100
++++ ckernel/Desktop/Wimp/s/Wimp03	2024-12-06 15:39:52.630000000 +0100
+@@ -60,6 +60,41 @@
+         TEQ     R0,R14
+         LDREQ   R14,flagword
+         BEQ     pageintaskdone          ; DON'T RELOAD userblk if not nec.!!!
++
++  [ CKernel
++        ; Continue in another task
++        ; R0  current task handle
++        ; R14 new task handle
++
++        Log     "Switching from task "
++        LogNum  R0, 32
++        Log     " to "
++        LogNum  R14, 10
++
++        Push    "r0, r1, r9"
++
++        ; Leaving current task's slot
++        SWI     XOSTask_Finished
++
++        ; Return control to the controller task
++        LDR     r0, [wsptr, r0]
++        LDR     r0, [r0,#task_slotptr]
++        LDR     r1, controller_task
++
++        SWI     XOSTask_ChangeController
++
++        STR     R14, taskhandle
++        LDR     r14, [wsptr, r14]
++        LDR     R9, [R14,#task_slotptr]
++        SWI     XWimp_TaskSwitch
++        ; We are now in control of the new task
++
++        MOV     R0, R9
++        SWI     XOSTask_RunForTask
++
++        Pull    "r0, r1, r9"
++        ; Now running in new task's slot
++  |
+         Push    "R14"
+         LDR     R14,[wsptr,R14]
+         TST     R14,#task_unused
+@@ -67,6 +102,8 @@
+         Pull    "R14"
+         STR     R14,taskhandle
+         BL      mapslotin
++  ] ; CKernel
++
+         LDR     R14,taskhandle
+         LDR     R14,[wsptr,R14]
+         TST     R14,#task_unused        ; tasks are sometimes allowed
+@@ -75,7 +112,7 @@
+         Debug   task1,"Dead task paged in:",#taskhandle
+ 01
+       ]
+-        LDREQ   userblk,[R14,#task_registers+4*1]      ; get user R1
++        LDREQ   userblk,[R14,#task_userblk]
+         LDREQ   R14,[R14,#task_flagword]
+         STREQ   R14,flagword
+ pageintaskdone
+@@ -138,10 +175,42 @@
+         SUB     R5,R5,wsptr
+         LDR     R6,taskhandle          ; R6 = previous task handle
+         STR     R5,taskhandle
+-        LDR     userblk,[R14,#task_registers+4*1]
++        LDR     userblk,[R14,#task_userblk]
+         Debug   task1,"Switching to task",R5
+ ;
++  [ CKernel
++        Log     "Switching to task "
++        LogNum  R5, 32
++        Log     "from task "
++        LogNum  R6, 10
++
++        LDR     R5, [wsptr, R5]
++
++        Push    "r0, r1, r9"
++        LDR     R9, [R5, task_slotptr] ; For the later XWimp_TaskSwitch
++
++        ; Leaving current task's slot
++        SWI     XOSTask_Finished
++
++        ; Return control of previous task to the controller
++        LDR     r0, [wsptr, r6]
++        LDR     r0, [r0,#task_slotptr]
++        LDR     r1, controller_task
++
++        SWI     XOSTask_ChangeController
++
++        ; Switch to the new task's slot
++        SWI     XWimp_TaskSwitch
++        ; We are now in control of the new task
++
++        MOV     R0, R9
++        SWI     XOSTask_RunForTask
++
++        Pull    "r0, r1, r9"
++        ; Now running in new task's slot
++  |
+         BL      mapslotin               ; previous slot is already mapped out
++  ]
+ ;
+ ; if that was the single task, change mode now!
+ ; the rule is that the screen is reset unless the commandwindow is pending
+@@ -173,8 +242,6 @@
+ ;
+         B       taskisused
+ 
+-
+-
+ ;;-----------------------------------------------------------------------------
+ ;; Wimp_RegisterFilter - install/deinstall a filter routine
+ ;;
+@@ -452,11 +519,16 @@
+         ORR     R0,R0,R5,LSL #flag_versionbit
+         STR     R0,[R4,#task_flagword]          ; remember original flags
+         STR     R0,flagword
+-        STR     userblk,[R4,#task_registers+4*1]        ; and user R1
+-        STR     R2,[R4,#task_registers+4*2]             ; and target time
++
++        ; FIXME This seems to be the wrong way around, to me, SW
++        STR     userblk,[R4,#task_userblk]      ; and user R1
++        STR     R2,[R4,#task_idletime]          ; and target time
+ ;
+ ; save VFP context, lazily if possible
+ ;
++  [ CKernel
++        ; Will be dealt with by the kernel, eventually.
++  |
+         MOV     R0,#0
+         MOV     R1,#VFPSupport_ChangeContext_Lazy+VFPSupport_ChangeContext_AppSpace
+         SWI     XVFPSupport_ChangeContext
+@@ -464,6 +536,7 @@
+         Debug   fp,"VFP on Wimp_Poll entry",R0
+         STR     R0,[R4,#task_vfpcontext]
+         CLRV
++  ] ; CKernel
+ ;
+ ; check to see if there are any more outstanding parents
+ ;
+@@ -536,7 +609,7 @@
+         BL      powersave_tick
+         LDR     R14,taskhandle          ; get userblk back (may be corrupted)
+         LDR     R14,[wsptr,R14]
+-        LDR     userblk,[R14,#task_registers+4*1]
++        LDR     userblk,[R14,#task_userblk]
+ ;
+         MOV     R0,#1
+         BL      scanpollwords           ; scan high-priority tasks
+@@ -3398,7 +3471,7 @@
+         BNE     %FT02
+         TST     R14,#flag_pollidle
+         BEQ     returnnull
+-        LDR     R2,[R4,#task_registers+2*4]
++        LDR     R2,[R4,#task_idletime]
+         CMP     R0,R2
+         BPL     returnnull              ; time's up! (use PL not CS)
+ 02
+@@ -3425,6 +3498,14 @@
+ 
+ triggercallbacks
+         ; No null events to deliver, so try triggering callbacks
++  [ CKernel
++        SWI     XOSTask_Yield
++        ; TODO: Sleep a short time (one or two centiseconds, perhaps), then
++        ; check the poll words again. That should satisfy legacy programs.
++        ; For new programs, maybe allow Wimp_TaskSwitch to be called by
++        ; non-Wimp tasks, to trigger another check of the words (or a
++        ; specific Wimp task's word), asap.
++  |
+       [ UseLeaveOS
+         SWI     XOS_LeaveOS
+       |
+@@ -3439,6 +3520,7 @@
+         SWI     XOS_IntOn               ; callbacks will be triggered on exit
+       ]
+         SWI     XOS_EnterOS
++  ]
+         B       repollwimp
+ 
+ ;-----------------------------------------------------------
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp04 ckernel/Desktop/Wimp/s/Wimp04
+--- orig/Desktop/Wimp/s/Wimp04	2021-07-10 12:45:14.000000000 +0200
++++ ckernel/Desktop/Wimp/s/Wimp04	2024-11-04 09:36:13.810000000 +0100
+@@ -6462,12 +6462,40 @@
+ ;;-----------------------------------------------------------------------------
+ 
+ pointeroff
++  [ CKernel
++        ; Why not run a command, here?
++        ; Because, in general, commands don't have to return!
++        ; (Also because it gets run by the legacy manager task.)
++        ; (Do we really need to preserve flags?)
++        ; Taken from Pointer0_Code
++        EntryS  "R0,R11"
++        MOV     R0,#0
++        BL      int_set_pointer_shape
++        EXITS                           ; can't handle errors here
++zero_param DCB "0", 0
++        ALIGN
++  |
+         EntryS  "R0"
+         ADR     R0,ptr_off
+         SWI     XOS_CLI
+         EXITS                           ; can't handle errors here
++  ] ; CKernel
+ 
+ pointeron
++  [ CKernel
++        ; Why not run a command, here?
++        ; Because, in general, commands don't have to return!
++        ; (Do we really need to preserve flags?)
++        EntryS  "R0,R11"
++        ; Taken from Pointer1_Code
++        BL      readvduvars2            ; including screen size
++
++        ADRLVC  R2,ptr_default
++        MOVVC   R3,#1                   ; program shape 1, set ptr and palette
++        BLVC    setptr_shape            ; active point at top-left
++        BLVC    clearpointerwindow
++        EXITS                           ; can't handle errors here
++  |
+         EntryS  "R0"
+         ADR     R0,ptr_on
+         SWI     XOS_CLI
+@@ -6476,6 +6504,7 @@
+ ptr_off DCB     "Pointer 0", 0
+ ptr_on  DCB     "Pointer", 0
+         ALIGN
++  ] ; CKernel
+ 
+ 
+ ;;----------------------------------------------------------------------------
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp07 ckernel/Desktop/Wimp/s/Wimp07
+--- orig/Desktop/Wimp/s/Wimp07	2023-01-14 12:42:27.000000000 +0100
++++ ckernel/Desktop/Wimp/s/Wimp07	2024-12-05 23:17:59.410000000 +0100
+@@ -830,6 +830,28 @@
+ 
+ SWIWimp_StartTask
+         MyEntry "StartTask"
++
++  [ CKernel  ; noise!
++        MOV     R5, LR
++        Log "StartTask "
++        MOV r1, #0
++01
++        ldr     r2, [r0, r1]
++        cmp     r2, #32
++        addgt   r1, r1, #1
++        bgt     %BT01
++        SWI     XOSTask_LogString
++        Log     "\n"
++        SWI     XOSTask_Yield
++        MOV     LR, R5
++  ] ; CKernel
++
++  [ CKernel
++        ; Now anyone can start a task. If the Wimp is in use, this request will
++        ; have been delayed until now. (In reality, still a TODO)
++        MOV     R5, #nullptr
++        STR     R5, singletaskhandle ; It's 2024 - nothing single tasks in the Wimp
++  |
+ ;
+ ; you can only start a task if you are a live Wimp task yourself
+ ;
+@@ -839,6 +861,12 @@
+         LDRNE   R4,[wsptr,R5]                   ; check that parent is alive
+         TEQNE   R4,#task_unused                 ; note TEQ not TST !!!
+         MyXError  WimpCantTask,EQ
++  ] ; CKernel
++
++  [ CKernel
++        ; Not saving FP context here, will be done by the kernel
++        ; Although at this time that's still a TODO
++  |
+ ;
+ ; save FP registers on Wimp_StartTask if task knows about Wimp 2.23 onwards
+ ;
+@@ -855,6 +883,7 @@
+         Debug   fp,"VFP on Wimp_StartTask entry",R0
+         STR     R0,[R4,#task_vfpcontext]
+         Pull    "R0-R1"
++  ] ; CKernel
+ ;
+ ; find a spare task handle for the new task
+ ;
+@@ -891,15 +920,17 @@
+  [ CnP
+ 92
+  ]
+-;
++
++  [ :LNOT: CKernel
+         BL      mapslotout              ; map parent out of the way
+-;
++  ] ; CKernel
++
+         LDR     R14,taskSP
+         LDR     handle,polltaskhandle
+         STR     handle,[R14],#4         ; empty ascending stack
+         STR     R14,taskSP
+         SUB     R14,R5,wsptr
+-        STR     R14,taskhandle
++        STR     R14,taskhandle          ; taskhandle is now the new task
+ ;
+ ; we must mark the task used, so that ExitPoll can swap into it
+ ; Version number = 0 => task is not initialised
+@@ -915,6 +946,75 @@
+         STR     R14,handlerword
+         STR     R14,parentquithandler   ; must start application !!!
+         BL      setdefaulthandlers
++
++  [ CKernel
++        ; The parent task will be re-started at a later time, give
++        ; control of it back to the controller task now. This task
++        ; only controls one OSTask at a time.
++        SWI     XOSTask_Finished
++        LDR     R0, [wsptr, handle]
++        LDR     R0, [R0, #task_slotptr]
++        LDR     R1, controller_task
++        SWI     XOSTask_ChangeController
++
++        ; Spawn a task to run the program
++        ; handle (R10) contains the parent task handle
++        ; [taskhandle] is the new task's handle
++
++        ADR     R0, spawned
++        MOV     R1, #0          ; SP (must be multiple of 8)
++        LDR     R2, slotsize    ; no. of pages
++        MOV     R2, R2, LSL#12  ; ASSUMES 4k pages
++        STR     R2, [sp]
++        ADRL    R3, taskbuffer  ; Command (will be copied)
++        STR     R3, [sp, #4]
++        SWI     XOSTask_Spawn
++
++        ; Note: The registers passed to spawned will be the values
++        ; in r0 and on the stack up to r6, the ones read by XOSTask_Spawn
++        ; will be overwritten by the controller task.
++
++        Log     "Wimp Spawned task "
++        LogNum  R0, 32
++        LDR     R1, taskhandle   ; NOT NOISE!
++        LogNum  R1, 10
++        LDR     R2, [wsptr,R1] ; isn't this already in R5?
++        STR     R0, [R2,#task_slotptr]
++
++        MOV     R14, #0x23      ; I think task_userblk is used uninitialised
++        STR     R14, [R2, #task_userblk]
++
++        ; The spawned task, in its own slot, is blocked under
++        ; the control of this OSTask, it will be resumed when
++        ; control returns to the controller task.
++        ; Map in this new slot...
++        SWI     XOSTask_RunForTask
++
++        ; When the caller of StartTask returns (assuming it's running a
++        ; Wimp program), the handle should be in R0. Put it there now,
++        ; for when the new task calls Wimp_Poll(Idle) and therefore
++        ; ExitWimp_toparent.
++        LDR     R0, [wsptr, handle]
++        LDR     R0, [R0, #task_slotptr]
++        SUB     sp, sp, #svcr_size
++        MOV     R1, sp
++        SWI     XOSTask_GetRegisters
++        STR     R0, [R1]
++        SWI     XOSTask_SetRegisters
++        ADD     sp, sp, #svcr_size
++
++        ; OK, run the command by pretending it's the current wimp task
++        ; TODO: whatever the rest of this function sets up!
++        ; TODO: Trap OS_Exit to resume the caller (with r0 = 0)
++        ; TODO: When a recently started Wimp Task calls Wimp_Initialise,
++        ;       update the parent's r0 to contain the handle.
++        ; Or maybe I could do that now and zero it on OS_Exit?
++        ;   I need to read the above again!
++        ; ExitPoll does that stuff for me, I think
++        LDR     R0, taskhandle          ; expected by ExitPoll
++        STR     R0, polltaskhandle
++        B       ExitPoll_tochild
++  |
+ ;
+ ; allocate memory for the new task, then use callback to start it up
+ ; [taskbuffer..] contains the *command to execute
+@@ -932,6 +1032,7 @@
+         BIC     R14,R14,#2_11101111     ; get USR26/USR32, ARM, FIQs+IRQs on
+         STR     R14,[R5,#task_registers+4*16]
+ 
++  ] ; CKernel
+ 
+ ;
+ ; to be on the safe side, bring up a text window if any chars printed
+@@ -952,6 +1053,29 @@
+ ;         entered in USR mode (I hope!)
+ ;
+ 
++  [ CKernel
++spawned
++        ; In: r0 Wimp task handle, can safely be ignored
++        ;     r1 Memory to allocate for the slot
++        ;     r2 -> command line in RMA
++        MOVS    R0, R1  ; Don't care about handle, don't allocate 0 bytes
++        ADDNE   R0, R0, #&8000
++        SWINE   XOSTask_AppMemoryTop
++        ; Now we have memory...
++        MOV     R0, R2
++        MOV     R1, R2
++21
++        LDR     R14, [R1], #1
++        CMP     R14, #32
++        BPL     %BT21
++        SUB     R1, R1, R0
++        SWI     XOSTask_LogString
++
++        MOV     R0, R2
++        SWIVC   OS_CLI
++        SWI     OS_Exit
++  |
++
+ runthetask
+  [ CnP
+  ; r0 points to taskbuffer always
+@@ -998,6 +1122,7 @@
+         SWI     OS_CLI                  ; R0 --> OS_CLI command
+         SWI     OS_Exit                 ; exit back to Wimp
+  ]
++  ] ; CKernel
+ ;
+ ; set up default environment handlers (Wimp should replace them all)
+ ; only reset the ones corresponding to 0 bits in [handlerword]
+@@ -1194,8 +1319,10 @@
+ 
+         LDR     handle,taskhandle
+ ;
++  [ :LNOT: CKernel ; go away, Stuart! (accessing privileged memory doesn't work)
+         LDR     R14,ptr_DomainId
+         STR     handle,[R14]            ; for Stuart
++  ] ; CKernel
+ 
+         Debug   task,"Exit Poll: (old),task,reason =",#polltaskhandle,handle,R0
+ 
+@@ -1292,6 +1419,8 @@
+         STRNE   R0,[R4,#task_eventtime]
+       ]
+ 
++  [ :LNOT: CKernel
++
+ ; restore FP registers if they were saved (ie. save block present)
+ 
+         LDRNE   R0,[R4,#task_fpblock]
+@@ -1334,6 +1463,8 @@
+         TEQNE   R0,#0 ; We should already be on the null context, so only call if user does have a context to restore
+         DebugIf NE,fp,"VFP on Wimp_Poll exit",R0
+         SWINE   XVFPSupport_ChangeContext
++  ] ; :LNOT: CKernel
++
+         Pull    "R0-R1"
+ 
+       [ AutoHourglass
+@@ -1370,6 +1501,7 @@
+ ; ensure that R0 and the flags are passed back to the correct task
+ ; bodge: if same task, also keep R0 and flags now
+ ;
++  [ :LNOT: CKernel
+       [ No32bitCode
+         Push    "R0,PC"                 ; save R0 and flags
+         SETPSR  I_bit, R5               ; disable interrupts
+@@ -1397,6 +1529,7 @@
+         STRNE   R0,[R5,#task_registers+4*15]
+         STREQ   R0,[R5,#task_registers+4*16]
+       ]
++
+ ;
+ ; set up callback handler
+ ; NOTE: since the task is already paged in, its handlers are set up already
+@@ -1427,7 +1560,13 @@
+         MSR     CPSR_cf,R14             ; restore flags+ints, ready for exit
+       ]
+ ;
++  ] ; Not CKernel  ; No need for a callback to set R2 if the expected version is < whatever
++
++  [ CKernel
++        B       ExitWimp
++  |
+         B       ExitWimp_noswitch       ; pulls registers & exits to callback
++  ] ; CKernel
+ 
+ ;..............................................................................
+ 
+@@ -1436,6 +1575,7 @@
+ ; Should enter this code in SVC mode with Ints off
+ ; restore environment for new task
+ 
++  [ :LNOT: CKernel
+ callbackpoll
+       [ debugtask
+         Push    "R0,LR"
+@@ -1472,6 +1612,7 @@
+         NOP
+         LDR     lr_svc,[lr_svc,#15*4]
+         MOVS    PC,lr_svc                       ; exit to caller, restoring flags
++  ] ; Not CKernel
+ 
+ ;..............................................................................
+ 
+@@ -1681,6 +1822,19 @@
+ errtws_mustntuse        #       4  ;  +28  corrupted by text plotting code
+ 
+ SWIWimp_ReportError
++        Log "Report Error "
++        Push "r0,r1,r2"
++        LDR r1, [r0]
++        LogNum r1, 32
++        ADD r0, r0, #4
++99
++        LDRB r2, [r1], #1
++        TEQ r2, #0
++        TEQNE r2, #13
++        BNE %BT99
++        SUB r1, r1, r0
++        SWI XOSTask_LogString
++        Pull "r0,r1,r2"
+         MyEntry "ReportError"
+ ;
+         [ ErrorServiceCall
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp08 ckernel/Desktop/Wimp/s/Wimp08
+--- orig/Desktop/Wimp/s/Wimp08	2013-05-03 23:08:17.000000000 +0200
++++ ckernel/Desktop/Wimp/s/Wimp08	2024-11-18 19:43:06.370000000 +0100
+@@ -1719,6 +1719,9 @@
+ ;
+ 
+ mapslotin       ROUT
++  [ CKernel
++        BKPT    &A000
++  |
+         Push    "R1-R4,LR"
+ ;
+         LDR     R14,taskhandle
+@@ -1743,6 +1746,7 @@
+         BCC     %BT01
+ ;
+         Pull    "R1-R4,PC"
++  ] ; CKernel
+ 
+ ;
+ ; Entry:  R0 --> block suitable for passing to OS_SetMemMapEntries
+@@ -1750,6 +1754,9 @@
+ ;
+ 
+ mapin   ROUT
++  [ CKernel
++        BKPT    &A001
++  |
+         MOV     R2,#ApplicationStart
+ 
+ ; Entry:  R0 --> page map block
+@@ -1771,6 +1778,7 @@
+         SWI     XOS_SetMemMapEntries
+ ;
+         Pull    "R1,R3,PC"
++  ] ; CKernel
+ 
+ ;
+ ; mapslotout
+@@ -1780,6 +1788,9 @@
+ ;
+ 
+ mapslotout      ROUT
++  [ CKernel
++        BKPT    &A002
++  |
+         Push    "R1-R6,LR"
+ ;
+         LDR     R14,taskhandle
+@@ -1808,6 +1819,7 @@
+         BLNE    mapout                  ; NB do this afterwards!
+ ;
+         Pull    "R1-R6,PC"
++  ] ; CKernel
+ 
+ ;
+ ; Entry:  R0 --> block suitable for passing to OS_SetMemMapEntries
+@@ -1815,6 +1827,9 @@
+ ;
+ 
+ mapout  ROUT
++  [ CKernel
++        BKPT    &A003
++  |
+         Push    "R1-R3,LR"
+ ;
+         MOV     R2,#-1                  ; map out of the way
+@@ -1829,6 +1844,7 @@
+         SWI     XOS_SetMemMapEntries
+ ;
+         Pull    "R1-R3,PC"
++  ] ; CKernel
+ 
+ 
+ ;;----------------------------------------------------------------------------
+diff -x TokHelpSrc -Naur orig/Desktop/Wimp/s/Wimp08s ckernel/Desktop/Wimp/s/Wimp08s
+--- orig/Desktop/Wimp/s/Wimp08s	2016-05-23 23:53:13.000000000 +0200
++++ ckernel/Desktop/Wimp/s/Wimp08s	2024-11-09 12:39:02.290000000 +0100
+@@ -475,6 +475,9 @@
+ ; note that we use tempworkspace here
+ 
+ SWIWimp_TransferBlock  ROUT
++  [ CKernel
++        BKPT    &FA00
++  |
+         MyEntry "TransferBlock"
+ ;
+   Debug mjs4,"&&&Wimp_TransferBlock",R0,R1,R2,R3,R4
+@@ -794,7 +797,7 @@
+         MyXError  WimpBadTransfer
+         B         medusa_exit_trb
+         MakeErrorBlock WimpBadTransfer
+-
++  ] ; CKernel
+ 
+ ;
+ ; free pool set up on entry (unless application memory is already in use)
+@@ -813,6 +816,8 @@
+ ;                              else [freepool] --> free pool block
+ ;
+ 
++  ; I can probably comment out more of this, if not the whole file
++  [ :LNOT: CKernel
+ findpages       ROUT
+         Push    "R1-R11,LR"
+ ;
+@@ -841,68 +846,7 @@
+         CLRV
+ 
+         Pull    "R1-R11,PC"
+-;01
+-;
+-;;
+-;; if application space in use, we can't construct a free pool
+-;; but we must still read orig_memorylimit and orig_applicationspacesize
+-;;
+-;
+-;        MOV     R0,#ApplicationSpaceSize
+-;        MOV     R1,#0
+-;        SWI     XOS_ChangeEnvironment
+-;        MOVVC   R3,R1                           ; R3 --> real end of memory
+-;        STRVC   R3,orig_applicationspacesize
+-;;
+-;        MOVVC   R0,#MemoryLimit
+-;        MOVVC   R1,#0
+-;        SWIVC   XOS_ChangeEnvironment
+-;        STRVC   R1,orig_memorylimit
+-;;
+-;;
+-;        TEQ     R1,R3                   ; preserves V
+-;        Pull    "R1-R11,PC",NE          ; these must be equal on entry
+-;;
+-;        BLVC    testapplication         ; CC ==> space is in use
+-;        Pull    "R1-R11,PC",VS
+-;        Pull    "R1-R11,PC",CC          ; we'll get back to this later if used
+-;
+-;;
+-;; allocate a "free pool" block, with 12 bytes per page
+-;;
+-;        LDR     R3,npages
+-;        MOV     R3,R3,LSL #2            ; multiply by 12
+-;        ADD     R3,R3,R3,LSL #1
+-;        ADD     R3,R3,#4                ; leave room for terminator
+-;        BL      claimblock
+-;        STRVC   R2,freepool
+-;;
+-;; construct free pool array by calling OS_FindMemMapEntries
+-;;
+-;        MOVVC   R1,#ApplicationStart
+-;        STRVC   R1,freepoolbase         ; base address of free pages
+-;
+-;        LDRVC   R1,orig_applicationspacesize
+-;        BLVC    findfreepool
+-;        MOVVC   R1,#2                   ; protect against USR mode access
+-;        BLVC    setslotaccess
+-;;
+-;; I don't know what this is doing here!
+-;;
+-;        MOVVC   R14,#0
+-;        STRVCB  R14,memoryOK            ; it's had it by now anyway!
+-;;
+-;; now protect all these pages, keeping them just below orig_memlimit
+-;; and set MemoryLimit small
+-;;
+-;        MOVVC   R1,#ApplicationStart
+-;        BLVC    setmemsize              ; sets ACTUAL handlers (current task)
+-;;
+-;        LDRVC   R0,freepool
+-;        SWIVC   XOS_SetMemMapEntries
+-;
+-;        Pull    "R1-R11,PC"
+-
++  ] ; CKernel
+ 
+ ; In    R1 = application space size (one after end of free pool)
+ ;       R2 -> free pool page table
+@@ -1208,47 +1152,6 @@
+         STRVS   R0,[SP]
+         Pull    "R0,PC"
+ 
+-;;
+-;; Entry:  R2 --> slot block
+-;; Exit:   pages mapped to base of free pool
+-;;         page numbers put into free pool (lowest page last)
+-;;         [freepoolbase] updated
+-;;
+-;
+-;maptofreepool   ROUT
+-;        Push    "R1-R7,LR"
+-;;
+-;        CMP     R2,#nullptr
+-;        Pull    "R1-R7,PC",EQ           ; no block!
+-;;
+-;
+-;        LDR     R6,freepool
+-;        LDR     R7,freepoolpages        ; R7 = number of pages in free pool
+-;        ADD     R6,R6,R7,LSL #2
+-;        ADD     R6,R6,R7,LSL #3         ; R6 -> terminators of free pool
+-;        MOV     R0,R6                   ; R0 -> block for OS_SetMemMapEntries
+-;
+-;        LDR     R1,pagesize
+-;        LDR     R4,freepoolbase         ; R4 -> next address
+-;        MOV     R5,#2                   ; R5 = protection level
+-;01      LDR     R3,[R2],#12             ; R3 = page number
+-;        CMP     R3,#nullptr
+-;        SUBNE   R4,R4,R1
+-;        STMNEIA R6!,{R3,R4,R5}          ; page number, address, protection level
+-;        ADDNE   R7,R7,#1
+-;        BNE     %BT01
+-;
+-;
+-;        STR     R4,freepoolbase
+-;        STR     R7,freepoolpages
+-;        MOV     R14,#-1
+-;        STR     R14,[R6]                ; terminator
+-;
+-;
+-;        SWI     XOS_SetMemMapEntries
+-;
+-;        Pull    "R1-R7,PC"              ; don't alter memorylimit
+-
+ ;
+ ; mapslotin
+ ; all pages in a slot are put into the application space (&8000)

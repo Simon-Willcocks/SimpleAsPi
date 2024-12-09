@@ -1,0 +1,289 @@
+--- /dev/null	2024-11-13 19:27:12.703531271 +0100
++++ Env/ROOL/CKernel,feb	2024-10-31 19:02:45.410000000 +0100
+@@ -0,0 +1,33 @@
++| Copyright 2012 Castle Technology Ltd
++|
++| Licensed under the Apache License, Version 2.0 (the "License");
++| you may not use this file except in compliance with the License.
++| You may obtain a copy of the License at
++|
++|     http://www.apache.org/licenses/LICENSE-2.0
++|
++| Unless required by applicable law or agreed to in writing, software
++| distributed under the License is distributed on an "AS IS" BASIS,
++| WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++| See the License for the specific language governing permissions and
++| limitations under the License.
++|
++| Broadcom BCM2835 SOC
++|   Raspberry Pi (BCM2835-based board)
++|
++set Locale     UK
++set Keyboard   All
++| Hardware target
++set Machine    RPi
++| Software target
++set System     Ursula
++set UserIF     Raspberry
++set Display    PAL
++set ImageSize  5120K
++set HALSize    64K
++set Build      ROOL.CKernel
++set APCS       APCS-32
++set KernelType CKernel
++Unset LocaleList
++|
++Obey <Obey$Dir>.^.!Common
+--- /dev/null	2024-11-13 19:27:12.703531271 +0100
++++ Env/ROOL/CKernel.sh	2024-10-31 16:35:17.010000000 +0100
+@@ -0,0 +1,27 @@
++# Environment to build ROM for Raspberry Pi (BCM2835-based board)
++#
++# This script is applied to the current shell using the "." or "source" builtin shell commands.
++
++export LOCALE=UK
++export KEYBOARD=All
++export MACHINE=RPi
++export SYSTEM=Ursula
++export USERIF=Raspberry
++export DISPLAYTYPE=PAL
++export IMAGESIZE=5120K
++export HALSIZE=64K
++export BUILD=ROOL/CKernel
++export APCS=APCS-32
++
++# Get the location of this script when sourced from a variety of common Posix shells: bash, dash, ksh or zsh
++
++if [ -n "$BASH" ]; then script=${BASH_SOURCE[0]}
++elif [ -n "$TMOUT" ]; then script=${.sh.file}
++elif [ -n "$ZSH_NAME" ]; then script=${(%):-%x}
++elif [ ${0##*/} = dash ]; then x=$(lsof -p $$ -Fn0 | tail -1); script=${x#*n}
++fi
++
++BUILDDIR="$(cd "$(dirname "$(readlink -f "$script")")"/../.. && pwd)"
++export BUILDDIR
++
++. "$BUILDDIR/Env/!Common.sh"
+--- /dev/null	2024-11-13 19:27:12.703531271 +0100
++++ BuildSys/Components/ROOL/CKernel	2024-10-31 15:42:21.120000000 +0100
+@@ -0,0 +1,220 @@
++#------------------------------------------------------------------------------
++# Components file for CKernel build
++#------------------------------------------------------------------------------
++%BaseAddress   0xFC000000
++%Image         Build$ImageName
++%Log           Build$ImageName
++%Messages      Sources.Internat.Messages
++%Joiner        romlinker
++%JoinerFormat  romlinker
++%noimagesize
++
++# BBE Support
++BuildApps
++BuildExport
++BuildSystem           -options COMPONENTFILE=CKernel COMPONENTFILE2=Universal
++BuildEnvironment      -options ENVFILE=CKernel
++BuildModules
++BuildTools
++
++#------------------------------------------------------------------------------
++# some headers
++#
++HdrSrc                -type EXP
++#------------------------------------------------------------------------------
++# we need the following exported for swis.h generation
++# change the type to EXP
++#
++CompressPNG           -type EXP
++DDEUtils              -type EXP
++Econet                -type EXP
++HostFS                -type EXP
++SCSIDriver            -type EXP
++PCCardFS              -type EXP
++PDriver               -type EXP
++
++# kernel is first module in ROM seen as the UtilityModule
++HAL_BCM2835
++Kernel                -at 0xFC010000 -options ASFLAGS="-PD \"CMOS_Override SETS \\\"= FileLangCMOS,fsnumber_SDFS,CDROMFSCMOS,&C0\\\"\""
++Podule                -type EXP
++PCI
++FileSwitch
++ResourceFS
++TerritoryManager
++Messages
++MessageTrans
++UK
++WindowManager         -options OPTIONS=Ursula
++TaskManager
++# Desktop is the 11th module (default language)
++Desktop
++SharedRISC_OSLib
++BASIC105
++BASIC64
++BASICVFP
++BlendTable
++BufferManager
++ColourTrans
++Debugger
++#DADebug
++DeviceFS
++BCMSupport
++PortableHAL
++RTSupport
++USBDriver
++DWCDriver
++XHCIDriver
++VCHIQ
++BCMSound
++ScreenModes
++BCMVideo
++DisplayManager
++DMAManager
++DragASprite
++DragAnObj
++DrawMod
++BBCEconet
++FileCore
++ADFS                  -type EXP
++RamFS
++Filer
++FilerSWIs
++FSLock
++FontManager           
++FPEmulator            -options FPE_APCS=3/32bit FPEANCHOR=High
++VFPSupport
++Free
++Hourglass
++IIC
++International
++InternationalKeyboard -options KEYBOARD=All
++ITable
++NetFS
++NetFiler
++NetPrint
++NetStatus
++Obey
++Pinboard
++PipeFS
++RAMFSFiler
++ResourceFiler
++ROMFonts
++RTC
++ScreenBlanker
++ScrSaver              -options SCRSAVERAPP=No
++DualSerial
++SerialDeviceDriver    -type EXP
++SerialDeviceSupport
++#SerialMouse
++ShellCLI
++SoundDMA_HAL
++SoundControl
++SoundChannels
++SoundScheduler
++SpriteExtend
++SpriteUtils
++Squash
++BootFX
++SuperSample
++SystemDevices
++TaskWindow            
++WindowUtils
++FilterManager
++WaveSynth
++StringLib
++Percussion
++SharedSnd
++Filer_Action          
++DOSFS                 -options PCMCIA=TRUE
++SCSISwitch
++SCSISoftUSB
++SCSIFS
++SCSIFiler             -options ASFLAGS="-PD \"SCSI SETL {TRUE}\"" TEMPLATES=yes
++SDIODriver
++SDFS
++SDFSFiler             -options ASFLAGS="-PD \"SDFS SETL {TRUE}\"" TEMPLATES=yes
++SDCMOS
++ColourPicker
++DrawFile
++BootCommands
++WindowScroll
++MManager
++Internet
++Resolver
++Net
++BootNet
++Freeway
++ShareFS
++MimeMap
++LanManFS              -options OPTIONS=-DCHECK_ARMBOOT_EXISTS ROMSPRITES=TRUE
++EtherGENET
++EtherUSB
++DHCP                  -options OPTIONS=-DMINIMUM_OPTIONS_LENGTH=4
++Edit
++Draw
++Paint
++Alarm
++Chars
++Help2
++
++#
++# Toolbox Modules/Libs
++#
++tboxlib
++ToolboxLib            -type EXP
++Toolbox
++Window
++ToolAction
++Menu
++Iconbar
++ColourDbox
++ColourMenu
++DCS_Quit
++FileInfo
++FontDbox
++FontMenu
++PrintDbox
++ProgInfo
++SaveAs
++Scale
++Gadgets
++#
++# CDFS
++#
++CDFSDriver
++CDFSSoftSCSI
++CDFS
++CDFSFiler
++
++UnSqzAIF
++InetRes               -options TYPE=EmergencyUtils
++GPIO
++HeroNames
++
++# some libraries and bits
++#
++callx
++AsmUtils              -type EXP
++TCPIPheaders          -type EXP
++socklib
++inetlib
++unixlib
++xolib
++UnicodeLib            -type EXP
++ConfigLib             -type EXP
++OSLib
++DeskLib
++ModMallocLib
++PlainArgvLib
++RemoteDebug
++PDebug
++DDTLib
++Wild
++Trace
++DebugLib
++SyncLib
++SDIOLib
++
++ABRelease
++
++# end
