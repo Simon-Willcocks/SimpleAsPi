@@ -90,7 +90,7 @@ OSTask *do_OS_Module( svc_registers *regs );
 OSTask *run_module_swi( svc_registers *regs, int swi );
 // bool needs_legacy_stack( uint32_t swi )
 
-OSTask *execute_swi( svc_registers *regs, int number )
+void execute_swi( svc_registers *regs, int number )
 {
   // TODO: XOS_CallASWI( Xwhatever ) is clear, but
   // OS_CallASWI( Xwhatever ) or XOS_CallASWI( whatever ) is less so.
@@ -122,15 +122,19 @@ OSTask *execute_swi( svc_registers *regs, int number )
       regs->lr = regs->r[2];
     }
 
-    return 0;
+    break;
+
     }
   case OS_ServiceCall: // No-one is listening
-    return 0;
+    break;
+
   default:
     {
     OSTask *new_task = run_module_swi( regs, swi );
 
-    return new_task;
+    if (new_task == 0) break;
+
+    return_to_swi_caller( new_task, &new_task->regs, regs+1 );
     }
   }
 
@@ -142,7 +146,7 @@ OSTask *execute_swi( svc_registers *regs, int number )
     PANIC; // TODO
   }
 
-  return 0;
+  return_to_swi_caller( 0, regs, regs+1 );
 }
 
 void __attribute__(( noreturn )) startup()
