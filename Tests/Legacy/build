@@ -11,12 +11,12 @@ echo Modules: ${MODULES//:/ }
 # At least until it will be safely coped with.
 INITIAL_MODULES='QA7\0'
 
-INITIAL_MODULES+='LogToUART\0'
+#INITIAL_MODULES+='LogToUART\0'
 INITIAL_MODULES+='LEDBlink\0'
 INITIAL_MODULES+='GPUMailbox\0'
 INITIAL_MODULES+='BCM2835Display\0'
 INITIAL_MODULES+='BCM2835GrV\0'
-#INITIAL_MODULES+='LogToScreen\0' # After BCM2835GrV!
+INITIAL_MODULES+='LogToScreen\0' # After BCM2835GrV!
 
 INITIAL_MODULES+='UtilityModule\0'
 INITIAL_MODULES+='FileSwitch\0'
@@ -41,7 +41,7 @@ INITIAL_MODULES+='ColourTrans\0'
 ##INITIAL_MODULES+='DeviceFS\0'
 INITIAL_MODULES+='ScreenModes\0'
 #INITIAL_MODULES+='Portable\0'
-# INITIAL_MODULES+='DisplayManager\0'
+# INITIAL_MODULES+='DisplayManager\0' "The Display Manager does not support that combination of colours and resolution"
 INITIAL_MODULES+='DragASprite\0'
 INITIAL_MODULES+='DragAnObject\0'
 INITIAL_MODULES+='Draw\0'
@@ -59,10 +59,10 @@ INITIAL_MODULES+='Desktop\0'
 INITIAL_MODULES+='Free\0'
 INITIAL_MODULES+='International\0'
 INITIAL_MODULES+='InverseTable\0'
-INITIAL_MODULES+='NetFiler\0'
+# INITIAL_MODULES+='NetFiler\0'         # Filers seem to drop out for little reason
 INITIAL_MODULES+='Obey\0'
 INITIAL_MODULES+='Pinboard\0'
-INITIAL_MODULES+='RAMFSFiler\0'
+# INITIAL_MODULES+='RAMFSFiler\0'               # Filers seem to drop out for little reason
 INITIAL_MODULES+='ResourceFiler\0'
 INITIAL_MODULES+='ROMFonts\0'
 
@@ -217,6 +217,7 @@ FIRST=$( printf 0x%x $(( $( rom_object UtilityMod ) - 4 )) )
 
 LEGACIES="-Wl,--defsym=LegacyModulesList=$FIRST"
 LEGACIES+=" "$( symbol JTABLE )
+LEGACIES+=" "$( symbol TickOne )
 LEGACIES+=" "$( symbol despatchConvert )
 LEGACIES+=" "$( symbol defaultvectab )
 

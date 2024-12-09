@@ -1159,15 +1159,8 @@ OSTask *ostask_svc( svc_registers *regs, int number )
     resume = TaskOpSwitchToCore( regs );
     break;
   case OSTask_Tick:
-    // Woken tasks go into the runnable list
-if (0) {
-/*
-char tmp[4] = "T #\n";
-tmp[2] = '0' + workspace.core;
-Task_LogString( tmp, 4 );
-*/
-  *((uint32_t*) 0xfffff000) = 'a' + workspace.core;
-}
+    // Woken tasks go into the runnable list, this task continues
+    // (with interrupts disabled).
     sleeping_tasks_tick();
     break;
   case OSTask_MapFrameBuffer:
@@ -1729,6 +1722,7 @@ void signal_data_abort( svc_registers *regs, uint32_t fa, uint32_t ft )
 {
   // This routine horribly assumes a load of stuff, but will be replaced
   // by a much better system TODO
+  Task_Yield();
 
   send_number( (uint32_t) workspace.ostask.running, ':' );
   send_number( fa, ' ' );
@@ -1757,7 +1751,7 @@ void signal_data_abort( svc_registers *regs, uint32_t fa, uint32_t ft )
     }
   }
 
-asm ( "bkpt 1" );
+asm ( "pop {r7,r8}\n  bkpt 1" );
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
 

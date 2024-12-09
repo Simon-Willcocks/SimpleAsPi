@@ -84,10 +84,17 @@ void setup_system_heap()
     .usr32_access = 1 };
   map_memory( &map_system_heap );
 
+#ifdef DEBUG__POLLUTE_HEAPS
+  // Real hardware doesn't start up with zeroed memory, this
+  // might highlight some uninitialised variables bugs.
+  for (uint32_t* p = (void*) &system_heap_base;
+       ((uint8_t*) p) < &system_heap_top; p++) *p = 0xccddccdd;
+#endif
+
   // OS_Heap won't run until shared.legacy.owner has been set, but that's
   // a word in a heap...
   // This is far from ideal, but....
-  // TODO: Still needed, since called_during_initialisation check?
+  // TODO: Is this still needed, since called_during_initialisation check?
   struct heap {
     uint32_t magic;
     uint32_t free;      // Offset
@@ -116,6 +123,11 @@ void setup_shared_heap()
     .all_cores = 1,
     .usr32_access = 1 };
   map_memory( &map_shared_heap );
+
+#ifdef DEBUG__POLLUTE_HEAPS
+  for (uint32_t* p = (void*) &shared_heap_base;
+       ((uint8_t*) p) < &shared_heap_top; p++) *p = 0x55555555;
+#endif
 
   // OS_Heap won't run until shared.legacy.owner has been set, but that's
   // a word in a heap...
@@ -503,6 +515,9 @@ OSTask *do_OS_PlatformFeatures( svc_registers *regs )
 OSTask *do_OS_ReadSysInfo( svc_registers *regs )
 {
   switch (regs->r[0]) {
+  case 0: // Read the configured screen size in bytes
+    regs->r[0] = 8 << 20; // FIXME FIXME FIXME
+    break;
   case 8:
     regs->r[0] = 11; // New class of platform (CKernel)
     // Flags will include alignment options, but allow that to be
@@ -824,8 +839,9 @@ void execute_swi( svc_registers *regs, int number )
   case OS_Byte:
     {
       if (swi_regs->r[0] == 0xa1 && swi_regs->r[1] == 0x8c) {
-        swi_regs->r[2] = 3; // System font, 3D look.
-        // Alternative approach: set 1, and Wimp$Font... variables
+        // 8 = Homerton.Medium
+        // 12 = Trinity.Medium
+        swi_regs->r[2] = (2 * 12) + 1; // 3D look. Fixed font
       }
       else if (swi_regs->r[0] == 0xa1 && swi_regs->r[1] == 134) { // FontSize (in pages)
         swi_regs->r[2] = 32;
@@ -1052,6 +1068,53 @@ static void make_sprite_extend_workspace()
   map_memory( &map );
 }
 
+static void do_TickOne( uint32_t handle, uint32_t pipe )
+{
+  // No actual data is being transmitted, it's simply a mechanism
+  // to buffer a number of ticks so TickOne gets called the correct
+  // number of times.
+  // TickOne will be called in a privileged mode with interrupts
+  // disabled.
+  extern void TickOne();
+  for (;;) {
+    PipeSpace data = PipeOp_WaitForData( pipe, 1 );
+    while (data.available != 0) {
+      data = PipeOp_DataConsumed( pipe, 1 );
+      TickOne();
+    }
+  }
+}
+
+void __attribute__(( noreturn )) centiseconds()
+{
+  char buffer[32];
+  uint32_t pipe = PipeOp_CreateOnBuffer( buffer, sizeof( buffer ) );
+  uint32_t stack = ~7 & (uint32_t) (buffer+sizeof( buffer ));
+
+  uint32_t cs = Task_CreateService1( do_TickOne, stack, pipe );
+  assert( cs != 0 );
+  svc_registers regs;
+  regs.r[0] = cs;
+  regs.r[1] = pipe;
+  regs.r[12] = (uint32_t) &legacy_zero_page.OsbyteVars;
+  regs.spsr = 0x93; // SVC, interrupts disabled
+                        // The task needs to be able to access "zero page"
+  Task_ReleaseTask( cs, &regs );
+
+  PipeSpace space = PipeOp_WaitForSpace( pipe, 1 );
+
+  for (;;) {
+    Task_Sleep( 10 ); // 9? (more ticks)
+    if (space.available != 0) {
+      space = PipeOp_SpaceFilled( pipe, 1 );
+    }
+    else {
+      char text[] = "Skipped a centisecond tick!\n";
+      Task_LogString( text, sizeof( text ) - 1 );
+    }
+  }
+}
+
 void __attribute__(( noreturn )) startup()
 {
   // Running with multi-tasking enabled. This routine gets called
@@ -1070,6 +1133,11 @@ void __attribute__(( noreturn )) startup()
   setup_system_heap(); // System heap
   setup_shared_heap(); // RMA heap
   setup_MOS_workspace(); // Hopefully soon to be removed
+
+  uint32_t const tick_stack_size = 128;
+  uint32_t base = ~7 & (uint32_t) shared_heap_allocate( tick_stack_size );
+  uint32_t cs = Task_CreateTask0( centiseconds, tick_stack_size + base );
+  assert( cs != 0 );
 
   fill_legacy_zero_page();
 
