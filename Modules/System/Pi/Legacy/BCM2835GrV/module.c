@@ -426,11 +426,9 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
 static void __attribute__(( naked )) GraphicsV_handler( char c )
 {
   uint32_t *regs;
-  asm ( "udf 5" );
 
   asm ( "push { r0-r9, r12 }\n  mov %[regs], sp" : [regs] "=r" (regs) );
   asm ( "push {lr}" ); // Normal return address, to continue down the list
-  asm ( "udf #88" ); // FIXME remove
 
   register struct workspace *workspace asm( "r12" );
   handled result = C_GraphicsV_handler( regs, workspace );
