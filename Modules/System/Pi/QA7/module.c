@@ -419,23 +419,21 @@ void ticker( uint32_t handle, QA7 volatile *qa7 )
       (1 << 28) | // Timer enable
 
 #ifndef QEMU
-#ifndef QEMU_SLOW
-#ifndef QEMU_FAST
+#ifndef SLOW_TICKS
       38400; // 19.2 MHz clock, 38.4 MHz ticks, 1 ms
+#else
+      // Slow ticks
+      384000; // 19.2 MHz clock, 38.4 MHz ticks, 10 ms
 #endif
-#endif
-#endif
-#ifdef QEMU
+#else
+#ifndef SLOW_TICKS
       3840000; // 19.2 MHz clock, 38.4 MHz ticks, 100 ms ticks for qemu
-#endif
-#ifdef QEMU_SLOW
-      //38400000; // 19.2 MHz clock, 38.4 MHz ticks, 1s ticks, for qemu with cpu tracing
+#else
       384000000; // Ridiculously slow
 #endif
-#ifdef QEMU_FAST
-      384000; // 19.2 MHz clock, 38.4 MHz ticks, 10ms ticks, for qemu with int tracing on fast hardware
 #endif
-#endif
+
+#endif // NO_TICKER
 
   ensure_changes_observable(); // Wrote to QA7
 
