@@ -1366,7 +1366,8 @@ OSTask *do_OS_Module( svc_registers *regs )
       module *m = find_initialised_module( name );
       if (m == 0) {
 #ifdef DEBUG__SHOW_MODULE_INIT
-  Task_LogString( "Not found\n", 10 );
+  Task_LogString( "Not found: ", 11 );
+  Task_LogString( name, p-name );
 #endif
         return Error_ModuleNotFound( regs );
       }

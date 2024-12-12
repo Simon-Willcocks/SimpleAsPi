@@ -178,7 +178,7 @@ void __attribute__(( noreturn )) boot_with_stack( uint32_t core )
 
 #ifdef DEBUG__FOLLOW_OS_TASKS
 Task_LogString( "Initial idle task ", 18 );
-Task_LogHex( (uint32_t) workspace.ostask.idle );
+Task_LogHexP( workspace.ostask.idle );
 Task_LogNewLine();
 #endif
 
@@ -258,7 +258,8 @@ void __attribute__(( noinline )) save_task_state( svc_registers *regs )
 #endif
   if (running->regs.lr == 0) PANIC;
 
-  if (0 == (regs->spsr & 15)) {
+  if (0 == (regs->spsr & 15)
+   || 15 == (regs->spsr & 15)) {
     asm ( "mrs %[sp], sp_usr"
       "\n  mrs %[lr], lr_usr"
         : [sp] "=r" (running->banked_sp_usr)
@@ -292,16 +293,16 @@ OSTask *TaskOpRunForTask( svc_registers *regs )
 #ifdef DEBUG__FOLLOW_TASKS
   { char const text[] = "Task ";
   Task_LogString( text, sizeof( text )-1 ); }
-  Task_LogHex( (uint32_t) running );
+  Task_LogHexP( running );
   { char const text[] = " switching to slot of Task ";
   Task_LogString( text, sizeof( text )-1 ); }
   Task_LogHex( regs->r[0] );
   { char const text[] = ", slot ";
   Task_LogString( text, sizeof( text )-1 ); }
-  Task_LogHex( (uint32_t) client->slot );
+  Task_LogHexP( client->slot );
   { char const text[] = ", from slot ";
   Task_LogString( text, sizeof( text )-1 ); }
-  Task_LogHex( (uint32_t) running->slot );
+  Task_LogHexP( running->slot );
   Task_LogNewLine();
 #endif
 
@@ -450,10 +451,10 @@ OSTask *TaskOpFinished( svc_registers *regs )
 #ifdef DEBUG__FOLLOW_TASKS
   { char const text[] = "Task ";
   Task_LogString( text, sizeof( text )-1 ); }
-  Task_LogHex( (uint32_t) running );
+  Task_LogHexP( running );
   { char const text[] = " finished running for another Task, slot ";
   Task_LogString( text, sizeof( text )-1 ); }
-  Task_LogHex( (uint32_t) running->slot );
+  Task_LogHexP( running->slot );
   Task_LogNewLine();
 #endif
 
@@ -620,7 +621,7 @@ OSTask *IdleTaskYield( svc_registers *regs )
   if (resume != 0) {
 #ifdef DEBUG__FOLLOW_TASKS
     Task_LogString( "F ", 2 );
-    Task_LogHex( (uint32_t) resume );
+    Task_LogHexP( resume );
     Task_LogString( " ", 1 );
     Task_LogSmallNumber( workspace.core );
     Task_LogNewLine();
@@ -679,7 +680,7 @@ if (running == workspace.ostask.idle && resume != running) {
 Task_LogString( "Y ", 2 );
 if (running == workspace.ostask.idle)
   Task_LogString( "I ", 2 );
-Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogHexP( workspace.ostask.running );
 Task_LogString( " ", 1 );
 Task_LogSmallNumber( workspace.core );
 Task_LogNewLine();
@@ -716,7 +717,7 @@ OSTask *TaskOpSleep( svc_registers *regs )
 
 #ifdef DEBUG__FOLLOW_TASKS
 Task_LogString( "S ", 2 );
-Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogHexP( workspace.ostask.running );
 Task_LogString( " ", 1 );
 Task_LogSmallNumber( workspace.core );
 Task_LogNewLine();
@@ -783,7 +784,7 @@ Task_LogHex( task->regs.r[0] );
 Task_LogString( ", starting at ", 14 );
 Task_LogHex( regs->r[0] );
 Task_LogString( ", in slot ", 0 );
-Task_LogHex( (uint32_t) task->slot );
+Task_LogHexP( task->slot );
 Task_LogString( ": ", 2 );
 Task_LogHex( task->regs.r[1] );
 Task_LogString( ", ", 2 );
@@ -809,7 +810,7 @@ OSTask *TaskOpEndTask( svc_registers *regs )
 {
 #ifdef DEBUG__FOLLOW_OS_TASKS
 Task_LogString( "Ended task ", 0 );
-Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogHexP( workspace.ostask.running );
 Task_LogNewLine();
 #endif
   OSTask *running = workspace.ostask.running;
@@ -825,7 +826,7 @@ Task_LogNewLine();
 
 // FIXME
   regs->r[0] = 0xffffffff; // Maximum sleep
-  regs->lr = unexpected_task_return;
+  regs->lr = (uint32_t) unexpected_task_return;
   regs->spsr = 0x10;
   return TaskOpSleep( regs );
 
@@ -941,7 +942,7 @@ OSTask *TaskOpSwitchToCore( svc_registers *regs )
 
 #ifdef DEBUG__FOLLOW_TASKS
 Task_LogString( "Switch ", 0 );
-Task_LogHex( (uint32_t) workspace.ostask.running );
+Task_LogHexP( workspace.ostask.running );
 Task_LogString( " from ", 0 );
 Task_LogSmallNumber( workspace.core );
 Task_LogString( " to ", 0 );
@@ -1002,7 +1003,7 @@ Task_LogHex( page_base << 12 );
 Task_LogString( " at ", 4 );
 Task_LogHex( virt );
 Task_LogString( " in ", 4 );
-Task_LogHex( (uint32_t) workspace.ostask.running->slot );
+Task_LogHexP( workspace.ostask.running->slot );
 Task_LogNewLine();
 #endif
   regs->r[0] = map_device_pages( virt, page_base, pages );
@@ -1326,7 +1327,7 @@ void __attribute__(( naked, noreturn )) irq_handler()
     PROVE_OFFSET( banked_sp_usr, OSTask, 15 * 4 );
     PROVE_OFFSET( banked_lr_usr, OSTask, 16 * 4 );
 
-    register OSTask *volatile *head asm ( "lr" ) = &workspace.ostask.running;
+    register OSTask **head asm ( "lr" ) = &workspace.ostask.running;
     register OSTask *interrupted asm ( "lr" );
     register uint32_t mode asm ( "r1" );
     asm volatile (
@@ -1342,8 +1343,6 @@ void __attribute__(( naked, noreturn )) irq_handler()
     interrupted_task = interrupted;
     interrupted_mode = mode & 0x1f;
   }
-
-  svc_registers *regs = &interrupted_task->regs;
 
   if (interrupted_mode != 0x10) {
     // Legacy RISC OS code allows for SWIs to be interrupted, this is
@@ -1602,7 +1601,8 @@ OSPipe volatile *p = shared.ostask.pipes;
 
   dll_detach_OSTask( running );
 
-  if (0 == (resume->regs.spsr & 15)) {
+  if (0 == (resume->regs.spsr & 15)
+   || 15 == (resume->regs.spsr & 15)) {
     asm ( "msr sp_usr, %[sp]"
       "\n  msr lr_usr, %[lr]"
         :
@@ -1634,37 +1634,11 @@ void __attribute__(( naked )) prefetch_handler()
   __builtin_unreachable();
 }
 #else
-// Note: Different parameters to the "give up" version.
-OSTask *__attribute__(( noinline )) c_prefetch_handler( OSTask *running )
-{
-  // Report breakpoints to something
-  // Queue the (no-longer) running task to be saved or killed.
-  for (;;) { asm ( "wfi" ); }
-  PANIC;
-
-  OSTask *resume = 0;
-  assert( resume != running );
-
-  dll_detach_OSTask( running );
-
-  if (0 == (resume->regs.spsr & 15)) {
-    asm ( "msr sp_usr, %[sp]"
-      "\n  msr lr_usr, %[lr]"
-        :
-        : [sp] "r" (resume->banked_sp_usr)
-        , [lr] "r" (resume->banked_lr_usr) );
-  }
-
-  map_slot( resume->slot );
-
-  return resume;
-}
-
 void __attribute__(( naked )) prefetch_handler()
 {
   // Tasks with a prefetch exception cannot continue to run without
   // help, so don't bother storing the state on the stack, drop it
-  // straight into the OSTask...
+  // straight into the running OSTask...
 
   asm volatile (
     "\n.ifne .-prefetch_handler"
@@ -1674,7 +1648,6 @@ void __attribute__(( naked )) prefetch_handler()
   );
 
   register OSTask *volatile *head asm ( "lr" ) = &workspace.ostask.running;
-  register OSTask *running;
 
   asm volatile (
     "\n.ifne .-prefetch_handler-8" // 1 instruction to set lr
@@ -1686,32 +1659,32 @@ void __attribute__(( naked )) prefetch_handler()
     "\n  mrs r2, sp_usr"
     "\n  mrs r3, lr_usr"
     "\n  stmia lr!, {r0-r3}"
-    "\n  sub %[running], lr, %[off]"
-    : [running] "=r" (running)
-    , "=r" (head) // Corrupted
-    : "r" (head)
-    , [off] "i" (offset_of( OSTask, slot )) );
+    : "=r" (head) // Corrupted
+    : "r" (head) );
 
-  if (running != workspace.ostask.running) {
-    running = ((uint32_t) workspace.ostask.running - (uint32_t) running);
-  }
-  workspace.ostask.running = c_prefetch_handler( running );
+  OSTask *running = workspace.ostask.running;
 
-  register svc_registers *lr asm ( "lr" ) = &workspace.ostask.running->regs;
+  OSTask *resume = running->next;
+  if (resume == running) PANIC; // Idle task mustn't do this!
 
-  asm (
-    "\n  msr sp_usr, %[usrsp]"
-    "\n  msr lr_usr, %[usrlr]"
+  dll_detach_OSTask( running );
+
+  workspace.ostask.running = resume;
+
+  char const text[] = "Prefetch abort detected!\n";
+  Task_LogString( text, sizeof( text )-1 );
+
+  // TODO Queue the offending task to be dealt with by a handler
+  // (maybe schedule it immediately?)
+
+  // Reset the SVC stack, in case the breakpoint is from SVC mode
+  asm ( "msr sp_svc, %[reset_sp]"
     :
-    : [usrsp] "r" (workspace.ostask.running->banked_sp_usr)
-    , [usrlr] "r" (workspace.ostask.running->banked_lr_usr)
-  );
+    : [reset_sp] "r" ((&workspace.svc_stack)+1) );
 
-  asm (
-    "\n  ldm lr!, {r0-r12}"
-    "\n  rfeia lr // Restore execution and SPSR"
-    :
-    : "r" (lr) );
+  // return_to_swi_caller updates the local (sp_abt) stack pointer
+  void *stack_top = ((&workspace.ostask.abt_stack)+1);
+  return_to_swi_caller( resume, &resume->regs, stack_top );
 
   __builtin_unreachable();
 }
@@ -1755,7 +1728,8 @@ asm ( "pop {r7,r8}\n  bkpt 1" );
   OSTask *running = workspace.ostask.running;
   OSTask *resume = running->next;
 
-  if (0 == (resume->regs.spsr & 15)) {
+  if (0 == (resume->regs.spsr & 15)
+   || 15 == (resume->regs.spsr & 15)) {
       asm ( "msr sp_usr, %[sp]"
         "\n  msr lr_usr, %[lr]"
           :

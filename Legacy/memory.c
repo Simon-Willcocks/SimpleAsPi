@@ -388,7 +388,7 @@ void do_OS_DynamicArea( svc_registers *regs )
         regs->r[5] = da->max_size;
         regs->r[6] = da->handler;
         regs->r[7] = da->workspace;
-        regs->r[8] = da->name;
+        regs->r[8] = (uint32_t) da->name;
       }
       else {
         Error_UnknownDA( regs );
@@ -442,7 +442,7 @@ void do_OS_ChangeDynamicArea( svc_registers *regs )
 
   error_block *error = resize_da( da, resize_by_pages );
   if (error) {
-    regs->r[0] = error;
+    regs->r[0] = (uint32_t) error;
     regs->spsr |= VF;
     PANIC;
   }
@@ -505,13 +505,6 @@ void do_OS_Memory( svc_registers *regs )
 
       uint32_t base = 0xc0000000;
 
-      bool bufferable = 0 != (flags & 1);
-      bool cacheable = 0 != (flags & 2);
-      int policy = (flags >> 2) & 7;
-      bool double_map = 0 != (flags & 16);
-      bool set_access_privileges = 0 != (flags & 17);
-      int access_privileges = (flags >> 16) & 15;
-
   Task_LogString( "OS_Memory MapInIOPermanent, flags ", 0 );
   Task_LogHex( flags );
   Task_LogString( ", base ", 0 );
@@ -525,6 +518,13 @@ void do_OS_Memory( svc_registers *regs )
   Task_LogString( "IGNORED! Done by BCM2835Display.", 0 );
   Task_LogNewLine();
 /*
+      bool bufferable = 0 != (flags & 1);
+      bool cacheable = 0 != (flags & 2);
+      int policy = (flags >> 2) & 7;
+      bool double_map = 0 != (flags & 16);
+      bool set_access_privileges = 0 != (flags & 17);
+      int access_privileges = (flags >> 16) & 15;
+
       memory_mapping mapping = {
         .base_page = (phys) >> 12,
         .pages = bytes >> 12,

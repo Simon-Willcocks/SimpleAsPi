@@ -222,11 +222,11 @@ void initialise_PL011_uart( UART volatile *uart, uint32_t freq, uint32_t baud )
 
   uint32_t const eight_bits = (3 << 5);
   uint32_t const fifo_enable = (1 << 4);
-  uint32_t const parity_enable = (1 << 1);
-  uint32_t const even_parity = parity_enable | (1 << 2);
-  uint32_t const odd_parity = parity_enable | (0 << 2);
+  // uint32_t const parity_enable = (1 << 1);
+  // uint32_t const even_parity = parity_enable | (1 << 2);
+  // uint32_t const odd_parity = parity_enable | (0 << 2);
   uint32_t const one_stop_bit = 0;
-  uint32_t const two_stop_bits = (1 << 3);
+  // uint32_t const two_stop_bits = (1 << 3);
 
   uart->line_control = (eight_bits | one_stop_bit | fifo_enable);
 
@@ -234,7 +234,7 @@ void initialise_PL011_uart( UART volatile *uart, uint32_t freq, uint32_t baud )
   uart->interrupt_mask = 0;
 
   uint32_t const transmit_enable = (1 << 8);
-  uint32_t const receive_enable = (1 << 9);
+  // uint32_t const receive_enable = (1 << 9);
   uint32_t const uart_enable = 1;
 
   // No interrupts, for the time being, transmit only

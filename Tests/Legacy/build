@@ -11,12 +11,12 @@ echo Modules: ${MODULES//:/ }
 # At least until it will be safely coped with.
 INITIAL_MODULES='QA7\0'
 
-#INITIAL_MODULES+='LogToUART\0'
+#INITIAL_MODULES+='LogToScreen\0'
+INITIAL_MODULES+='LogToUART\0'
 INITIAL_MODULES+='LEDBlink\0'
 INITIAL_MODULES+='GPUMailbox\0'
 INITIAL_MODULES+='BCM2835Display\0'
 INITIAL_MODULES+='BCM2835GrV\0'
-INITIAL_MODULES+='LogToScreen\0' # After BCM2835GrV!
 
 INITIAL_MODULES+='UtilityModule\0'
 INITIAL_MODULES+='FileSwitch\0'

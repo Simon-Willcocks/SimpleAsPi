@@ -97,7 +97,7 @@ void open_display( uint32_t handle, workspace *ws )
   mailbox_request[i++] = 0x00048005; // Set depth
   mailbox_request[i++] = 4;
   mailbox_request[i++] = 0;
-  uint32_t *bits_per_pixel = mailbox_request + i;
+  // uint32_t *bits_per_pixel = mailbox_request + i;
   mailbox_request[i++] = 32;
   mailbox_request[i++] = 0x00048006; // Pixel order
   mailbox_request[i++] = 4;
@@ -167,7 +167,10 @@ void open_display( uint32_t handle, workspace *ws )
 
   uint32_t *screen = Task_MapFrameBuffer( base_page, pages );
 
-  Task_LogString( "Display ready\n", 0 );
+  { char const text[] = "Display ready ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHexP( screen );
+  Task_LogNewLine();
 
   for (;;) {
     queued_task client = Task_QueueWait( ws->queue );

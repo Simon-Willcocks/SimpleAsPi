@@ -38,7 +38,7 @@ static inline
 void __attribute__(( noreturn )) return_to_swi_caller( 
                         OSTask *task,
                         svc_registers *regs,
-                        uint32_t svc_sp );
+                        void *svc_sp );
 
 #define assert( x ) do { if (!(x)) asm ( "bkpt %[line]" : : [line] "i" (__LINE__) ); } while (false)
 
@@ -260,13 +260,13 @@ static inline bool push_controller( OSTask *task, OSTask *controller )
 #ifdef DEBUG__FOLLOW_CONTROLLERS
   {
   Task_LogString( "New controller for ", 19 );
-  Task_LogHex( (uint32_t) task );
+  Task_LogHexP( task );
   Task_LogString( " is ", 4 );
-  Task_LogHex( (uint32_t) controller );
+  Task_LogHexP( controller );
   Task_LogString( "... ", 4 );
   int i = 0;
   while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
-    Task_LogHex( (uint32_t) task->controller[i] );
+    Task_LogHexP( task->controller[i] );
     Task_LogString( " ", 1 );
     i++;
   }
@@ -292,12 +292,12 @@ static inline bool push_controller( OSTask *task, OSTask *controller )
 #ifdef DEBUG__FOLLOW_CONTROLLERS
   {
   Task_LogString( "Now controllers for ", 20 );
-  Task_LogHex( (uint32_t) task );
+  Task_LogHexP( task );
   Task_LogString( " are ", 5 );
   {
   int i = 0;
   while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
-    Task_LogHex( (uint32_t) task->controller[i] );
+    Task_LogHexP( task->controller[i] );
     Task_LogString( " ", 1 );
     i++;
   }
@@ -313,11 +313,11 @@ static inline bool pop_controller( OSTask *task )
 {
 #ifdef DEBUG__FOLLOW_CONTROLLERS
   Task_LogString( "Removing controller for ", 25 );
-  Task_LogHex( (uint32_t) task );
+  Task_LogHexP( task );
   int i = 0;
   while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
     Task_LogString( " ", 1 );
-    Task_LogHex( (uint32_t) task->controller[i] );
+    Task_LogHexP( task->controller[i] );
     i++;
   }
   Task_LogNewLine();
@@ -334,12 +334,12 @@ static inline bool pop_controller( OSTask *task )
 #ifdef DEBUG__FOLLOW_CONTROLLERS
   {
   Task_LogString( "Now controllers for ", 20 );
-  Task_LogHex( (uint32_t) task );
+  Task_LogHexP( task );
   Task_LogString( " are ", 5 );
   {
   int i = 0;
   while (task->controller[i] != 0 && i < MAX_CONTROLLERS) {
-    Task_LogHex( (uint32_t) task->controller[i] );
+    Task_LogHexP( task->controller[i] );
     Task_LogString( " ", 1 );
     i++;
   }
@@ -354,9 +354,9 @@ static inline OSTask *current_controller( OSTask *task )
 {
 #ifdef DEBUG__FOLLOW_CONTROLLERS
   Task_LogString( "Current controller for ", 23 );
-  Task_LogHex( (uint32_t) task );
+  Task_LogHexP( task );
   Task_LogString( " ", 1 );
-  Task_LogHex( (uint32_t) task->controller[0] );
+  Task_LogHexP( task->controller[0] );
   Task_LogNewLine();
 #endif
   return task->controller[0];
@@ -366,11 +366,11 @@ static inline void change_current_controller( OSTask *task, OSTask *new )
 {
 #ifdef DEBUG__FOLLOW_CONTROLLERS
   Task_LogString( "Change controller for ", 22 );
-  Task_LogHex( (uint32_t) task );
+  Task_LogHexP( task );
   Task_LogString( " from ", 6 );
-  Task_LogHex( (uint32_t) task->controller[0] );
+  Task_LogHexP( task->controller[0] );
   Task_LogString( " to ", 4 );
-  Task_LogHex( (uint32_t) new );
+  Task_LogHexP( new );
   Task_LogNewLine();
 #endif
   if (0 == task->controller[0]) PANIC;
@@ -381,11 +381,12 @@ static inline
 void __attribute__(( noreturn )) return_to_swi_caller( 
                         OSTask *task,
                         svc_registers *regs,
-                        uint32_t svc_sp )
+                        void *svc_sp )
 {
   if (task != 0) {
     assert( task == workspace.ostask.running );
-    if ((regs->spsr & 0x1f) == 0x10) {
+    if (((regs->spsr & 0x1f) == 0x10)
+     || ((regs->spsr & 0x1f) == 0x1f)) {
       asm ( "msr sp_usr, %[sp]"
         "\n  msr lr_usr, %[lr]"
         :

@@ -247,11 +247,11 @@ void *cb_array( int num, int size )
   for (int i = 0; i < num; i++) {
 #ifdef DEBUG__LOG_CB_ARRAYS
   if (i < 5) {
-  Task_LogHex( (uint32_t) &blocks[i * words] );
+  Task_LogHexP( &blocks[i * words] );
   Task_LogString( " ", 1 );
   Task_LogHex( offset );
   Task_LogString( " ", 1 );
-  Task_LogHex( (uint32_t) (&blocks[(i + 1) * words]) );
+  Task_LogHexP( (&blocks[(i + 1) * words]) );
   Task_LogNewLine();
   }
 #endif
@@ -269,7 +269,7 @@ void *cb_array( int num, int size )
   Task_LogString( " entries of ", 0 );
   Task_LogSmallNumber( size );
   Task_LogString( " bytes at ", 0 );
-  Task_LogHex( (uint32_t) result );
+  Task_LogHexP( result );
   Task_LogNewLine();
 #endif
 
@@ -312,8 +312,6 @@ void __attribute__(( noinline )) DoVduInit()
   asm ( "bl VduInit" : : "r" (r12) : "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr" );
 }
 
-static uint32_t const sizeofOsbyteVars = sizeof( legacy_zero_page.OsbyteVars );
-
 void fill_legacy_zero_page()
 {
   legacy_zero_page.Proc_IMB_Range = IMB_Range;
@@ -329,8 +327,8 @@ void fill_legacy_zero_page()
 #define CHECK_ZP_ALIGNED16( e ) assert( (15 & ZP_OFF( e )) == 0 )
 
   CHECK_ZP_ALIGNED( OsbyteVars.SerialFlags );
-  // Look for =ZeroPage+e in the source code, find the actual instruction in the
-  // disassambly, and look at the word being loaded.
+  // Look for =ZeroPage+e in the source code, find the actual instruction
+  // in the disassembly, and look at the word being loaded.
   // Or look for e.g. LDR R0, [R3, #BuffInPtrs]
   assert( 0xc4 == 0xa64 - 0x9a0 );
   assert( sizeof( legacy_zero_page.OsbyteVars ) == 0xc4 ); // 0xa64 - 0x9a0 );
@@ -369,7 +367,7 @@ void fill_legacy_zero_page()
   legacy_zero_page.OsbyteVars.Shadow = 1; // No shadow modes (0 turns on)
 
   // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
-  legacy_zero_page.vdu_drivers.ws.ScreenStart = 0xc0000000;
+  legacy_zero_page.vdu_drivers.ws.ScreenStart = (void*) 0xc0000000;
   legacy_zero_page.vdu_drivers.ws.YWindLimit = 1080;
   legacy_zero_page.vdu_drivers.ws.LineLength = 1920 * 4;
   legacy_zero_page.vdu_drivers.ws.DisplayScreenStart = 0xc0000000;
@@ -378,9 +376,6 @@ void fill_legacy_zero_page()
   legacy_zero_page.vdu_drivers.ws.DisplayLog2BPP = 5;
   // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
 }
-
-static uint32_t const ZPOFF_OsbyteVars = ZP_OFF( OsbyteVars );
-static uint32_t const ZPOFF_BuffInPtrs = ZP_OFF( BuffInPtrs );
 
 // This routine is for SWIs implemented in the legacy kernel, 0-255, not in
 // modules, in ROM or elsewhere. (i.e. routines that return using SLVK.)
@@ -425,7 +420,7 @@ run_riscos_code_implementing_swi( svc_registers *regs,
 }
 
 static inline
-void switch_stacks( uint32_t ftop, uint32_t ttop )
+void switch_stacks( void *ftop, void *ttop )
 {
   // Copy the stack above the current stack pointer to the new stack,
   // and set the stack pointer to the bottom of the new stack.
@@ -648,8 +643,8 @@ OSTask *do_OS_ConvertHex8( svc_registers *regs )
 
 void __attribute__(( naked, noreturn )) ResumeLegacy();
 
-static uint32_t const legacy_top = (uint32_t) &legacy_svc_stack_top;
-static uint32_t const std_top = (uint32_t) ((&workspace.svc_stack)+1);
+static svc_registers *const legacy_top = &legacy_svc_stack_top;
+static void *const std_top = ((&workspace.svc_stack)+1);
 
 void execute_swi( svc_registers *regs, int number )
 {
@@ -673,9 +668,9 @@ void execute_swi( svc_registers *regs, int number )
   bool generate_error = (number == swi);
 
   svc_registers *swi_regs = regs;
-  svc_registers *top_legacy_regs = (&legacy_svc_stack_top) - 1;
+  svc_registers *top_legacy_regs = legacy_top - 1;
 
-  bool top_swi = (std_top == ((uint32_t)(regs + 1)));
+  bool top_swi = (std_top == (regs + 1));
   bool legacy_swi = needs_legacy_stack( swi );
 
   if (legacy_swi && top_swi && legacy) {
@@ -692,9 +687,9 @@ void execute_swi( svc_registers *regs, int number )
 #endif
     switch_stacks( std_top, legacy_top );
 
-    if ((uint32_t)(regs + 1) != std_top) PANIC;
+    if ((regs + 1) != std_top) PANIC;
     swi_regs = top_legacy_regs;
-    if ((uint32_t)(swi_regs + 1) != legacy_top) PANIC;
+    if ((swi_regs + 1) != legacy_top) PANIC;
   }
 
   // TODO: XOS_CallASWI( Xwhatever ) is clear, but
@@ -763,6 +758,7 @@ void execute_swi( svc_registers *regs, int number )
         error_block const *err = (void*) swi_regs->r[0];
         if (err->code == 0) {
           char const text[] = "Resetting SVC stack and entering module at ";
+          Task_LogString( text, sizeof( text )-1 );
           Task_LogHex( swi_regs->r[1] );
           Task_LogString( ", ", 2 );
           Task_LogHex( swi_regs->r[2] );
@@ -793,6 +789,7 @@ void execute_swi( svc_registers *regs, int number )
 
   case OS_GetEnv:
     {
+      // Leaving the warning below to highlight the TODO
       swi_regs->r[0] = (uint32_t*) "This should be the command";
       swi_regs->r[1] = 0x400000; // FIXME
       swi_regs->r[2] = 200; // FIXME
@@ -894,8 +891,9 @@ void execute_swi( svc_registers *regs, int number )
 #endif
       }
       else if (swi < 256) { // OS_WriteI
-        extern uint32_t despatchConvert;
-        run_riscos_code_implementing_swi( swi_regs, swi, &despatchConvert );
+        extern void despatchConvert();
+        uint32_t code = (uint32_t) despatchConvert;
+        run_riscos_code_implementing_swi( swi_regs, swi, code );
       } // Conversion SWIs
       else if (swi < 512) {
         uint32_t entry = JTABLE[OS_WriteC];
@@ -924,7 +922,7 @@ void execute_swi( svc_registers *regs, int number )
    && (swi_regs->spsr & VF) != 0) {
     // FIXME: TENTATIVE
 Task_LogString( "Legacy error: ", 14 );
-Task_LogString( swi_regs->r[0] + 4, 0 );
+Task_LogString( (char*) swi_regs->r[0] + 4, 0 );
 Task_LogNewLine();
     uint32_t entry = JTABLE[OS_CallAVector];
     run_riscos_code_implementing_swi( swi_regs, OS_CallAVector, entry );
@@ -1007,28 +1005,28 @@ Task_LogNewLine();
     // Here is where switching to and from the legacy task under
     // program control is dealt with.
     // For interrupts in SVC mode (yuck!), see ResumeLegacy.
-    if (legacy && swi_regs + 1 != std_top) {
+    if (legacy && (swi_regs + 1) != std_top) {
       // Legacy task has been blocked, we'll need to restore the stack
       // before it can continue.
       assert( shared.legacy.blocked_sp == 0 );
       { char const text[] = "legacy task blocked ";
       Task_LogString( text, sizeof( text )-1 ); }
-      Task_LogHex( shared.legacy.blocked_sp );
+      Task_LogHexP( shared.legacy.blocked_sp );
       { char const text[] = " -> ";
       Task_LogString( text, sizeof( text )-1 ); }
       shared.legacy.blocked_sp = swi_regs + 1;
-      Task_LogHex( shared.legacy.blocked_sp );
+      Task_LogHexP( shared.legacy.blocked_sp );
       Task_LogNewLine();
     }
     assert( resume != running );
     assert( resume == workspace.ostask.running );
-    uint32_t stack = std_top;
+    void *stack = std_top;
     if (resume == shared.legacy.owner
      && 0 != shared.legacy.blocked_sp
-     && ResumeLegacy != resume->regs.lr) { // Not return from interrupt
+     && ResumeLegacy != (void*) resume->regs.lr) { // Not return from interrupt
       { char const text[] = "legacy task released ";
       Task_LogString( text, sizeof( text )-1 ); }
-      Task_LogHex( shared.legacy.blocked_sp );
+      Task_LogHexP( shared.legacy.blocked_sp );
       Task_LogNewLine();
 
       stack = shared.legacy.blocked_sp;
@@ -1068,37 +1066,87 @@ static void make_sprite_extend_workspace()
   map_memory( &map );
 }
 
-static void do_TickOne( uint32_t handle, uint32_t pipe )
+static void do_TickOnes( uint32_t handle, uint32_t pipe )
 {
   // No actual data is being transmitted, it's simply a mechanism
   // to buffer a number of ticks so TickOne gets called the correct
   // number of times.
   // TickOne will be called in a privileged mode with interrupts
   // disabled.
-  extern void TickOne();
   for (;;) {
     PipeSpace data = PipeOp_WaitForData( pipe, 1 );
     while (data.available != 0) {
       data = PipeOp_DataConsumed( pipe, 1 );
-      TickOne();
+      Task_LogString( "T", 1 );
+      extern void TickOne(); // Corrupts r12
+      register void *ip asm ( "r12" ) = &legacy_zero_page.OsbyteVars;
+      asm volatile ( "bl TickOne"
+             : "=r" (ip)
+             : [tick] "m" (TickOne)
+             , "r" (ip)
+             : "r0", "r1", "r2", "r3", "lr", "cc" );
+#if 0
+      // My version of what TickOne does...
+      // Some of these things will call legacy SWIs, which might take
+      // a while...
+
+      legacy_zero_page.MetroGnome++;
+      legacy_zero_page.OsbyteVars.CentiCounter++;
+      if (0 == ++*(uint32_t*) &legacy_zero_page.OsbyteVars.IntervalTimer) {
+        if (255 == legacy_zero_page.OsbyteVars.IntervalTimer[5]++) {
+          char const text[] = "OS_GenerateEvent Event_IntervalTimer\n";
+          Task_LogString( text, sizeof( text )-1 );
+        }
+      }
+      // CentiSecondTick
+      if (0 != legacy_zero_page.KeyWorkSpace.InkeyCounter) {
+        --legacy_zero_page.KeyWorkSpace.InkeyCounter;
+      }
+      if (legacy_zero_page.KeyWorkSpace.CurrKey != 0xff) {
+        char const text[] = "Autorepeat code goes here!\n";
+        Task_LogString( text, sizeof( text )-1 );
+        // See RiscOS/Sources/Kernel/s/PMF/key
+      }
+      // 64bits, so easy...
+      legacy_zero_page.OsbyteVars.RealTime++;
+      if (legacy_zero_page.OsbyteVars.TimerState == 5)
+        legacy_zero_page.OsbyteVars.TimerBeta = 
+          legacy_zero_page.OsbyteVars.TimerAlpha+1;
+      else
+        legacy_zero_page.OsbyteVars.TimerAlpha = 
+          legacy_zero_page.OsbyteVars.TimerBeta+1;
+      legacy_zero_page.OsbyteVars.TimerState ^= 15;
+
+      register uint32_t e asm( "r10" ) = 28; // TickerV
+      asm ( "svc %[swi]" 
+         :
+         : [swi] "i" (OS_CallAVector)
+         , "r" (e)
+         );
+#endif
+      Task_LogString( "t", 1 );
     }
   }
 }
 
 void __attribute__(( noreturn )) centiseconds()
 {
+asm( "svc 0x66666" );
   char buffer[32];
   uint32_t pipe = PipeOp_CreateOnBuffer( buffer, sizeof( buffer ) );
-  uint32_t stack = ~7 & (uint32_t) (buffer+sizeof( buffer ));
 
-  uint32_t cs = Task_CreateService1( do_TickOne, stack, pipe );
+  uint32_t const tick_one_stack_size = 240;
+  uint32_t base = (uint32_t) shared_heap_allocate( tick_one_stack_size );
+  uint32_t stack = ~7 & (base + tick_one_stack_size);
+
+  uint32_t cs = Task_CreateService1( do_TickOnes, stack, pipe );
   assert( cs != 0 );
+  PipeOp_SetReceiver( pipe, cs );
   svc_registers regs;
-  regs.r[0] = cs;
-  regs.r[1] = pipe;
-  regs.r[12] = (uint32_t) &legacy_zero_page.OsbyteVars;
-  regs.spsr = 0x93; // SVC, interrupts disabled
+  Task_GetRegisters( cs, &regs );
                         // The task needs to be able to access "zero page"
+                        // It should use this task's stack, though
+  regs.spsr = 0x9f; // System32 mode, interrupts disabled
   Task_ReleaseTask( cs, &regs );
 
   PipeSpace space = PipeOp_WaitForSpace( pipe, 1 );
@@ -1134,7 +1182,7 @@ void __attribute__(( noreturn )) startup()
   setup_shared_heap(); // RMA heap
   setup_MOS_workspace(); // Hopefully soon to be removed
 
-  uint32_t const tick_stack_size = 128;
+  uint32_t const tick_stack_size = 128; // regs, buffer & a bit more
   uint32_t base = ~7 & (uint32_t) shared_heap_allocate( tick_stack_size );
   uint32_t cs = Task_CreateTask0( centiseconds, tick_stack_size + base );
   assert( cs != 0 );
@@ -1194,7 +1242,7 @@ void __attribute__(( naked, noreturn )) ResumeLegacy()
   // We know that the I flag was clear when the task was interrupted, because
   // it wouldn't have been interrupted!
 
-  register uint32_t **legacy_sp asm( "lr" ) = &shared.legacy.sp;
+  register void **legacy_sp asm( "lr" ) = &shared.legacy.sp;
   asm ( "ldr sp, [lr]"
 
     "\n  push { r0 }"           // Now 4 words on the stack
@@ -1224,10 +1272,12 @@ void interrupting_privileged_code( OSTask *task )
   // TODO: Check here if the legacy stack is exhausted. If it is, there's
   // probably an interrupt that's stuck on incorrectly, I think.
 
-  shared.legacy.sp -= 3;
-  shared.legacy.sp[0] = old_legacy_sp;
-  shared.legacy.sp[1] = svc_lr;
-  shared.legacy.sp[2] = task->regs.lr;
+  uint32_t *stack = shared.legacy.sp;
+  stack -= 3;
+  shared.legacy.sp = stack;
+  stack[0] = old_legacy_sp;
+  stack[1] = svc_lr;
+  stack[2] = task->regs.lr;
 
   // Now, when the task resumes, make it run our code to restore the
   // privileged state.

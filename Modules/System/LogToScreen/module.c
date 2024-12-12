@@ -111,7 +111,7 @@ static inline
 void show_char( uint32_t *topleft, int x, int y, char c, uint32_t fg )
 {
   if (c < 32 || c >= 128) c = '?'; // asm ( "bkpt 77" ); // c = 32;
-  uint8_t *row = HardFont[c-32];
+  uint8_t const *row = HardFont[c-32];
   uint32_t *cell = topleft + 1920 * y * 8 + 8 * x;
   for (int i = 0; i < 8; i++) {
     for (int j = 7; j >= 0; j--) {
@@ -218,7 +218,14 @@ static inline uint32_t rgb( int col )
 void start_log( uint32_t handle, workspace *ws )
 {
   // Wait until screen mapped. Assuming HD at 0xc0000000.
-  asm ( "swi 0x20c0" );
+  // Don't assume screen module initialise yet
+  for (;;) {
+    register error_block const *e asm( "r0" );
+    asm ( "swi 0x20c0"
+      "\n  movvc r0, #0"
+      : "=r" (e) );
+    if (e != 0) Task_Yield(); else break;
+  }
 
   core_info cores = Task_Cores();
 

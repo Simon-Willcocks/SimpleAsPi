@@ -873,7 +873,41 @@ typedef struct {
   uint32_t UpCallHan_ws;
   uint32_t UpCallHan;
   uint32_t ROMModuleChain; //  pointer to head of ROM module chain
-  uint8_t KeyWorkSpace[0x200];          // +0590
+  union {
+    struct {
+      uint32_t CurrKey;
+      uint32_t OldKey;
+      uint8_t KbId;
+      uint8_t LastKbId;
+      uint8_t AutoRepeatCount;
+      uint8_t Debouncing;
+
+      uint8_t MouseButtons;
+      uint8_t PendingAltType;
+      uint8_t LastLED;
+      uint8_t MouseType;
+
+      uint8_t MouseReporting;
+      uint8_t NoDebounce;
+      uint8_t res0[2];
+
+      uint32_t InkeyCounter;
+      uint32_t MouseX;
+      uint32_t MouseY;
+      uint32_t SoftKeyPtr;
+      uint32_t MouseXMult;
+      uint32_t MouseYMult;
+      uint32_t KeyVec;
+      uint32_t MouseAltX;
+      uint32_t MouseAltY;
+      uint32_t MouseBounds[4];
+
+      uint8_t KeysDown[0x300/8];
+
+      // etc.
+    };
+    uint8_t space[0x200];
+  } KeyWorkSpace;          // +0590
 
   cba_head *ChocolateCBBlocks; //  -> quick access blocks for Callback          +0790
   cba_head *ChocolateSVBlocks; //  -> quick access blocks for software vectors

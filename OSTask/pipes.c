@@ -18,10 +18,27 @@
 
 typedef struct OSPipe OSPipe;
 
-/* Initial implementation of pipes:
- *  4KiB each
- *  Located at top of bottom MiB (really needs fixing next!)
- *  debug pipe a special case, mapped in top MiB
+/* Improved implementation.
+ * Type 1:
+ *      Memory owned by pipe
+ *      Whole number of pages
+ *      Doubly mapped, so any access is contiguous in virtual memory
+ *      Good for:
+ *              File system data blocks
+ *              Data streams of fixed or variable sized messages
+ *
+ * Type 2:
+ *      Memory owned by creating slot
+ *      Any size other than zero (not exceeding slot area, obvs.)
+ *      Singly mapped; space/data only reported to the end of the area?
+ *              (Try very hard not to overflow the end!)
+ *      Slot memory will be marked as pipe locked, so it can't be reallocated
+ *      Good for:
+ *              areas to read files into,
+ *              small buffers of bytes,
+ *              not needing data at all (synchronisation)
+ *
+ *      TODO: Type 2 in type 1 pipes. Say, a line from a text file, maybe?
  */
 
 struct OSPipe {
@@ -34,7 +51,7 @@ struct OSPipe {
   uint32_t receiver_waiting_for; // Non-zero if blocked
   uint32_t receiver_va; // Zero if not allocated
 
-  uint32_t memory;      // In slot memory (including pipes?)
+  uint32_t memory;      // Physical, if owner == 0, virtual otherwise
   OSTaskSlot *owner;    // NULL, if memory is owned by the pipe
   uint32_t max_block_size;
   uint32_t max_data;
@@ -111,6 +128,7 @@ OSTask *PipeCreate( svc_registers *regs )
   uint32_t allocated_mem = regs->r[3];
 
   OSTask *running = workspace.ostask.running;
+  OSTaskSlot *slot = running->slot;
 
   if (max_data != 0 && max_block_size > max_data) {
     return Error_PipeCreationError( regs );
@@ -141,27 +159,8 @@ OSTask *PipeCreate( svc_registers *regs )
     pipe->memory = pipe->memory << 12;
   }
   else {
-    pipe->owner = running->slot;
-
-    PANIC;
-#if 0
-    physical_memory_block block = Kernel_physical_address( allocated_mem, running->slot );
-
-    if (memory_block_size( block ) == 0) {
-      PANIC;
-    }
-    // FIXME: this should be an error to return
-    if (!(memory_block_size( block ) != 0)) PANIC;
-
-    uint32_t offset = allocated_mem - memory_block_virtual_base( block );
-    if (!(allocated_mem >= memory_block_virtual_base( block ))) PANIC; // Otherwise the memory is not in that block!
-    pipe->memory = offset + memory_block_physical_base( block );
-    if (offset + max_block_size > memory_block_size( block )) {
-      // FIXME: This is a memory leak of the pipe in the RMA
-      PANIC;
-      return PipeOp_CreationError();
-    }
-#endif
+    // FIXME Check if owner owns memory, either in slot or pipe area.
+    pipe->owner = slot;
   }
 
   // The following will be updated on the first blocking calls
@@ -356,6 +355,13 @@ static void set_sender_va( OSTaskSlot *slot, OSPipe *pipe )
 {
   if (pipe->memory == 0) PANIC;
 
+  if (pipe->owner != 0) {
+    if (pipe->owner == slot) {
+      pipe->sender_va = pipe->memory;
+    }
+    else PANIC;
+  }
+
   if (workspace.ostask.log_pipe == pipe) PANIC;
 
   if (!insert_pipe_in_gap( slot, pipe, true )) {
@@ -379,6 +385,13 @@ static void set_sender_va( OSTaskSlot *slot, OSPipe *pipe )
 static void set_receiver_va( OSTaskSlot *slot, OSPipe *pipe )
 {
   if (pipe->memory == 0) PANIC;
+
+  if (pipe->owner != 0) {
+    if (pipe->owner == slot) {
+      pipe->receiver_va = pipe->memory;
+    }
+    else PANIC; // Map the blocks containing the memory into task's pipe area
+  }
 
   if (!insert_pipe_in_gap( slot, pipe, false )) {
     // FIXME report error!

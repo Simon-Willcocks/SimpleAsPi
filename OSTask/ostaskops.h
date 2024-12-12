@@ -411,6 +411,12 @@ void Task_LogHex( uint32_t number )
 }
 
 static inline
+void Task_LogHexP( void *pointer )
+{
+  Task_LogHex( (uint32_t) pointer );
+}
+
+static inline
 void Task_LogNewLine()
 {
   Task_LogString( "\n", 1 );
@@ -835,9 +841,11 @@ uint32_t Task_CreateTask4( void *start, uint32_t sp, uint32_t p0, uint32_t p1, u
   asm volatile ( // Volatile because we ignore the outputs
         "svc %[swi_create]"
     "\n  mov r1, #0"    // No extra context
+    "\n  svc %[swi_release]"
     : "=r" (p) // Corrupted
     , "=r" (handle)
     : [swi_create] "i" (OSTask_Create)
+    , [swi_release] "i" (OSTask_ReleaseTask)
     , "r" (s)
     , "r" (p)
     , "r" (r1)
@@ -905,13 +913,13 @@ uint32_t Task_SpawnService2( void *start, uint32_t sp, uint32_t p0, uint32_t p1 
 static inline
 uint32_t Task_SpawnService1( void *start, uint32_t sp, uint32_t p0 )
 {
-  return Task_SpawnService3( start, sp, p0, 0, 0 );
+  return Task_SpawnService2( start, sp, p0, 0 );
 }
 
 static inline
 uint32_t Task_SpawnService0( void *start, uint32_t sp )
 {
-  return Task_SpawnService3( start, sp, 0, 0, 0 );
+  return Task_SpawnService1( start, sp, 0 );
 }
 
 static inline
@@ -946,13 +954,13 @@ uint32_t Task_CreateService2( void *start, uint32_t sp, uint32_t p0, uint32_t p1
 static inline
 uint32_t Task_CreateService1( void *start, uint32_t sp, uint32_t p0 )
 {
-  return Task_CreateService3( start, sp, p0, 0, 0 );
+  return Task_CreateService2( start, sp, p0, 0 );
 }
 
 static inline
 uint32_t Task_CreateService0( void *start, uint32_t sp )
 {
-  return Task_CreateService3( start, sp, 0, 0, 0 );
+  return Task_CreateService1( start, sp, 0 );
 }
 
 static inline
