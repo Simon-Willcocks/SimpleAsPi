@@ -1077,7 +1077,6 @@ static void do_TickOnes( uint32_t handle, uint32_t pipe )
     PipeSpace data = PipeOp_WaitForData( pipe, 1 );
     while (data.available != 0) {
       data = PipeOp_DataConsumed( pipe, 1 );
-      Task_LogString( "T", 1 );
       extern void TickOne(); // Corrupts r12
       register void *ip asm ( "r12" ) = &legacy_zero_page.OsbyteVars;
       asm volatile ( "bl TickOne"
@@ -1085,46 +1084,6 @@ static void do_TickOnes( uint32_t handle, uint32_t pipe )
              : [tick] "m" (TickOne)
              , "r" (ip)
              : "r0", "r1", "r2", "r3", "lr", "cc" );
-#if 0
-      // My version of what TickOne does...
-      // Some of these things will call legacy SWIs, which might take
-      // a while...
-
-      legacy_zero_page.MetroGnome++;
-      legacy_zero_page.OsbyteVars.CentiCounter++;
-      if (0 == ++*(uint32_t*) &legacy_zero_page.OsbyteVars.IntervalTimer) {
-        if (255 == legacy_zero_page.OsbyteVars.IntervalTimer[5]++) {
-          char const text[] = "OS_GenerateEvent Event_IntervalTimer\n";
-          Task_LogString( text, sizeof( text )-1 );
-        }
-      }
-      // CentiSecondTick
-      if (0 != legacy_zero_page.KeyWorkSpace.InkeyCounter) {
-        --legacy_zero_page.KeyWorkSpace.InkeyCounter;
-      }
-      if (legacy_zero_page.KeyWorkSpace.CurrKey != 0xff) {
-        char const text[] = "Autorepeat code goes here!\n";
-        Task_LogString( text, sizeof( text )-1 );
-        // See RiscOS/Sources/Kernel/s/PMF/key
-      }
-      // 64bits, so easy...
-      legacy_zero_page.OsbyteVars.RealTime++;
-      if (legacy_zero_page.OsbyteVars.TimerState == 5)
-        legacy_zero_page.OsbyteVars.TimerBeta = 
-          legacy_zero_page.OsbyteVars.TimerAlpha+1;
-      else
-        legacy_zero_page.OsbyteVars.TimerAlpha = 
-          legacy_zero_page.OsbyteVars.TimerBeta+1;
-      legacy_zero_page.OsbyteVars.TimerState ^= 15;
-
-      register uint32_t e asm( "r10" ) = 28; // TickerV
-      asm ( "svc %[swi]" 
-         :
-         : [swi] "i" (OS_CallAVector)
-         , "r" (e)
-         );
-#endif
-      Task_LogString( "t", 1 );
     }
   }
 }
