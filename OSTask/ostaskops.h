@@ -18,54 +18,54 @@
 #include "CK_types.h"
 
 enum {
-    OSTask_Yield = 0x300
+    OSTask_Yield = 0x2c0
   , OSTask_Sleep
-  , OSTask_Create               // 0x302 New OSTask
-  , OSTask_Spawn                // 0x303 New OSTask in a new slot
-  , OSTask_EndTask              // 0x304 Last one out ends the slot
-  , OSTask_Cores                // 0x305 Use sparingly! (More or less
+  , OSTask_Create               // 0x2c2 New OSTask
+  , OSTask_Spawn                // 0x2c3 New OSTask in a new slot
+  , OSTask_EndTask              // 0x2c4 Last one out ends the slot
+  , OSTask_Cores                // 0x2c5 Use sparingly! (More or less
                                 // useless outside interrupt and memory
                                 // management tasks, I think).
-  , OSTask_RegisterSWIHandlers  // 0x306 Code or queue for each SWI
-  , OSTask_MapDevicePages       // 0x307 For device drivers
-  , OSTask_AppMemoryTop         // 0x308 r0 = New value, or 0 to read
+  , OSTask_RegisterSWIHandlers  // 0x2c6 Code or queue for each SWI
+  , OSTask_MapDevicePages       // 0x2c7 For device drivers
+  , OSTask_AppMemoryTop         // 0x2c8 r0 = New value, or 0 to read
 
   // I'm increasingly unhappy with this approach, I think it would be
   // better to allow modules to create a task in another task's context
   // which can run either 32- or 64-bit code provided by the module.
   // Or simply change the module's task's slot...
-  , OSTask_RunForTask           // 0x309 Run code in the context of the task
-  , OSTask_GetRegisters         // 0x30a Get registers of controlled task
-  , OSTask_SetRegisters         // 0x30b Set registers of controlled task
-  , OSTask_Finished             // 0x30c Return to home context
-  , OSTask_ReleaseTask          // 0x30d Resume no longer controlled task
-  , OSTask_ChangeController     // 0x30e Pass the controlled task to another
-  , OSTask_SetController        // 0x30f Allow another task to control me
+  , OSTask_RunForTask           // 0x2c9 Run code in the context of the task
+  , OSTask_GetRegisters         // 0x2ca Get registers of controlled task
+  , OSTask_SetRegisters         // 0x2cb Set registers of controlled task
+  , OSTask_Finished             // 0x2cc Return to home context
+  , OSTask_ReleaseTask          // 0x2cd Resume no longer controlled task
+  , OSTask_ChangeController     // 0x2ce Pass the controlled task to another
+  , OSTask_SetController        // 0x2cf Allow another task to control me
 
-  , OSTask_LockClaim            // 0x310
-  , OSTask_LockRelease          // 0x311
+  , OSTask_LockClaim            // 0x2d0
+  , OSTask_LockRelease          // 0x2d1
 
-  , OSTask_EnablingInterrupts   // 0x312 Disable IRQs while I get
-  , OSTask_WaitForInterrupt     // 0x313 ready to wait.
+  , OSTask_EnablingInterrupts   // 0x2d2 Disable IRQs while I get
+  , OSTask_WaitForInterrupt     // 0x2d3 ready to wait.
 
-  , OSTask_PhysicalFromVirtual  // 0x314 For device drivers
+  , OSTask_PhysicalFromVirtual  // 0x2d4 For device drivers
                                 // (Also flushes the cache)
-  , OSTask_InvalidateCache      // 0x315 Area of RAM may have been changed
-  , OSTask_FlushCache           // 0x316 Ensure changes are visible to
+  , OSTask_InvalidateCache      // 0x2d5 Area of RAM may have been changed
+  , OSTask_FlushCache           // 0x2d6 Ensure changes are visible to
                                 // external hardware.
 
-  , OSTask_SwitchToCore         // 0x317 Use sparingly!
+  , OSTask_SwitchToCore         // 0x2d7 Use sparingly!
 
   // SWI for internal use only!
-  , OSTask_Tick                 // 0x318 For HAL module use only
+  , OSTask_Tick                 // 0x2d8 For HAL module use only
                                 // important task runnable
 
   , OSTask_MapFrameBuffer // Depricated, I think... TBC
 
-  , OSTask_GetLogPipe           // 0x31a For the current core
-  , OSTask_LogString            // 0x31b
+  , OSTask_GetLogPipe           // 0x2da For the current core
+  , OSTask_LogString            // 0x2db
 
-  , OSTask_PipeCreate = OSTask_Yield + 32 // 0x320
+  , OSTask_PipeCreate = OSTask_Yield + 32 // 0x2e0
   , OSTask_PipeWaitForSpace
   , OSTask_PipeSpaceFilled
   , OSTask_PipeSetSender
@@ -77,7 +77,7 @@ enum {
   , OSTask_PipeNotListening
   , OSTask_PipeWaitUntilEmpty
 
-  , OSTask_QueueCreate = OSTask_PipeCreate + 16 // 0x330
+  , OSTask_QueueCreate = OSTask_PipeCreate + 16 // 0x2e0
   , OSTask_QueueDelete
   , OSTask_QueueWait
   , OSTask_QueueWaitCore        // No implementation
