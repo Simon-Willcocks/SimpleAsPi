@@ -756,7 +756,7 @@ void execute_swi( svc_registers *regs, int number )
       // register values.
       if (resume == 0 && 0 != (VF & swi_regs->spsr)) {
         error_block const *err = (void*) swi_regs->r[0];
-        if (err->code == 0) {
+        if (err->code == 0xff000000) {
           char const text[] = "Resetting SVC stack and entering module at ";
           Task_LogString( text, sizeof( text )-1 );
           Task_LogHex( swi_regs->r[1] );
@@ -790,7 +790,7 @@ void execute_swi( svc_registers *regs, int number )
   case OS_GetEnv:
     {
       // Leaving the warning below to highlight the TODO
-      swi_regs->r[0] = (uint32_t*) "This should be the command";
+      swi_regs->r[0] = (uint32_t) "This should be the command";
       swi_regs->r[1] = 0x400000; // FIXME
       swi_regs->r[2] = 200; // FIXME
     }
@@ -1090,7 +1090,6 @@ static void do_TickOnes( uint32_t handle, uint32_t pipe )
 
 void __attribute__(( noreturn )) centiseconds()
 {
-asm( "svc 0x66666" );
   char buffer[32];
   uint32_t pipe = PipeOp_CreateOnBuffer( buffer, sizeof( buffer ) );
 
@@ -1111,7 +1110,7 @@ asm( "svc 0x66666" );
   PipeSpace space = PipeOp_WaitForSpace( pipe, 1 );
 
   for (;;) {
-    Task_Sleep( 10 ); // 9? (more ticks)
+    Task_Sleep( 9 ); // Returns every 10th tick.
     if (space.available != 0) {
       space = PipeOp_SpaceFilled( pipe, 1 );
     }

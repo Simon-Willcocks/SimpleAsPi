@@ -115,7 +115,7 @@ void manage_legacy_stack( uint32_t handle, uint32_t queue )
 
     if (0 != (VF & regs.spsr)) { // Error? Could be enter module request
       error_block const *error = (void*) regs.r[0];
-      if (error->code == 0) {
+      if (error->code == 0xff000000) {
         // Special case: we just successfully ran an OS_Module call to
         // enter a module either directly, or indirectly (what we called
         // called OS_Module from SVC mode).
