@@ -17,6 +17,7 @@ typedef struct {
 } workspace_legacy;
 
 typedef struct dynamic_area dynamic_area;
+typedef struct legacy_stack_frame legacy_stack_frame;
 
 typedef struct {
   uint32_t queue;
@@ -27,7 +28,7 @@ typedef struct {
   // registers.
   void *sp;
 
-  void *blocked_sp; // Blocked other than by an interrupt
+  legacy_stack_frame *frame; // Blocked other than by an interrupt
 
   dynamic_area *dynamic_areas;
   uint32_t last_allocated_da;

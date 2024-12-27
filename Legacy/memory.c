@@ -570,6 +570,14 @@ for (int y = 0; y < 1080; y++) {
       }
     }
     break;
+  case CheckMemoyAccess:
+    {
+      // FIXME
+      // All memory is readable and writable! Honest!
+      // TODO check the slot.
+      regs->r[1] = 0xf;
+    }
+    break;
   default: PANIC;
   };
 }
