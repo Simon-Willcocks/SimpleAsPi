@@ -34,7 +34,7 @@ void execute_swi( svc_registers *regs, int number );
 // SWIs in the range OSTask_Yield ... OSTask_Yield + 63
 OSTask *ostask_svc( svc_registers *regs, int number );
 
-static inline
+//static inline
 void __attribute__(( noreturn )) return_to_swi_caller( 
                         OSTask *task,
                         svc_registers *regs,
@@ -58,7 +58,7 @@ OSTask *queue_running_OSTask( svc_registers *regs,
                               uint32_t queue_handle,
                               uint32_t SWI );
 
-void save_task_state( svc_registers *regs );
+void save_task_state( svc_registers const *regs );
 
 void interrupting_privileged_code( OSTask *task );
 
@@ -133,14 +133,14 @@ struct OSTaskSlot {
 
 #ifndef MAX_CONTROLLERS
 // above 5 needs memmove
-#define MAX_CONTROLLERS 32
+#define MAX_CONTROLLERS 31
 #endif
 
 struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   // Order of the next 4 items fixed for assembler code
   svc_registers regs;
   uint32_t banked_sp_usr; // Only stored when leaving usr or sys mode
-  uint32_t banked_lr_usr; // Only stored when leaving usr or sys mode
+  uint32_t banked_lr_usr; // and only if the core runs another task
   OSTaskSlot *slot;     // Current slot.
 
   OSTaskSlot *home;     // Task's original slot, zero while not running code
@@ -165,6 +165,10 @@ struct __attribute__(( packed, aligned( 4 ) )) OSTask {
   // A controller task can pass a task on to another, either explicitly,
   // or by queuing it for another task to retrieve.
   OSTask *controller[MAX_CONTROLLERS];
+  union {
+    void *saved;
+    uint32_t running:1;
+  };
 
   OSTask *next;
   OSTask *prev;
@@ -378,34 +382,106 @@ static inline void change_current_controller( OSTask *task, OSTask *new )
 }
 
 static inline
-void __attribute__(( noreturn )) return_to_swi_caller( 
-                        OSTask *task,
-                        svc_registers *regs,
-                        void *svc_sp )
+bool needs_usr_stack( svc_registers const *regs )
 {
-  if (task != 0) {
-    assert( task == workspace.ostask.running );
-    if (((regs->spsr & 0x1f) == 0x10)
-     || ((regs->spsr & 0x1f) == 0x1f)) {
-      asm ( "msr sp_usr, %[sp]"
-        "\n  msr lr_usr, %[lr]"
-        :
-        : [sp] "r" (task->banked_sp_usr)
-        , [lr] "r" (task->banked_lr_usr) );
-    }
-  }
-
-  if (task != 0) map_slot( task->slot );
-
-  // Resume after the SWI
-  register svc_registers *lr asm ( "lr" ) = regs;
-  asm (
-          "mov sp, %[sp]"
-      "\n  ldm lr!, {r0-r12}"
-      "\n  rfeia lr // Restore execution and SPSR"
-      :
-      : [sp] "r" (svc_sp)
-      , "r" (lr) );
-
-  __builtin_unreachable();
+#ifdef ALLOW_SYS_MODE
+  // If the kernel absolutely, positively has to have a protected mode
+  // that uses the user stack.
+  // Legacy uses it for centisecond ticks, calls to TickerV.
+  return (0 == (regs->spsr & 15)) || (15 == (regs->spsr & 15));
+#else
+  return 0 == (regs->spsr & 15);
+#endif
 }
+
+// This calls Task_EndTask from usr32 mode
+void unexpected_task_return();
+
+static inline
+void put_usr_registers( OSTask *task )
+{
+  if (task != workspace.ostask.running) asm ( "bkpt 6" );
+  if (task->banked_sp_usr == -6 && task != workspace.ostask.idle) asm ( "bkpt 8" );
+  asm ( "msr sp_usr, %[sp]"
+    "\n  msr lr_usr, %[lr]"
+    "\n  udf 163"
+    :
+    : [sp] "r" (task->banked_sp_usr)
+    , [lr] "r" (task->banked_lr_usr) );
+}
+
+static inline
+void get_usr_registers( OSTask *task )
+{
+  if (task != workspace.ostask.running) asm ( "bkpt 7" );
+  uint32_t sp;
+  uint32_t lr;
+  asm ( "mrs %[sp], sp_usr"
+    "\n  mrs %[lr], lr_usr"
+    "\n  udf 164"
+      : [sp] "=r" (sp)
+      , [lr] "=r" (lr) );
+  if (sp == -6 && task != workspace.ostask.idle) PANIC;
+  asm ( "mrs %[sp], sp_usr"
+    "\n  mrs %[lr], lr_usr"
+    "\n  udf 164"
+      : [sp] "=r" (task->banked_sp_usr)
+      , [lr] "=r" (task->banked_lr_usr) );
+}
+
+//static inline
+// void __attribute__(( noreturn )) return_to_swi_caller( 
+//                         OSTask *task,
+//                         svc_registers *regs,
+//                         void *svc_sp )
+// {
+//   //if (shared.module.last != shared.module.modules && task == 0xff100000 && task->banked_sp_usr == 0) PANIC;
+// 
+// asm ( "udf 65\n mov %0, %0" : : "r" (task) );
+// 
+//   if (task != 0) {
+//     assert( task->saved );
+// 
+//     assert( task == workspace.ostask.running );
+//     if (needs_usr_stack( regs )) {
+//       put_usr_registers( task );
+//     }
+// 
+//     assert( task->running == 0 );
+//   }
+// 
+//   assert( task == 0 || task == workspace.ostask.running );
+// 
+//   workspace.ostask.running->running = 1;
+// 
+//   if (task != 0) map_slot( task->slot );
+// 
+//   // Resume after the SWI
+//   register svc_registers *lr asm ( "lr" ) = regs;
+//   asm (
+//           "mov sp, %[sp]"
+//       "\n  ldm lr!, {r0-r12}"
+//       "\n  rfeia lr // Restore execution and SPSR"
+//       :
+//       : [sp] "r" (svc_sp)
+//       , "r" (lr) );
+// 
+//   __builtin_unreachable();
+// }
+
+// Detach the running task from the running list, returns the new
+// running task.
+//static inline
+OSTask *stop_running_task( svc_registers const *regs )
+;
+// {
+//   OSTask *running = workspace.ostask.running;
+//   OSTask *next = next;
+//   workspace.ostask.running = next;
+//   assert( running != workspace.ostask.running );
+//   assert( running != workspace.ostask.idle );
+//   dll_detach_OSTask( running );
+//   assert( next == workspace.ostask.running );
+//   assert( workspace.ostask.running != running );
+//   return next;
+// }

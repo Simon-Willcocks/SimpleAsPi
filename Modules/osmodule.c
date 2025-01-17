@@ -340,11 +340,14 @@ error_block const *run_initialisation_code( const char *env, module *m,
   if (*env > ' ') {
     Task_LogString( " ", 1 );
     Task_LogString( env, 0 );
+    Task_LogString( " ", 1 );
   }
   else {
-    Task_LogString( " no parameters", 14 );
+    Task_LogString( " no parameters ", 15 );
   }
-  Task_LogHex( (uint32_t) &m->private_word );
+  Task_LogHexP( &m->private_word );
+  Task_LogString( " ", 1 );
+  Task_LogHex( m->private_word );
   Task_LogNewLine();
 #endif
 
@@ -478,6 +481,7 @@ static void run_swi_handler_code( svc_registers *regs, uint32_t svc, module *m )
       "\n  ldm %[regs], { r0-r9 }"
       "\n  blx r14"
       "\nreturn:"
+      "\n  cpsid i // Disable interrupts"
       "\n  pop { %[regs] }"
       "\n  stm %[regs], { r0-r9 }"
       "\n  ldr r1, [%[regs], %[spsr]]"
@@ -532,7 +536,6 @@ OSTask *run_traditional_swi( svc_registers *regs, int swi )
       return Error_UnknownSWI( regs );
     }
     else {
-      // PANIC; // Untested
       OSTask *running = workspace.ostask.running;
       action.code( regs, (void*) m->private_word,
                    workspace.core, ostask_handle( running ) );
@@ -684,6 +687,7 @@ static void __attribute__(( noinline )) run_service_call_handler_code( svc_regis
         "  push { %[regs] }"
       "\n  ldm %[regs], { r0-r8 }"
       "\n  blx r14"
+      "\n  cpsid i // Disable interrupts"
       "\n  pop { r14 }"
       "\n  stm r14, { r0-r8 }"
       :
@@ -703,7 +707,12 @@ OSTask *do_OS_ServiceCall( svc_registers *regs )
 
 #ifdef DEBUG__FOLLOW_SERVICE_CALLS
   Task_LogString( "Service call ", 13 );
-  Task_LogSmallNumber( regs->r[1] );
+  Task_LogHex( regs->r[1] );
+  Task_LogNewLine();
+  for (int i = 0; i < 8; i++) {
+    Task_LogHex( regs->r[i] );
+    Task_LogString( " ", 1 );
+  }
   Task_LogNewLine();
 #endif
 
@@ -724,6 +733,11 @@ OSTask *do_OS_ServiceCall( svc_registers *regs )
 #ifdef DEBUG__FOLLOW_SERVICE_CALLS
     if (regs->r[1] == 0) {
       Task_LogString( " - Claimed\n", 11 );
+      for (int i = 0; i < 8; i++) {
+        Task_LogHex( regs->r[i] );
+        Task_LogString( " ", 1 );
+      }
+      Task_LogNewLine();
     }
 #endif
     m = m->next;
@@ -955,8 +969,6 @@ static uint32_t count_params( char const *params )
 __attribute__(( noinline ))
 error_block const *run_command( module *m, uint32_t code_offset, const char *tail, uint32_t count )
 {
-  Task_LogHex( code_offset + (uint32_t) m->header );
-
   register uint32_t non_kernel_code asm( "r14" ) = code_offset + (uint32_t) m->header;
   // Bodge for funny commands
   register uint32_t *private_word asm( "r12" ) = (m == 0) ? 0 : &m->private_word;
@@ -994,27 +1006,29 @@ static error_block const *run_module_code( module_code code, char const *tail )
 #endif
 
   if (count < c->info.min_params || count > c->info.max_params) {
-    asm ( "udf 77" );
+    PANIC; // FIXME remove
     static error_block error = { 666, "Invalid number of parameters" };
     // TODO Service_SyntaxError
     return &error;
   }
   else if (count == -1) {
+    PANIC; // FIXME remove
     static error_block mistake = { 4, "Mistake" };
     return &mistake;
   }
 
   if (c->info.gstrans != 0 && count > 0) {
     // Need to copy the command, running GSTrans on some parameters
-    Task_LogString( "The code in run_module_code needs expanding, not GSTransing parameters\n", 0 );
+    char const text[] = "The code in run_module_code needs expanding, not GSTransing parameters \"";
+    Task_LogString( text, sizeof( text ) - 1 );
     Task_LogString( tail, rostrlen( tail ) );
-    Task_LogNewLine();
-/*
-    static error_block needs_more_code = { 4, "The code in run_module_code needs expanding" };
-    return &needs_more_code;
-    asm ( "bkpt 1" );
-*/
+    Task_LogString( "\"\n", 2 );
   }
+
+  { char const text[] = "Module code is at ";
+  Task_LogString( text, sizeof( text ) - 1 ); }
+  Task_LogHex( c->code_offset + (uint32_t) m->header );
+  Task_LogNewLine();
 
   return run_command( m, c->code_offset, tail, count );
 }
@@ -1132,9 +1146,9 @@ handled run_aliased_command( uint32_t *regs )
     Task_LogString( "Running ", 8 );
     Task_LogString( cmd0, 0 );
     Task_LogString( " module: ", 9 );
-    Task_LogHex( code.module->header );
+    Task_LogHexP( code.module->header );
     Task_LogString( " code: ", 7 );
-    Task_LogHex( code.command );
+    Task_LogHexP( code.command );
     Task_LogString( " offset: ", 9 );
     Task_LogHex( code.command->code_offset );
     Task_LogNewLine();
@@ -1147,6 +1161,8 @@ handled run_aliased_command( uint32_t *regs )
     Task_LogString( "Error from ", 11 );
     Task_LogString( cmd0, 0 );
     Task_LogString( ": ", 2 );
+    Task_LogSmallNumber( error->code );
+    Task_LogString( " ", 1 );
     Task_LogString( error->desc, 0 );
     Task_LogNewLine();
 #endif
@@ -1236,7 +1252,7 @@ OSTask *do_OS_Module( svc_registers *regs )
 {
   // Hint to the caller that the stack should be reset, etc.
   // Only for RMRun and RMEnter
-  static error_block no_error = { 0, "No error - enter module" };
+  static error_block no_error = { 0xff000000, "No error - enter module" };
 
   error_block const *error = 0;
   char const *const name = (void*) regs->r[1];

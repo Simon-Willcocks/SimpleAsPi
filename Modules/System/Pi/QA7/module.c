@@ -490,6 +490,11 @@ void start_ticker()
 
 void irq_manager( uint32_t handle, workspace *ws )
 {
+          { char const text[] = "IRQ manager workspace: ";
+          Task_LogString( text, sizeof( text )-1 ); }
+          Task_LogHexP( ws );
+          Task_LogNewLine();
+
   uint32_t qa7_page = 0x40000000 >> 12;
   uint32_t const gpu_page = 0x3f00b000 >> 12;
 
@@ -600,7 +605,15 @@ void irq_manager( uint32_t handle, workspace *ws )
           handler = ws->tasks[client.core].core_irq_task;
         }
 
-        if (0 != *task_entry) asm ( "bkpt 4" );
+        if (0 != *task_entry) {
+          { char const text[] = "Interrupt already claimed ";
+          Task_LogString( text, sizeof( text )-1 ); }
+          Task_LogHexP( task_entry );
+          Task_LogString( " ", 1 );
+          Task_LogHex( *task_entry );
+          Task_LogNewLine();
+        }
+
         if (handler == 0) asm ( "bkpt 7" : : "r" (client.core | 0x47474747) );
 
         // Ensure the irq task has the right to release the client

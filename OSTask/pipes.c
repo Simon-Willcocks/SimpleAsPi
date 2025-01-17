@@ -442,10 +442,8 @@ static uint32_t write_location( OSPipe *pipe )
 OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
 {
   uint32_t amount = regs->r[1];
-  // TODO validation
 
   OSTask *running = workspace.ostask.running;
-  OSTask *next = running->next;
   OSTaskSlot *slot = running->slot;
 
   bool is_normal_pipe = (pipe != workspace.ostask.log_pipe);
@@ -474,15 +472,8 @@ OSTask *PipeWaitForSpace( svc_registers *regs, OSPipe *pipe )
   else {
     pipe->sender_waiting_for = amount;
 
-    save_task_state( regs );
-    workspace.ostask.running = next;
-
-    if (workspace.ostask.running == running) PANIC;
-
     // Blocked, waiting for space.
-    dll_detach_OSTask( running );
-
-    return next;
+    return stop_running_task( regs );
   }
 
   return 0;
@@ -494,7 +485,6 @@ DEFINE_ERROR( NotThatMuchAvailable, 0x888, "Consumed more than available" );
 OSTask *PipeSpaceFilled( svc_registers *regs, OSPipe *pipe )
 {
   uint32_t amount = regs->r[1];
-  // TODO validation
 
   OSTask *running = workspace.ostask.running;
 
@@ -626,11 +616,8 @@ OSTask *PipeNoMoreData( svc_registers *regs, OSPipe *pipe )
 OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 {
   uint32_t amount = regs->r[1];
-  // TODO validation
-  if (amount == 0) PANIC;
 
   OSTask *running = workspace.ostask.running;
-  OSTask *next = running->next;
   OSTaskSlot *slot = running->slot;
 
   // log_pipe is not a special case, here; only one task can receive from it.
@@ -662,15 +649,8 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
   else {
     pipe->receiver_waiting_for = amount;
 
-    save_task_state( regs );
-    workspace.ostask.running = next;
-
-    if (workspace.ostask.running == running) PANIC;
-
     // Blocked, waiting for data.
-    dll_detach_OSTask( running );
-
-    return next;
+    return stop_running_task( regs );
   }
 
   return 0;
@@ -679,7 +659,6 @@ OSTask *PipeWaitForData( svc_registers *regs, OSPipe *pipe )
 OSTask *PipeDataConsumed( svc_registers *regs, OSPipe *pipe )
 {
   uint32_t amount = regs->r[1];
-  // TODO validation
 
   OSTask *running = workspace.ostask.running;
 

@@ -366,6 +366,11 @@ void fill_legacy_zero_page()
 
   legacy_zero_page.OsbyteVars.Shadow = 1; // No shadow modes (0 turns on)
 
+  // For OSCLI ; will need to be moved to a task and task slots, probably
+  legacy_zero_page.OscliCBcurrend = 0;
+  legacy_zero_page.OscliCBtopUID = 0;
+  legacy_zero_page.OscliCBcurrend = 0xfa451800;
+
   // FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
   legacy_zero_page.vdu_drivers.ws.ScreenStart = (void*) 0xc0000000;
   legacy_zero_page.vdu_drivers.ws.YWindLimit = 1080;
@@ -539,18 +544,18 @@ OSTask *do_OS_ReadSysInfo( svc_registers *regs )
         break;
       }
       else if (regs->r[1] == 0 && regs->r[2] == 16) {
-        Task_LogString( "ReadSysInfo 6: top of SVC stack\n", 33 );
+        Task_LogString( "ReadSysInfo 6: top of SVC stack\n", 32 );
         regs->r[2] = (uint32_t) &legacy_svc_stack_top;
         // This might be worth a panic!
         break;
       }
       else if (regs->r[1] == 0 && regs->r[2] == 69) {
-        Task_LogString( "ReadSysInfo 6: Address of IRQsema\n", 35 );
+        Task_LogString( "ReadSysInfo 6: Address of IRQsema\n", 34 );
         regs->r[2] = (uint32_t) &legacy_zero_page.IRQsema;
         break;
       }
       else if (regs->r[1] == 0 && regs->r[2] == 70) {
-        Task_LogString( "ReadSysInfo 6: Address of DomainId\n", 36 );
+        Task_LogString( "ReadSysInfo 6: Address of DomainId\n", 35 );
         regs->r[2] = (uint32_t) &legacy_zero_page.DomainId;
         break;
       }
@@ -795,7 +800,10 @@ void __attribute__(( naked, noreturn )) ResumeLegacy();
 
 // Marker to indicate the task is a legacy one when being resumed.
 // (Resumption is carried out in the execute_swi function.)
-void __attribute__(( naked, noreturn )) BlockedLegacy();
+void __attribute__(( naked, noreturn )) BlockedLegacy()
+{
+  PANIC; // Needs some code to avoid being the same location as ResumeLegacy
+}
 
 struct legacy_stack_frame {
   legacy_stack_frame *up;
@@ -805,11 +813,6 @@ struct legacy_stack_frame {
 };
 
 static svc_registers *const std_top = (void*) ((&workspace.svc_stack)+1);
-
-void __attribute__(( naked, noreturn )) BlockedLegacy()
-{
-  asm ( "nop" ); // avoid being the same location as ResumeLegacy
-}
 
 //static
 OSTask *run_the_swi( svc_registers *regs, uint32_t number )
@@ -843,23 +846,27 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
           Task_LogHex( regs->r[2] );
           Task_LogNewLine();
 
-          regs->lr = regs->r[1];
-          regs->r[12] = regs->r[2];
-          regs->spsr = 0x10;
+          running->regs.lr = regs->r[1];
+          running->regs.r[12] = regs->r[2];
+          running->regs.spsr = 0x10;
 
           assert( is_legacy_task );
           assert( shared.legacy.frame != 0 );
-          assert( shared.legacy.frame->up == 0 );
+          assert( shared.legacy.frame->caller == running );
+          // Should resume the next frame up, if it's runnable? TODO
 
-          shared.legacy.frame = 0;
+          shared.legacy.frame = shared.legacy.frame->up;
           running->banked_sp_usr = 0;
           running->banked_lr_usr = (uint32_t) unexpected_task_return;
+
+          running->saved = run_the_swi;
 
           OSTask *owner = shared.legacy.owner;
           mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, owner );
           asm ( "udf 1" );
+
           // Passing running to ensure banked registers set
-          return_to_swi_caller( running, regs, std_top );
+          return_to_swi_caller( running, &running->regs, std_top );
         }
       }
     }
@@ -910,17 +917,15 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
     legacy_zero_page.CallBack_Flag |= 1;
     break;
 
-  case OS_WriteS: // Called from SVC mode, when owner of legacy stack.
-    // manage_legacy_stack takes care of calls from usr32.
-    // We need both because the return address for top_swi is back to
-    // manage_legacy_stack in user.c.
+  case OS_Word:
     {
-      uint32_t r0 = regs->r[0];
-      regs->r[0] = regs->lr;
-      uint32_t entry = JTABLE[OS_Write0];
-      run_riscos_code_implementing_swi( regs, OS_Write0, entry );
-      regs->lr = (3 + regs->r[0]) & ~3;
-      regs->r[0] = r0;
+      if (regs->r[0] == 7) {
+        // Beep! FIXME when sound stuff working
+      }
+      else {
+        uint32_t entry = JTABLE[OS_Word];
+        run_riscos_code_implementing_swi( regs, OS_Word, entry );
+      }
     }
     break;
 #ifdef DEBUG__FAKE_OS_BYTE
@@ -936,6 +941,9 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
       }
       else if (regs->r[0] >= 0x7c && regs->r[0] <= 0x7e) { // Esc condition
         regs->r[1] = 0; // No escape condition (if ack)
+      }
+      else if (regs->r[0] == 0x8f) {
+        do_OS_ServiceCall( regs );
       }
       else {
         uint32_t entry = JTABLE[OS_Byte];
@@ -982,11 +990,12 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
 #endif
       }
       else if (swi < 256) { // OS_WriteI
+        // Conversion SWIs
         extern void despatchConvert();
         uint32_t code = (uint32_t) despatchConvert;
         run_riscos_code_implementing_swi( regs, swi, code );
-      } // Conversion SWIs
-      else if (swi < 512) {
+      }
+      else if (swi < 512) { // OS_WriteI+
         uint32_t entry = JTABLE[OS_WriteC];
 
         uint32_t r0 = regs->r[0];
@@ -1005,6 +1014,26 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
   // return.
   asm ( "cpsid i" );
 
+#ifdef DEBUG__SHOW_ALL_ERRORS
+  if (Vset( regs )) {
+    static char const text[] = "Vset: ";
+    Task_LogString( text, sizeof( text )-1 );
+    error_block *error = (void*) regs->r[0];
+    Task_LogHexP( error );
+    if (error == 0) {
+      static char const text[] = " NULL error";
+      Task_LogString( text, sizeof( text )-1 );
+    }
+    else {
+      Task_LogString( " ", 1 );
+      Task_LogSmallNumber( error->code );
+      Task_LogString( " ", 1 );
+      Task_LogString( error->desc, 0 );
+    }
+    Task_LogNewLine();
+  }
+#endif
+
   return resume;
 }
 
@@ -1013,7 +1042,17 @@ void execute_swi( svc_registers *regs, int number )
 {
   OSTask *running = workspace.ostask.running;
   OSTask *resume = 0;
-
+#if 0
+  if ((number & ~Xbit) < 0x2c0 || (number & ~Xbit) > 0x300) {
+    OSTask *t = running;
+    do {
+      Task_LogHexP( t );
+      t = t->next;
+    } while (t != running);
+    Task_LogNewLine();
+  }
+#endif
+#if 0
 #ifdef DEBUG__SHOW_LEGACY_SWIS
   if ((number & ~Xbit) != 0x2db) {
       if (0) { char const text[] = "SWI ";
@@ -1030,6 +1069,7 @@ void execute_swi( svc_registers *regs, int number )
 #endif
       Task_LogNewLine();
   }
+#endif
 #endif
 
   if (running == shared.legacy.owner
@@ -1053,11 +1093,7 @@ void execute_swi( svc_registers *regs, int number )
 
     // Disable the owner task until the stack is free for another task
     // to use it.
-    save_task_state( regs );
-    resume = running->next;
-    workspace.ostask.running = resume;
-    assert( workspace.ostask.running != running );
-    dll_detach_OSTask( running );
+    resume = stop_running_task( regs );
 
     OSTask *legacy_task = ostask_from_handle( regs->r[0] );
     uint32_t legacy_swi = regs->r[1];
@@ -1071,9 +1107,13 @@ void execute_swi( svc_registers *regs, int number )
       // task has to be stopped from listening when it resumes.
       legacy_stack_frame *f = shared.legacy.frame;
       assert( f != 0 );
-      while (f != 0 && f->caller != legacy_task) f = f->up;
+      while (f != 0 && f->caller != legacy_task) {
+        f = f->up;
+      }
       assert( f != 0 );
       legacy_task->regs.lr = f->blocked_swi_lr;
+      // Indicates task can be resumed when this frame becomes the
+      // current frame (all later legacy SWIs have completed):
       f->blocked_swi_lr = 0;
 
 #ifdef DEBUG__LOG_LEGACY_STACK
@@ -1092,20 +1132,30 @@ void execute_swi( svc_registers *regs, int number )
 #endif
 
       if (f == shared.legacy.frame) {
+        assert( !legacy_task->running );
+
         dll_attach_OSTask( legacy_task, &workspace.ostask.running );
+
+        put_usr_registers( legacy_task );
+
         return_to_swi_caller( legacy_task, &legacy_task->regs, f->blocked_sp );
       }
       else {
+        assert( !resume->running );
+
+        put_usr_registers( resume );
+
         return_to_swi_caller( resume, &resume->regs, std_top );
       }
     }
 
 #ifdef DEBUG__LOG_LEGACY_STACK
-      { char const text[] = "New lagacy stack owner ";
-      Task_LogString( text, sizeof( text )-1 ); }
-      Task_LogHex( ostask_handle( legacy_task ) );
-      Task_LogNewLine();
+    { char const text[] = "New lagacy stack owner ";
+    Task_LogString( text, sizeof( text )-1 ); }
+    Task_LogHex( ostask_handle( legacy_task ) );
+    Task_LogNewLine();
 #endif
+
     // Give the task whose handle is in r0 the legacy stack and
     // run the SWI (which may be interrupted).
 
@@ -1114,11 +1164,8 @@ void execute_swi( svc_registers *regs, int number )
     // We've changed tasks, but when we re-call this funtion it will
     // look like we haven't, so this has to be done here, it won't
     // happen in return_to_swi_caller.
-    asm ( "msr sp_usr, %[sp]"
-      "\n  msr lr_usr, %[lr]"
-      :
-      : [sp] "r" (legacy_task->banked_sp_usr)
-      , [lr] "r" (legacy_task->banked_lr_usr) );
+    put_usr_registers( legacy_task );
+    legacy_task->running = 1;
 
     // The shared.legacy.owner task is now detached. It will be resumed
     // when another task is permitted to run a legacy SWI, either:
@@ -1219,13 +1266,28 @@ void execute_swi( svc_registers *regs, int number )
 
     assert( shared.legacy.frame != 0 );
     uint32_t lr = regs->lr;
+
     shared.legacy.frame->blocked_swi_lr = lr;
     shared.legacy.frame->blocked_sp = regs + 1;
+
     // In case the SWI blocks the task, this will mark it as special.
     // BlockedLegacy never actually gets executed.
     regs->lr = (uint32_t) BlockedLegacy;
 
-    resume = run_the_swi( regs, number );
+    if (OS_WriteS == (number & ~Xbit)) {
+      // Damned special case!
+      uint32_t r0 = regs->r[0];
+      regs->r[0] = lr;
+
+      resume = run_the_swi( regs, (number & Xbit) | OS_Write0 );
+      assert( resume == 0 ); // If it does block, it will be in the WriteC
+
+      lr = (regs->r[0] + 3) & ~3; // Align
+
+      if (Vclear( regs )) regs->r[0] = r0;
+    }
+    else 
+      resume = run_the_swi( regs, number );
 
     if (resume == 0) {
       // The task wasn't blocked.
@@ -1270,6 +1332,8 @@ Task_LogString( " ", 1 );
 Task_LogString( (char*) regs->r[0] + 4, 0 );
 Task_LogNewLine();
     uint32_t entry = JTABLE[OS_CallAVector];
+    regs->r[9] = 1; // ErrorV
+    // FIXME: Why aren't I calling OS_GenerateError here?
     run_riscos_code_implementing_swi( regs, OS_CallAVector, entry );
         asm ( "udf #0x101" );
   }
@@ -1358,12 +1422,14 @@ Task_LogNewLine();
      && shared.legacy.frame->blocked_swi_lr == 0) {
       // It's been resumed
       OSTask *caller = shared.legacy.frame->caller;
+      assert( !caller->running );
       mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, caller );
     }
     else {
       // We can accept a new task calling a legacy SWI (or the current
       // stack owner being resumed, if there is one).
       OSTask *owner = shared.legacy.owner;
+      assert( !owner->running );
       mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, owner );
     }
 
@@ -1374,6 +1440,7 @@ Task_LogNewLine();
 
   if (resume == 0) {
     // Stick with whatever stack we're on
+    asm ( "udf 6" );
     return_to_swi_caller( 0, regs, regs+1 );
   }
   else {
@@ -1382,8 +1449,11 @@ Task_LogNewLine();
 
     assert( resume != running );
     assert( resume == workspace.ostask.running );
+    // assert( running->running ); Invalid: state has been saved
+    assert( !running->running ); // state has been saved
+    assert( !resume->running );
 
-    while (resume->regs.lr == (uint32_t) BlockedLegacy) {
+    if (resume->regs.lr == (uint32_t) BlockedLegacy) {
 #ifdef DEBUG__SHOW_LEGACY_SWIS
       { char const text[] = "Legacy task released ";
       Task_LogString( text, sizeof( text )-1 ); }
@@ -1394,27 +1464,41 @@ Task_LogNewLine();
       Task_LogHexP( shared.legacy.frame );
       Task_LogNewLine();
 #endif
+
+      // To keep queue_running_OSTask/stop_running_task happy
+      resume->running = 1;
+      put_usr_registers( resume ); // FIXME: may fix error but needs cleaner solution!
  
+      OSTask *old = resume;
+      assert( old->running );
       resume = queue_running_OSTask( &resume->regs,
                                      shared.legacy.queue,
                                      0xffffff );
+      assert( !old->running );
+      assert( !resume->running );
 
       assert( workspace.ostask.running == resume );
     }
 
+    // Can a second running task be legacy blocked?
+    // I don't think so.
+    // A released task will be either the next task in the running
+    // list for this core (returned by stop_running_task) or the
+    // queue's handler which shouldn't be a legacy task.
+    assert( resume->regs.lr != (uint32_t) BlockedLegacy );
+
     if (resume->regs.lr == (uint32_t) ResumeLegacy) {
       // Return from interrupt, but into SVC
-#ifdef DEBUG__SHOW_LEGACY_SWIS
-      { char const text[] = "RFI";
+#ifdef DEBUG__SHOW_LEGACY_SWIS__breaks
+      // I think this breaks the system because the task in running
+      // is not yet running...
+      { static char const text[] = "RFI";
       Task_LogString( text, sizeof( text )-1 ); }
       Task_LogHexP( resume );
       Task_LogNewLine();
 #endif
-      asm ( "msr sp_usr, %[sp]"
-        "\n  msr lr_usr, %[lr]"
-        :
-        : [sp] "r" (resume->banked_sp_usr)
-        , [lr] "r" (resume->banked_lr_usr) );
+      put_usr_registers( resume );
+      assert( resume != 0 );
     }
 
     return_to_swi_caller( resume, &resume->regs, std_top );

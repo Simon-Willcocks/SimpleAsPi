@@ -63,7 +63,7 @@ void transfer_to_output( uint32_t me, PipeSpace data, workspace *ws, int core )
 {
   assert( data.available != 0 );
 
-  bool reclaimed = Task_LockClaim( &ws->lock, me );
+  bool reclaimed = Task_LockClaim( &ws->lock );
 
   if (!reclaimed) {
     // You might think SetSender would be necessary, but as long as you're

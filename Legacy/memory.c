@@ -312,14 +312,14 @@ static error_block *resize_da( dynamic_area *da, int32_t resize_by_pages )
 void do_OS_DynamicArea( svc_registers *regs )
 {
   enum {
-    Create, Delete, Info, Enumerate,
+    Create, Delete, Info, EnumerateInfo,
     Renumber, FreeSpace, Internal6, Internal7,
     SetClamps, LockSparse, ReleaseSparse, LockArea,
     UnlockArea, ResizeArea, DescribeArea, ClaimBlock,
     ReleaseBlock, ResizeBlock, ReadBlockSize, ChangeDomain,
     LocateByAddress, PMPPhysOp, PMPLogicalOp, PMPResizeOp,
     PMPInfo, ExaminePMPPages, AdjustAppSpaceLimit, TotalFreePages,
-    Internal28
+    EnumerateInfo2
   };
   uint32_t action = regs->r[0];
   switch (action) {
@@ -396,7 +396,7 @@ void do_OS_DynamicArea( svc_registers *regs )
       }
     }
     break;
-  case Enumerate:
+  case EnumerateInfo:
     {
       dynamic_area *da;
       if (regs->r[1] == -1) {
@@ -413,14 +413,48 @@ void do_OS_DynamicArea( svc_registers *regs )
       }
     }
     break;
-  case 27: // Tested by WindowManager
+  case EnumerateInfo2: // Incomplete. Currently "internal", and only checked by TaskManager
     {
-    regs->spsr |= VF;
-    // FIXME
+      dynamic_area *da;
+      if (regs->r[1] == -1) {
+        da = shared.legacy.dynamic_areas;
+      }
+      else {
+        da = find_da( regs->r[1] );
+      }
+      if (da->next == shared.legacy.dynamic_areas) {
+        regs->r[1] = -1;
+      }
+      else {
+        regs->r[1] = da->next->number;
+      }
+    }
+    break;
+  case TotalFreePages: // Tested by WindowManager
+    {
+    regs->r[2] = (128 << 20) >> 12;
+    //regs->spsr |= VF;
+    // FIXME: return a valid value or stop asking!
+    }
+    break;
+  case PMPInfo:
+    {
+      dynamic_area *da;
+      da = find_da( regs->r[1] );
+    if (regs->r[1] != 0) PANIC;
+    regs->r[2] = (128 << 20) >> 12;
+    regs->r[3] = 0;
+    regs->r[4] = 0;
+    regs->r[5] = (128 << 20);
+    regs->r[6] = (128 << 20) >> 12;
+    regs->r[7] = (128 << 20) >> 12;
+    regs->r[8] = (uint32_t) da->name;
+    //regs->spsr |= VF;
+    // FIXME: return a valid value or stop asking!
     }
     break;
   default:
-    for (;;) { asm ( "wfi" ); }
+    PANIC;
   }
 }
 
@@ -460,7 +494,7 @@ void do_OS_Memory( svc_registers *regs )
     RecommendPage, MapInIOPermanent, MapInIOTemporary, MapOutTemporary,
     MemoryAreas, MemoryAccessPrivileges, FindAccessPrivilege, PrepareForDMA,
     CompatibilitySettings, MapInIOPermanent64, MapInIOTemporary64, ReserveRAM,
-    CheckMemoyAccess, FindControllerROL, General64Bit, VAtoPA };
+    CheckMemoryAccess, FindControllerROL, General64Bit, VAtoPA };
 
   uint32_t flags = regs->r[0] >> 8;
   uint8_t code = regs->r[0] & 0xff;
@@ -570,12 +604,21 @@ for (int y = 0; y < 1080; y++) {
       }
     }
     break;
-  case CheckMemoyAccess:
+  case CheckMemoryAccess:
     {
       // FIXME
       // All memory is readable and writable! Honest!
       // TODO check the slot.
       regs->r[1] = 0xf;
+    }
+    break;
+  case MemoryAreas: // Lie like a rug! FIXME
+    {
+      // This really exposes unnecessary details, doesn't it?
+      // Regardless, there is no longer one of each stack, etc.
+      regs->r[1] = 0;
+      regs->r[2] = 0;
+      regs->r[3] = 0;
     }
     break;
   default: PANIC;

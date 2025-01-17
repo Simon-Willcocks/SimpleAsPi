@@ -46,6 +46,46 @@ typedef struct __attribute__(( packed )) svc_registers {
   uint32_t spsr;
 } svc_registers;
 
+static inline bool Nset( svc_registers *regs )
+{
+  return 0 != (NF & regs->spsr);
+}
+
+static inline bool Nclear( svc_registers *regs )
+{
+  return 0 == (NF & regs->spsr);
+}
+
+static inline bool Zset( svc_registers *regs )
+{
+  return 0 != (ZF & regs->spsr);
+}
+
+static inline bool Zclear( svc_registers *regs )
+{
+  return 0 == (ZF & regs->spsr);
+}
+
+static inline bool Cset( svc_registers *regs )
+{
+  return 0 != (CF & regs->spsr);
+}
+
+static inline bool Cclear( svc_registers *regs )
+{
+  return 0 == (CF & regs->spsr);
+}
+
+static inline bool Vset( svc_registers *regs )
+{
+  return 0 != (VF & regs->spsr);
+}
+
+static inline bool Vclear( svc_registers *regs )
+{
+  return 0 == (VF & regs->spsr);
+}
+
 // This is rather RISC OS specific, but the task management
 // SWIs return errors in this format.
 typedef const struct {
@@ -64,3 +104,4 @@ OSTask *Error_##name( svc_registers *regs )\
 }
 
 #endif
+

@@ -121,11 +121,11 @@ OSTask *QueueWait( svc_registers *regs, OSQueue *queue,
   Task_LogNewLine();
 #endif
     // Nothing to remove, block caller
-    save_task_state( regs );
-    workspace.ostask.running = next;
-    dll_detach_OSTask( running );
+    assert( running->running );
+    result = stop_running_task( regs );
+    assert( !running->running );
+
     dll_attach_OSTask( running, &queue->handlers );
-    result = next;
   }
   else {
     // TODO scan queue for matching swi and/or core, if required
@@ -172,8 +172,6 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
   Task_LogNewLine();
 #endif
   OSTask *running = workspace.ostask.running;
-  OSTask *next = running->next;
-  OSTask *result = next;
 
   OSQueue *queue = queue_from_handle( queue_handle );
 
@@ -187,9 +185,7 @@ OSTask *queue_running_OSTask( svc_registers *regs, uint32_t queue_handle, uint32
   // Whatever happens, the caller stops running
   // It will either be added to the queue, or relinquish control
   // to a handler OSTask.
-  save_task_state( regs );
-  workspace.ostask.running = next;
-  dll_detach_OSTask( running );
+  OSTask *result = stop_running_task( regs );
 
   int op = SWI;
   int core = workspace.core;

@@ -11,14 +11,18 @@ echo Modules: ${MODULES//:/ }
 # At least until it will be safely coped with.
 INITIAL_MODULES='QA7\0'
 
-#INITIAL_MODULES+='LogToScreen\0'
 INITIAL_MODULES+='LogToUART\0'
 INITIAL_MODULES+='LEDBlink\0'
 INITIAL_MODULES+='GPUMailbox\0'
 INITIAL_MODULES+='BCM2835Display\0'
 INITIAL_MODULES+='BCM2835GrV\0'
+#INITIAL_MODULES+='LogToScreen\0'
 
 INITIAL_MODULES+='UtilityModule\0'
+
+INITIAL_MODULES+='BlendTable\0'
+INITIAL_MODULES+='ColourTrans\0'
+
 INITIAL_MODULES+='FileSwitch\0'
 INITIAL_MODULES+='ResourceFS\0'
 INITIAL_MODULES+='TerritoryManager\0'
@@ -31,13 +35,13 @@ INITIAL_MODULES+='BASIC\0'
 INITIAL_MODULES+='BASIC64\0'
 INITIAL_MODULES+='BASICVFP\0'
 
+# INITIAL_MODULES+='RamFS\0' # Needs PMPInfo
+
 # SpriteExtend does a lot of checking for platform features etc.
 INITIAL_MODULES+='SpriteExtend\0'
 INITIAL_MODULES+='SpriteUtils\0'
 
-INITIAL_MODULES+='BlendTable\0'
 INITIAL_MODULES+='BufferManager\0'
-INITIAL_MODULES+='ColourTrans\0'
 ##INITIAL_MODULES+='DeviceFS\0'
 INITIAL_MODULES+='ScreenModes\0'
 #INITIAL_MODULES+='Portable\0'
@@ -46,14 +50,15 @@ INITIAL_MODULES+='DragASprite\0'
 INITIAL_MODULES+='DragAnObject\0'
 INITIAL_MODULES+='Draw\0'
 INITIAL_MODULES+='FileCore\0'
-INITIAL_MODULES+='Filer\0'
-INITIAL_MODULES+='FilerSWIs\0'
 INITIAL_MODULES+='FontManager\0'
 
 INITIAL_MODULES+='WindowManager\0'
-INITIAL_MODULES+='TaskManager\0'
+#INITIAL_MODULES+='TaskManager\0'
 INITIAL_MODULES+='Desktop\0'
 
+# Moved to after TaskManager so it might start up?
+INITIAL_MODULES+='Filer\0'
+INITIAL_MODULES+='FilerSWIs\0'
 #INITIAL_MODULES+='FPEmulator\0'
 #INITIAL_MODULES+='VFPSupport\0'
 INITIAL_MODULES+='Free\0'
@@ -62,7 +67,7 @@ INITIAL_MODULES+='InverseTable\0'
 # INITIAL_MODULES+='NetFiler\0'         # Filers seem to drop out for little reason
 INITIAL_MODULES+='Obey\0'
 INITIAL_MODULES+='Pinboard\0'
-# INITIAL_MODULES+='RAMFSFiler\0'               # Filers seem to drop out for little reason
+#INITIAL_MODULES+='RAMFSFiler\0'               # Exits if no RamFS
 INITIAL_MODULES+='ResourceFiler\0'
 INITIAL_MODULES+='ROMFonts\0'
 
@@ -87,9 +92,9 @@ INITIAL_MODULES+='SuperSample\0'
 INITIAL_MODULES+='WindowUtils\0'
 INITIAL_MODULES+='FilterManager\0'
 ## INITIAL_MODULES+='WaveSynth\0' init error: Unknown SWI
-INITIAL_MODULES+='StringLib\0'
-INITIAL_MODULES+='Percussion\0'
-INITIAL_MODULES+='SharedSound\0'
+#INITIAL_MODULES+='StringLib\0'
+#INITIAL_MODULES+='Percussion\0'
+#INITIAL_MODULES+='SharedSound\0'
 INITIAL_MODULES+='Filer_Action\0'
 # INITIAL_MODULES+='DOSFS\0'
 # INITIAL_MODULES+='SDIODriver\0'
@@ -172,7 +177,8 @@ CFLAGS="-I . -Wall -nostartfiles -nostdlib -fno-zero-initialized-in-bss -static 
 CFLAGS="$CFLAGS -I ${SUBSYSTEMS//:/ -I }"
 CFLAGS="$CFLAGS $*"
 # I really didn't want anything like the following...
-CFLAGS="$CFLAGS -DLEGACY_CLIV -DLEGACY_SPECIAL_SCHC"
+CFLAGS="$CFLAGS -DLEGACY_CLIV"
+CFLAGS="$CFLAGS -DALLOW_SYS_MODE" # for legacy
 echo $CFLAGS
 
 $GCC -c Processor/CortexA53/processor.c \

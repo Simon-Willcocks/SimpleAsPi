@@ -144,7 +144,7 @@ void wait_for_space( UART *uart )
 void send( uint32_t handle, char c, uint32_t *lock )
 {
   for (;;) {
-    Task_LockClaim( lock, handle );
+    Task_LockClaim( lock );
     wait_until_idle( uart );
     core_info info = Task_Cores();
     //uart->data = 'a' + info.current;
@@ -171,7 +171,7 @@ void c_start_tasks( uint32_t handle, uint32_t *lock )
   uart->data = 'A';
   uart->data = 'B';
 
-  Task_LockClaim( lock, handle );
+  Task_LockClaim( lock );
 
   uart->data = 'C';
 

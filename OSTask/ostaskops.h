@@ -18,9 +18,9 @@
 #include "CK_types.h"
 
 enum {
-    OSTask_Yield = 0x2c0
-  , OSTask_Sleep
-  , OSTask_Create               // 0x2c2 New OSTask
+    OSTask_Yield = 0x2c0        // Like Sleep(0), but preserves all registers
+  , OSTask_Sleep                // Milliseconds, counting from the next one
+  , OSTask_Create               // 0x2c2 New OSTask in the same slot
   , OSTask_Spawn                // 0x2c3 New OSTask in a new slot
   , OSTask_EndTask              // 0x2c4 Last one out ends the slot
   , OSTask_Cores                // 0x2c5 Use sparingly! (More or less
@@ -30,21 +30,21 @@ enum {
   , OSTask_MapDevicePages       // 0x2c7 For device drivers
   , OSTask_AppMemoryTop         // 0x2c8 r0 = New value, or 0 to read
 
-  // I'm increasingly unhappy with this approach, I think it would be
-  // better to allow modules to create a task in another task's context
-  // which can run either 32- or 64-bit code provided by the module.
-  // Or simply change the module's task's slot...
+  // To service (and, with permission, take over) other tasks
   , OSTask_RunForTask           // 0x2c9 Run code in the context of the task
   , OSTask_GetRegisters         // 0x2ca Get registers of controlled task
   , OSTask_SetRegisters         // 0x2cb Set registers of controlled task
   , OSTask_Finished             // 0x2cc Return to home context
-  , OSTask_ReleaseTask          // 0x2cd Resume no longer controlled task
+  , OSTask_ReleaseTask          // 0x2cd Resume and release control of task
   , OSTask_ChangeController     // 0x2ce Pass the controlled task to another
   , OSTask_SetController        // 0x2cf Allow another task to control me
 
+  // Resource protection
   , OSTask_LockClaim            // 0x2d0
   , OSTask_LockRelease          // 0x2d1
 
+  // Interrupt handling (for use by the module dealing with the interrupt
+  // controller)
   , OSTask_EnablingInterrupts   // 0x2d2 Disable IRQs while I get
   , OSTask_WaitForInterrupt     // 0x2d3 ready to wait.
 
@@ -57,13 +57,13 @@ enum {
   , OSTask_SwitchToCore         // 0x2d7 Use sparingly!
 
   // SWI for internal use only!
-  , OSTask_Tick                 // 0x2d8 For HAL module use only
-                                // important task runnable
+  , OSTask_Tick                 // 0x2d8 For one (interrupt) task to use.
+                                // Call every ms.
 
   , OSTask_MapFrameBuffer // Depricated, I think... TBC
 
-  , OSTask_GetLogPipe           // 0x2da For the current core
-  , OSTask_LogString            // 0x2db
+  , OSTask_GetLogPipe           // 0x2da For the current core, to read.
+  , OSTask_LogString            // 0x2db to the log pipe (any task).
 
   , OSTask_PipeCreate = OSTask_Yield + 32 // 0x2e0
   , OSTask_PipeWaitForSpace
@@ -77,7 +77,7 @@ enum {
   , OSTask_PipeNotListening
   , OSTask_PipeWaitUntilEmpty
 
-  , OSTask_QueueCreate = OSTask_PipeCreate + 16 // 0x2e0
+  , OSTask_QueueCreate = OSTask_PipeCreate + 16 // 0x2f0
   , OSTask_QueueDelete
   , OSTask_QueueWait
   , OSTask_QueueWaitCore        // No implementation
@@ -98,7 +98,7 @@ void Task_Sleep( uint32_t ms )
   register uint32_t t asm( "r0" ) = ms;
   // sets r0 to 0. volatile is needed, since the optimiser ignores
   // asm statements with an output which is ignored.
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     : "=r" (t)
     : [swi] "i" (OSTask_Sleep), "r" (t)
     : "lr", "cc", "memory" );
@@ -107,7 +107,7 @@ void Task_Sleep( uint32_t ms )
 static inline
 void Task_Yield()
 {
-  asm volatile ( "svc %[swi]" 
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]" 
       :
       : [swi] "i" (OSTask_Yield)
       : "lr", "cc", "memory" );
@@ -116,7 +116,7 @@ void Task_Yield()
 static inline
 void Task_EndTask()
 {
-  asm ( "svc %[swi]"
+  asm ( "subs r0, r0, #0\n  svc %[swi]"
     :
     : [swi] "i" (OSTask_EndTask)
     : "lr", "cc" );
@@ -148,7 +148,7 @@ static inline
 core_info Task_Cores()
 {
   register uint32_t raw asm ( "r0" );
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     : "=r" (raw)
     : [swi] "i" (OSTask_Cores)
     : "lr", "cc" );
@@ -161,7 +161,7 @@ void Task_RegisterSWIHandlers( swi_handlers const *h )
 {
   register swi_handlers const *handlers asm ( "r0" ) = h;
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     :
     : [swi] "i" (OSTask_RegisterSWIHandlers)
     , "r" (handlers)
@@ -176,7 +176,7 @@ void *Task_MapDevicePages( void volatile *va, uint32_t base_page, uint32_t pages
   register uint32_t page asm ( "r1" ) = base_page;
   register uint32_t number asm ( "r2" ) = pages;
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     :
     : [swi] "i" (OSTask_MapDevicePages)
     , "r" (virt)
@@ -192,7 +192,7 @@ uint32_t Task_SetAppMemoryTop( uint32_t new_top )
 {
   register uint32_t top asm ( "r0" ) = new_top;
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     : "=r" (top)
     : [swi] "i" (OSTask_AppMemoryTop)
     , "r" (top)
@@ -210,7 +210,7 @@ uint32_t Task_ReadAppTop()
 static inline
 void Task_EnablingInterrupts()
 {
-  asm ( "svc %[swi]"
+  asm ( "subs r0, r0, #0\n  svc %[swi]"
     :
     : [swi] "i" (OSTask_EnablingInterrupts)
     : "lr", "cc", "memory" );
@@ -219,7 +219,7 @@ void Task_EnablingInterrupts()
 static inline
 void Task_WaitForInterrupt()
 {
-  asm ( "svc %[swi]"
+  asm ( "subs r0, r0, #0\n  svc %[swi]"
     :
     : [swi] "i" (OSTask_WaitForInterrupt)
     : "lr", "cc", "memory" );
@@ -230,7 +230,7 @@ void Task_SwitchToCore( uint32_t core )
 {
   register uint32_t c asm ( "r0" ) = core;
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     :
     : [swi] "i" (OSTask_SwitchToCore)
     , "r" (c)
@@ -245,7 +245,7 @@ void *Task_MapFrameBuffer( uint32_t pa, uint32_t pages )
 
   register void *va asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvs r0, #0"
         : "=r" (va)
         : [swi] "i" (OSTask_MapFrameBuffer)
@@ -261,7 +261,7 @@ uint32_t Task_GetLogPipe()
 {
   register uint32_t pipe asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     : "=r" (pipe)
     : [swi] "i" (OSTask_GetLogPipe)
     : "lr", "cc", "memory" );
@@ -286,7 +286,7 @@ void Task_LogString( char const *string, uint32_t length )
   register char const *s asm ( "r0" ) = string;
   register uint32_t l asm ( "r1" ) = length;
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
     :
     : [swi] "i" (OSTask_LogString)
     , "r" (s)
@@ -411,7 +411,7 @@ void Task_LogHex( uint32_t number )
 }
 
 static inline
-void Task_LogHexP( void *pointer )
+void Task_LogHexP( void const *pointer )
 {
   Task_LogHex( (uint32_t) pointer );
 }
@@ -443,7 +443,7 @@ uint32_t PipeOp_CreateForTransfer( uint32_t max_block )
 
   register uint32_t pipe asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvs R0, #0"
         : "=r" (pipe)
         : [swi] "i" (OSTask_PipeCreate)
@@ -464,7 +464,7 @@ uint32_t PipeOp_Create( void *base, uint32_t max_block )
 
   register uint32_t pipe asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvs R0, #0"
         : "=r" (pipe)
         : [swi] "i" (OSTask_PipeCreate)
@@ -486,7 +486,7 @@ uint32_t PipeOp_CreateOnBuffer( void *buffer, uint32_t len )
 
   register uint32_t pipe asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvs R0, #0"
         : "=r" (pipe)
         : [swi] "i" (OSTask_PipeCreate)
@@ -518,7 +518,7 @@ PipeSpace PipeOp_WaitForSpace( uint32_t write_pipe, uint32_t bytes )
 
   // gcc is working on allowing output and goto in inline assembler, but it's not there yet, afaik
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc r0, #0"
 
         : "=r" (error)
@@ -553,7 +553,7 @@ PipeSpace PipeOp_SpaceFilled( uint32_t write_pipe, uint32_t bytes )
 
   // gcc is working on allowing output and goto in inline assembler, but it's not there yet, afaik
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc r0, #0"
 
         : "=r" (error)
@@ -583,7 +583,7 @@ PipeSpace PipeOp_WaitForData( uint32_t read_pipe, uint32_t bytes )
 
   // gcc is working on allowing output and goto in inline assembler, but it's not there yet, afaik
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc r0, #0"
 
         : "=r" (error)
@@ -618,7 +618,7 @@ PipeSpace PipeOp_DataConsumed( uint32_t read_pipe, uint32_t bytes )
 
   // gcc is working on allowing output and goto in inline assembler, but it's not there yet, afaik
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc r0, #0"
 
         : "=r" (error)
@@ -646,7 +646,7 @@ error_block *PipeOp_SetReceiver( uint32_t read_pipe, uint32_t new_receiver )
 
   // gcc is working on allowing output and goto in inline assembler, but it's not there yet, afaik
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc r0, #0"
 
         : "=r" (error)
@@ -670,7 +670,7 @@ error_block *PipeOp_SetSender( uint32_t write_pipe, uint32_t new_sender )
 
   // gcc is working on allowing output and goto in inline assembler, but it's not there yet, afaik
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc %[error], #0"
     "\n  movvs %[error], r0"
 
@@ -693,7 +693,7 @@ error_block *PipeOp_NotListening( uint32_t read_pipe )
   register error_block *error asm ( "r0" );
 
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc r0, #0"
 
         : "=r" (error)
@@ -715,7 +715,7 @@ error_block *PipeOp_NoMoreData( uint32_t send_pipe )
   register error_block *error asm ( "r0" );
 
   asm volatile (
-        "svc %[swi]"
+        "subs r0, r0, #0\n  svc %[swi]"
     "\n  movvc r0, #0"
 
         : "=r" (error)
@@ -732,7 +732,7 @@ error_block *Task_RunForTask( uint32_t client )
   register uint32_t h asm ( "r0" ) = client;
   register error_block *error asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OSTask_RunForTask)
@@ -747,7 +747,7 @@ error_block *Task_Finished()
 {
   register error_block *error asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OSTask_Finished)
@@ -970,7 +970,7 @@ error_block *Task_ReleaseTask( uint32_t client, svc_registers const *regs )
   register svc_registers const *r asm ( "r1" ) = regs;
   register error_block *error asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OSTask_ReleaseTask)
@@ -988,7 +988,7 @@ error_block *Task_ChangeController( uint32_t client, uint32_t controller )
   register uint32_t replacement asm ( "r1" ) = controller;
   register error_block *error asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OSTask_ChangeController)
@@ -1006,7 +1006,7 @@ error_block *Task_SetController( svc_registers *regs, uint32_t controller )
   register uint32_t c asm ( "r1" ) = controller;
   register error_block *error asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OSTask_SetController)
@@ -1024,7 +1024,7 @@ error_block *Task_GetRegisters( uint32_t controlled, svc_registers *regs )
   register svc_registers *r asm ( "r1" ) = regs;
   register error_block *error asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OSTask_GetRegisters)
@@ -1042,7 +1042,7 @@ error_block *Task_SetRegisters( uint32_t controlled, svc_registers *regs )
   register svc_registers *r asm ( "r1" ) = regs;
   register error_block *error asm ( "r0" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r0, #0"
       : "=r" (error)
       : [swi] "i" (OSTask_SetRegisters)
@@ -1067,7 +1067,7 @@ uint32_t Task_QueueCreate()
 
   // FIXME handle errors
   // FIXME there should probably be a QueueDelete!
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              : "=r" (handle)
              : [swi] "i" (OSTask_QueueCreate)
              : "lr", "cc", "memory" );
@@ -1086,7 +1086,7 @@ queued_task Task_QueueWait( uint32_t queue_handle )
   register uint32_t core asm ( "r2" );
   register error_block *error asm ( "r3" );
 
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
              "\n  movvc r3, #0"
              "\n  movvs r3, r0"
              "\n  movvs r0, #0"
@@ -1128,7 +1128,7 @@ uint32_t Task_PhysicalFromVirtual( void const *va, uint32_t length )
   register void const *v asm( "r0" ) = va;
   register uint32_t l asm( "r1" ) = length;
   register uint32_t p asm( "r0" );
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
       : "=r" (p)
       : [swi] "i" (OSTask_PhysicalFromVirtual)
       , "r" (v)
@@ -1143,7 +1143,7 @@ uint32_t Task_InvalidateCache( void const *va, uint32_t length )
   register void const *v asm( "r0" ) = va;
   register uint32_t l asm( "r1" ) = length;
   register uint32_t p asm( "r0" );
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
       : "=r" (p)
       : [swi] "i" (OSTask_InvalidateCache)
       , "r" (v)
@@ -1158,7 +1158,7 @@ uint32_t Task_FlushCache( void const *va, uint32_t length )
   register void const *v asm( "r0" ) = va;
   register uint32_t l asm( "r1" ) = length;
   register uint32_t p asm( "r0" );
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
       : "=r" (p)
       : [swi] "i" (OSTask_FlushCache)
       , "r" (v)
@@ -1172,30 +1172,25 @@ uint32_t Task_FlushCache( void const *va, uint32_t length )
 
 // Returns true if lock has been reclaimed by the same task (in
 // which case you don't want to release it this time).
+// Pattern:
+// void myfunc() {
+//   bool reclaimed = Task_LockClaim( &mylock );
+//   ...
+//   if (!reclaimed) Task_LockRelease( &mylock );
+// }
 // If your code doesn't expect to re-claim the lock, a true result
 // probably indicates a serious programming error.
 static inline
-bool Task_LockClaim( uint32_t *lock, uint32_t handle )
+bool Task_LockClaim( uint32_t *lock )
 {
-/*
-  // Considering making change_word_if_equal globally available...
-  uint32_t old = change_word_if_equal( lock, 0, handle );
-  if (0 != old && handle != (old & ~1)) {
-*/
-    register uint32_t *p asm( "r0" ) = lock;
-    register uint32_t h asm( "r1" ) = handle;
-    register bool reclaimed asm( "r0" );
-    asm volatile ( "svc %[swi]"
-        : "=r" (reclaimed)
-        : [swi] "i" (OSTask_LockClaim)
-        , "r" (p)
-        , "r" (h)
-        : "lr", "cc", "memory" );
+  register uint32_t *p asm( "r0" ) = lock;
+  register bool reclaimed asm( "r0" );
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
+      : "=r" (reclaimed)
+      : [swi] "i" (OSTask_LockClaim)
+      , "r" (p)
+      : "lr", "cc", "memory" );
   return reclaimed;
-/*
-  }
-  return (handle == (old & ~1));
-*/
 }
 
 // Release a lock, allowing any waiting tasks to claim it.
@@ -1203,7 +1198,7 @@ static inline
 void Task_LockRelease( uint32_t *lock )
 {
   register uint32_t *p asm( "r0" ) = lock;
-  asm volatile ( "svc %[swi]"
+  asm volatile ( "subs r0, r0, #0\n  svc %[swi]"
       :
       : [swi] "i" (OSTask_LockRelease)
       , "r" (p)

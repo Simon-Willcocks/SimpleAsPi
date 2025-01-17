@@ -102,7 +102,7 @@ void open_display( uint32_t handle, workspace *ws )
   mailbox_request[i++] = 0x00048006; // Pixel order
   mailbox_request[i++] = 4;
   mailbox_request[i++] = 0;
-  mailbox_request[i++] = 0; // 0: BGR, 1: RGB
+  mailbox_request[i++] = 1; // 0: BGR, 1: RGB
   mailbox_request[i++] = 0x00040001, // Allocate buffer
   mailbox_request[i++] = 8;
   mailbox_request[i++] = 0;

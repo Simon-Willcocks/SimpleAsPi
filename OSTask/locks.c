@@ -45,9 +45,7 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
   OSTask *running = workspace.ostask.running;
   OSTask *next = 0;
 
-  uint32_t handle = regs->r[1];
-
-  if (handle != ostask_handle( running )) PANIC;
+  uint32_t handle = ostask_handle( running );
 
   OSTaskLock code = { .raw = handle };
 
@@ -69,11 +67,7 @@ OSTask *TaskOpLockClaim( svc_registers *regs )
     regs->r[0] = 1;
   }
   else {
-    next = running->next;
-
-    save_task_state( regs );
-    workspace.ostask.running = next;
-    dll_detach_OSTask( running );
+    next = stop_running_task( regs );
 
     assert( running->regs.r[0] == (uint32_t) lock );
 

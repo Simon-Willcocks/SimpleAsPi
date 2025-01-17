@@ -329,8 +329,9 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
 
     regs[0] = 0;
     break; // Vet mode 	FG 	SVC
-  case 8:  // Features 	FG 	SVC
+  case 8:  // Features 	FG 	SVC (supposed to be deprecated wrt 17)
     {
+      WriteS( "Features" );
       // No VSyncs, separate frame store, not variable frame store,
       regs[0] = 0x38;
       // Mask of supported pixel formats

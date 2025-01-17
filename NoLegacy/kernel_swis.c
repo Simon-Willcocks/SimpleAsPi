@@ -117,7 +117,7 @@ void execute_swi( svc_registers *regs, int number )
 
     do_OS_Module( regs );
 
-    if (module_run && 0 == (regs->spsr & VF)) {
+    if (module_run && Vclear( regs )) {
       regs->r[12] = regs->r[1];
       regs->lr = regs->r[2];
     }
@@ -138,11 +138,11 @@ void execute_swi( svc_registers *regs, int number )
     }
   }
 
-  if (generate_error && 0 != (VF & regs->spsr)) {
+  if (generate_error && Vset( regs )) {
     PANIC; // TODO
   }
 
-  if (0 != (VF & regs->spsr)) {
+  if (Vset( regs )) {
     PANIC; // TODO
   }
 
