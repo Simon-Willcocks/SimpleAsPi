@@ -34,7 +34,7 @@ void execute_swi( svc_registers *regs, int number );
 // SWIs in the range OSTask_Yield ... OSTask_Yield + 63
 OSTask *ostask_svc( svc_registers *regs, int number );
 
-//static inline
+static inline
 void __attribute__(( noreturn )) return_to_swi_caller( 
                         OSTask *task,
                         svc_registers *regs,
@@ -400,11 +400,8 @@ void unexpected_task_return();
 static inline
 void put_usr_registers( OSTask *task )
 {
-  if (task != workspace.ostask.running) asm ( "bkpt 6" );
-  if (task->banked_sp_usr == -6 && task != workspace.ostask.idle) asm ( "bkpt 8" );
   asm ( "msr sp_usr, %[sp]"
     "\n  msr lr_usr, %[lr]"
-    "\n  udf 163"
     :
     : [sp] "r" (task->banked_sp_usr)
     , [lr] "r" (task->banked_lr_usr) );
@@ -413,75 +410,64 @@ void put_usr_registers( OSTask *task )
 static inline
 void get_usr_registers( OSTask *task )
 {
-  if (task != workspace.ostask.running) asm ( "bkpt 7" );
-  uint32_t sp;
-  uint32_t lr;
   asm ( "mrs %[sp], sp_usr"
     "\n  mrs %[lr], lr_usr"
-    "\n  udf 164"
-      : [sp] "=r" (sp)
-      , [lr] "=r" (lr) );
-  if (sp == -6 && task != workspace.ostask.idle) PANIC;
-  asm ( "mrs %[sp], sp_usr"
-    "\n  mrs %[lr], lr_usr"
-    "\n  udf 164"
       : [sp] "=r" (task->banked_sp_usr)
       , [lr] "=r" (task->banked_lr_usr) );
 }
 
-//static inline
-// void __attribute__(( noreturn )) return_to_swi_caller( 
-//                         OSTask *task,
-//                         svc_registers *regs,
-//                         void *svc_sp )
-// {
-//   //if (shared.module.last != shared.module.modules && task == 0xff100000 && task->banked_sp_usr == 0) PANIC;
-// 
-// asm ( "udf 65\n mov %0, %0" : : "r" (task) );
-// 
-//   if (task != 0) {
-//     assert( task->saved );
-// 
-//     assert( task == workspace.ostask.running );
-//     if (needs_usr_stack( regs )) {
-//       put_usr_registers( task );
-//     }
-// 
-//     assert( task->running == 0 );
-//   }
-// 
-//   assert( task == 0 || task == workspace.ostask.running );
-// 
-//   workspace.ostask.running->running = 1;
-// 
-//   if (task != 0) map_slot( task->slot );
-// 
-//   // Resume after the SWI
-//   register svc_registers *lr asm ( "lr" ) = regs;
-//   asm (
-//           "mov sp, %[sp]"
-//       "\n  ldm lr!, {r0-r12}"
-//       "\n  rfeia lr // Restore execution and SPSR"
-//       :
-//       : [sp] "r" (svc_sp)
-//       , "r" (lr) );
-// 
-//   __builtin_unreachable();
-// }
-
-// Detach the running task from the running list, returns the new
-// running task.
-//static inline
+static inline
 OSTask *stop_running_task( svc_registers const *regs )
-;
-// {
-//   OSTask *running = workspace.ostask.running;
-//   OSTask *next = next;
-//   workspace.ostask.running = next;
-//   assert( running != workspace.ostask.running );
-//   assert( running != workspace.ostask.idle );
-//   dll_detach_OSTask( running );
-//   assert( next == workspace.ostask.running );
-//   assert( workspace.ostask.running != running );
-//   return next;
-// }
+{
+  OSTask *running = workspace.ostask.running;
+  assert( running != workspace.ostask.idle );
+  OSTask *next = running->next;
+  assert( !next->running );
+  assert( running->running );
+  save_task_state( regs );
+  assert( !running->running );
+  workspace.ostask.running = next;
+  assert( running != workspace.ostask.running );
+  dll_detach_OSTask( running );
+  assert( next == workspace.ostask.running );
+  assert( workspace.ostask.running != running );
+  return next;
+}
+
+static inline
+void __attribute__(( noreturn )) return_to_swi_caller( 
+                        OSTask *task,
+                        svc_registers *regs,
+                        void *svc_sp )
+{
+  if (task != 0) {
+    assert( task->saved );
+
+    assert( task == workspace.ostask.running );
+    if (needs_usr_stack( regs )) {
+      put_usr_registers( task );
+    }
+
+    assert( !task->running );
+    task->running = 1;
+  }
+  else {
+    assert( workspace.ostask.running->running );
+  }
+
+  assert( task == 0 || task == workspace.ostask.running );
+
+  if (task != 0) map_slot( task->slot );
+
+  // Resume after the SWI
+  register svc_registers *lr asm ( "lr" ) = regs;
+  asm (
+          "mov sp, %[sp]"
+      "\n  ldm lr!, {r0-r12}"
+      "\n  rfeia lr // Restore execution and SPSR"
+      :
+      : [sp] "r" (svc_sp)
+      , "r" (lr) );
+
+  __builtin_unreachable();
+}

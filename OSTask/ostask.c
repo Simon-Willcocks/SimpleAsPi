@@ -259,9 +259,8 @@ void save_task_state( svc_registers const *regs )
 {
   OSTask *running = workspace.ostask.running;
 
-  asm ( "udf 88" : : "r" (running), "r" (running->saved) );
   if (!running->running) PANIC;
-  asm ( "LDR %[lr],[sp, #20]" : [lr] "=r" (running->saved) : : "memory" );
+  running->saved = save_task_state; // Clears running flag
   if (running->running) PANIC;
 
   running->regs = *regs;
@@ -272,17 +271,16 @@ void save_task_state( svc_registers const *regs )
     get_usr_registers( running );
   }
 #ifdef DEBUG__LOG_LEGACY_STACK
-      { char const text[] = "Saved task ";
-      Task_LogString( text, sizeof( text )-1 ); }
-      Task_LogHex( ostask_handle( running ) );
-      Task_LogNewLine();
-      uint32_t *p = &running->regs;
-      for (int i = 0; i < 16; i++) {
-        Task_LogHex( p[i] );
-        Task_LogString( i & 0xf == 0xf ? " " : "\n", 1 );
-      }
-      Task_LogNewLine();
-
+  { char const text[] = "Saved task ";
+  Task_LogString( text, sizeof( text )-1 ); }
+  Task_LogHex( ostask_handle( running ) );
+  Task_LogNewLine();
+  uint32_t *p = &running->regs;
+  for (int i = 0; i < 16; i++) {
+    Task_LogHex( p[i] );
+    Task_LogString( i & 0xf == 0xf ? " " : "\n", 1 );
+  }
+  Task_LogNewLine();
 #endif
 }
 
@@ -1619,59 +1617,3 @@ void *memmove(void *dest, const void *src, size_t n)
   return dest;
 }
 
-OSTask *stop_running_task( svc_registers const *regs )
-{
-  OSTask *running = workspace.ostask.running;
-  assert( running != workspace.ostask.idle );
-  OSTask *next = running->next;
-asm ( "udf 64\n mov %0, %0\n mov %1, %1" : : "r" (running), "r" (next) );
-  assert( !next->running );
-  assert( running->running );
-  save_task_state( regs );
-  assert( !running->running );
-  workspace.ostask.running = next;
-  assert( running != workspace.ostask.running );
-  dll_detach_OSTask( running );
-  assert( next == workspace.ostask.running );
-  assert( workspace.ostask.running != running );
-  return next;
-}
-
-void __attribute__(( noreturn )) return_to_swi_caller( 
-                        OSTask *task,
-                        svc_registers *regs,
-                        void *svc_sp )
-{
-  //if (shared.module.last != shared.module.modules && task == 0xff100000 && task->banked_sp_usr == 0) PANIC;
-
-  if (task != 0) {
-    assert( task->saved );
-
-    assert( task == workspace.ostask.running );
-    if (needs_usr_stack( regs )) {
-      put_usr_registers( task );
-    }
-
-    assert( !task->running );
-    task->running = 1;
-  }
-  else {
-    assert( workspace.ostask.running->running );
-  }
-
-  assert( task == 0 || task == workspace.ostask.running );
-
-  if (task != 0) map_slot( task->slot );
-
-  // Resume after the SWI
-  register svc_registers *lr asm ( "lr" ) = regs;
-  asm (
-          "mov sp, %[sp]"
-      "\n  ldm lr!, {r0-r12}"
-      "\n  rfeia lr // Restore execution and SPSR"
-      :
-      : [sp] "r" (svc_sp)
-      , "r" (lr) );
-
-  __builtin_unreachable();
-}
