@@ -226,7 +226,7 @@ asm ( "svc %[swi]" : : [swi] "i" (Xbit | OS_CLI), "r" (s) );
 #define Log(s) do { static char const text[] = s; Task_LogString( text, sizeof( text )-1 ); } while (false)
 #define LogNL Task_LogNewLine()
 
-if (1) {
+if (0) {
 //asm ( "svc 0x66666" );
 Task_Sleep( 1 );
 char const cmd[] = "Info Switcher:Templates";
@@ -689,7 +689,7 @@ if (0) {
 }
 
 {
-char const cmd[] = "Desktop";
+char const cmd[] = "Desktop Resources:$.Apps.!Alarm";
 register char const *s asm( "r0" ) = cmd;
 asm ( "svc %[swi]" : : [swi] "i" (OS_CLI), "r" (s) );
 }

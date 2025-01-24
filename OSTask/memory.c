@@ -66,6 +66,7 @@ uint32_t app_memory_top( uint32_t new )
     i++;
   }
   if (new != 0) {
+    new = (new + 0xfff) & ~0xfff;
     if (new > top) {
       app_memory_block *block = find_block( slot, top );
       uint32_t pages = (new - top) >> 12;
@@ -78,7 +79,36 @@ uint32_t app_memory_top( uint32_t new )
       top = new;
     }
     else if (new < top) {
-      PANIC; // Shrinking app area.
+      static char const text[] = "MEMORY LEAKING HERE!!!";
+      Task_LogNewLine();
+      Task_LogString( text, sizeof( text )-1 );
+      Task_LogNewLine();
+      //PANIC; // Shrinking app area.
+      int i = 0;
+      while (slot->app_mem[i].pages != 0
+          && new > top_of( &slot->app_mem[i] )) {
+        i++;
+      }
+
+      while (slot->app_mem[i].pages != 0) {
+        app_memory_block *block = &slot->app_mem[i];
+        if (slot->app_mem[i].va_page < (new >> 12)) {
+          // Shrink block
+          uint32_t keep = (new >> 12) - block->va_page;
+          uint32_t release = block->pages - keep;
+          block->pages = keep;
+          uint32_t page = block->page_base + keep;
+          // free_contiguous_memory( page, release );
+        }
+        else {
+          // Free whole block
+          // free_contiguous_memory( block->page_base, block->pages );
+          block->pages = 0;
+        }
+        i++;
+      }
+
+      top = new;
     }
   }
 

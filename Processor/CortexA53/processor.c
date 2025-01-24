@@ -226,7 +226,7 @@ void *memset(void *s, int c, uint32_t n)
   return s;
 }
 
-void *memcpy(void *d, void *s, uint32_t n)
+void *memcpy(void *d, void const *s, uint32_t n)
 {
   uint8_t const *src = s;
   uint8_t *dest = d;

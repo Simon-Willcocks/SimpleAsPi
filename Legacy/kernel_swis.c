@@ -25,6 +25,16 @@
 #include "ZeroPage.h"
 #include "memory.h"
 
+// RISC OS style strlen (ctrl terminated, not just '\0')
+static int strlen( char const *p )
+{
+  char const *e = p;
+  while (*e >= ' ') e++;
+  return e - p;
+}
+
+void *memcpy(void *d, void const *s, uint32_t n);
+
 extern uint8_t system_heap_base;
 extern uint8_t system_heap_top;
 // Shared heap of memory that's user rwx
@@ -885,12 +895,42 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
   case OS_PlatformFeatures: do_OS_PlatformFeatures( regs ); break;
   case OS_ReadSysInfo: do_OS_ReadSysInfo( regs ); break;
 
+  case OS_WriteEnv:
+    {
+      // RISC OS style strlen, but nul terminate
+      static char const text[] = "WriteEnv: ";
+      Task_LogString( text, sizeof( text )-1 );
+
+      char const *cmd = (char const *) regs->r[0];
+      uint32_t len = strlen( cmd );
+
+      char *copy = shared_heap_allocate( len + 1 );
+      memcpy( copy, (char const *) regs->r[0], len );
+      copy[len] = '\0';
+
+      Task_LogString( copy, 0 );
+      Task_LogNewLine();
+
+      if (running->slot->command != 0)
+        shared_heap_free( running->slot->command );
+      running->slot->command = copy;
+      // FIXME: currently ignoring start time.
+    }
+    break;
   case OS_GetEnv:
     {
-      // Leaving the warning below to highlight the TODO
-      regs->r[0] = (uint32_t) "This should be the command";
-      regs->r[1] = 0x400000; // FIXME
-      regs->r[2] = 200; // FIXME
+      static const uint64_t fake_time = 200;
+      void *cmd = (0 == running->slot->command) ? "" : running->slot->command;
+      regs->r[0] = (uint32_t) cmd;
+      regs->r[1] = app_memory_top( 0 );
+      regs->r[2] = (uint32_t) &fake_time; // FIXME
+
+      static char const text[] = "GetEnv: ";
+      Task_LogString( text, sizeof( text )-1 );
+
+      Task_LogString( cmd, 0 );
+      Task_LogNewLine();
+      asm ( "swi 0x66666" );
     }
     break;
   case OS_ReadMemMapInfo:
@@ -959,23 +999,42 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
     }
     break;
 
-#ifdef DEBUG__LOG_COMMANDS
   case OS_CLI:
     {
       char const *cmd = (char*) regs->r[0];
+
+      char c;
+      // Ignore leading spaces and *s
+      do {
+        c = *cmd++;
+      } while (c == '*' || c == ' ');
+      cmd--;
+
       uint32_t len = 0;
-      while (cmd[len] >= ' ') len++;
+      do {
+        c = cmd[len++];
+      } while (c != '|' && c >= ' ');
+      len--;
+      // TODO Redirection?
+
+      if (len == 0) break;
+
       Task_LogString( "OSCLI: ", 7 );
       Task_LogString( cmd, len );
       Task_LogNewLine();
-#ifdef DEBUG__NOPOINTER
-      if (cmd[0] == 'P' && cmd[1] == 'o') { // Pointer
-        break; // FIXME FIXME FIXME FIXME FIXME FIXME FIXME
-      }
-#endif
+
+      char *copy = shared_heap_allocate( len + 1 );
+      memcpy( copy, (char const *) regs->r[0], len );
+      copy[len] = '\0';
+
+      if (running->slot->command != 0)
+        shared_heap_free( running->slot->command );
+      running->slot->command = copy;
+      // DROPPING THROUGH!
+      // DROPPING THROUGH!
+      // DROPPING THROUGH!
       // DROPPING THROUGH!
     }
-#endif
 
   default:
     {

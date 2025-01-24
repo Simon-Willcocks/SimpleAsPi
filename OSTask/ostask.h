@@ -122,6 +122,8 @@ struct OSTaskSlot {
   uint32_t mmu_map;
   uint32_t number_of_tasks;
 
+  char const *command;
+
   // See memory.c
   app_memory_block app_mem[30];
   app_memory_block pipe_mem[100];

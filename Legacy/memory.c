@@ -430,6 +430,12 @@ void do_OS_DynamicArea( svc_registers *regs )
       }
     }
     break;
+  case FreeSpace: // Tested by Wimp_SetSlot
+    {
+    regs->r[2] = 0x40000000;
+    // FIXME: return a valid value or stop asking!
+    }
+    break;
   case TotalFreePages: // Tested by WindowManager
     {
     regs->r[2] = (128 << 20) >> 12;

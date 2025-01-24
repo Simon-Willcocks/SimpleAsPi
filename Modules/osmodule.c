@@ -1248,6 +1248,44 @@ void start_usr32( void *start, uint32_t *private )
   __builtin_unreachable();
 }
 
+// FIXME: Should this be in Legacy, or should Legacy use this routine
+// and this one modify the OSTaskSlot? I think it should.
+// While we're at it, make the start time a uint64_t, the legacy 5
+// bytes are the least significant 5.
+static inline
+void write_environment( char const *space_term, char const *ctrl_term )
+{
+  int cmd_len = 0;
+  while (space_term != 0 && space_term[cmd_len] > ' ') { cmd_len++; }
+
+  char const *args = ctrl_term;
+  uint32_t args_len = strlen( args );
+
+  uint32_t len = cmd_len + args_len;
+  char env[len + 2]; // +2 for space and terminator
+
+  char const *cmdline = 0;
+  if (cmd_len == 0) {
+    cmdline = ctrl_term;
+  }
+  else {
+    memcpy( env, space_term, cmd_len );
+    env[cmd_len] = ' ';
+    memcpy( &env[cmd_len+1], args, args_len );
+    env[len+1] = '\0';
+    cmdline = env;
+  }
+
+  uint64_t time = 500; // FIXME, real start time
+  register char const *e asm( "r0" ) = cmdline;
+  register uint64_t *t asm( "r1" ) = &time;
+  asm ( "svc %[swi]"
+    :
+    : [swi] "i" (OS_WriteEnv | Xbit)
+    , "r" (e)
+    , "r" (t) );
+}
+
 OSTask *do_OS_Module( svc_registers *regs )
 {
   // Hint to the caller that the stack should be reset, etc.
@@ -1289,6 +1327,11 @@ OSTask *do_OS_Module( svc_registers *regs )
   Task_LogNewLine();
 #endif
 
+      static char const text[] = "RMRun: ";
+      Task_LogString( text, sizeof( text )-1 );
+      // This will take over from the current program...
+      write_environment( 0, (char*) regs->r[1] );
+
       // Treat this as a call to return the start and private addresses
       regs->r[0] = (uint32_t) &no_error;
       regs->spsr |= VF;
@@ -1329,6 +1372,11 @@ OSTask *do_OS_Module( svc_registers *regs )
 
       void *start = start_code( m->header );
       if (start == 0) PANIC;
+
+      static char const text[] = "RMEnter: ";
+      Task_LogString( text, sizeof( text )-1 );
+      // This will take over from the current program...
+      write_environment( module_name, (char *) regs->r[2] );
 
       // Treat this as a call to return the start and private addresses
       regs->r[0] = (uint32_t) &no_error;

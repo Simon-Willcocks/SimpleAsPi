@@ -818,6 +818,9 @@ OSTask *TaskOpCreate( svc_registers *regs, bool spawn )
 
   if (spawn) {
     task->slot = mpsafe_detach_OSTaskSlot_at_head( &shared.ostask.slot_pool );
+    memset( task->slot, 0, sizeof( *task->slot ) );
+    task->slot->number_of_tasks = 1;
+    task->slot->command = 0;
   }
   else {
     task->slot = running->slot;
@@ -1278,8 +1281,9 @@ OSTask *ostask_svc( svc_registers *regs, int number )
   default: asm ( "bkpt 0xffff" );
   }
 
-  // If running has been put into some shared queue by the SWI, it may already
-  // have been picked up by another core. DO NOT make any more changes to it!
+  // If running has been put into some shared queue by the SWI, it may
+  // already have been picked up by another core. DO NOT make any more
+  // changes to it!
 
   if (resume == 0) {
     assert( workspace.ostask.running == running );
