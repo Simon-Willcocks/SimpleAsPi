@@ -67,7 +67,7 @@ void *heap_allocate( void *start, uint32_t size )
   return mem;
 }
 
-void heap_free( void *start, void *block )
+void heap_free( void *start, void const *block )
 {
   register uint32_t command asm ( "r0" ) = 3;
   register void *heap asm ( "r1" ) = start;
@@ -522,6 +522,38 @@ OSTask *do_OS_PlatformFeatures( svc_registers *regs )
   return 0;
 }
 
+void hal_routine()
+{
+  asm ( "udf 0xff00" );
+}
+
+OSTask *do_OS_Hardware( svc_registers *regs )
+{
+  enum { Call, GetAddress, AddDevice, RemoveDevice, EnumReverse, EnumChronological };
+
+  switch (regs->r[8] & 0x7f) {
+  case Call:
+    switch (regs->r[9]) {
+    case 21:
+      {
+        static char const text[] = "HAL command 21\n";
+        Task_LogString( text, sizeof( text )-1 );
+      }
+      break;
+    default: PANIC;
+    }
+    break;
+  case GetAddress:
+    regs->r[0] = (uint32_t) hal_routine;
+    regs->r[1] = regs->r[9];
+    break;
+  default:
+    PANIC;
+    break;
+  }
+  return 0;
+}
+
 OSTask *do_OS_ReadSysInfo( svc_registers *regs )
 {
   switch (regs->r[0]) {
@@ -623,7 +655,7 @@ bool needs_legacy_stack( uint32_t swi )
     0b00000000111111111111111111111111 };       // 224-255
 
   switch (swi) {
-  case 0x000 ... 0x0ff: 
+  case 0x000 ... 0x0ff:
     // Shift the n-th from left bit to the top of the word
     return ((legacy[swi / 32]) << (swi % 32)) < 0;
   case 0x100 ... 0x1ff:
@@ -735,7 +767,7 @@ void do_convert( svc_registers *regs, int swi )
     regs->r[2] -= (p - buf);
     *p = '\0';
     break;
-    
+
   case 0xd9: val = (val << 24) >> 24;
   case 0xda: val = (val << 16) >> 16;
   case 0xdb: val = (val << 8) >> 8;
@@ -800,10 +832,12 @@ void do_convert( svc_registers *regs, int swi )
     regs->r[2] -= (p - buf);
     *p = '\0';
     break;
-    
+
   default: PANIC;
   }
 }
+
+static svc_registers *const std_top = (void*) ((&workspace.svc_stack)+1);
 
 // Code to recover after an interrupt while in SVC mode.
 void __attribute__(( naked, noreturn )) ResumeLegacy();
@@ -812,6 +846,14 @@ void __attribute__(( naked, noreturn )) ResumeLegacy();
 // (Resumption is carried out in the execute_swi function.)
 void __attribute__(( naked, noreturn )) BlockedLegacy()
 {
+  // Trigger the owner task
+  OSTask *running = workspace.ostask.running;
+  put_usr_registers( running );
+  OSTask *resume = queue_running_OSTask( &running->regs,
+                                         shared.legacy.queue,
+                                         0xffffff );
+  return_to_swi_caller( resume, &resume->regs, std_top );
+
   PANIC; // Needs some code to avoid being the same location as ResumeLegacy
 }
 
@@ -821,8 +863,6 @@ struct legacy_stack_frame {
   uint32_t blocked_swi_lr;
   void *blocked_sp;
 };
-
-static svc_registers *const std_top = (void*) ((&workspace.svc_stack)+1);
 
 //static
 OSTask *run_the_swi( svc_registers *regs, uint32_t number )
@@ -873,7 +913,6 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
 
           OSTask *owner = shared.legacy.owner;
           mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, owner );
-          asm ( "udf 1" );
 
           // Passing running to ensure banked registers set
           return_to_swi_caller( running, &running->regs, std_top );
@@ -894,6 +933,8 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
 
   case OS_PlatformFeatures: do_OS_PlatformFeatures( regs ); break;
   case OS_ReadSysInfo: do_OS_ReadSysInfo( regs ); break;
+
+  case OS_Hardware: do_OS_Hardware( regs ); break;
 
   case OS_WriteEnv:
     {
@@ -930,7 +971,6 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
 
       Task_LogString( cmd, 0 );
       Task_LogNewLine();
-      asm ( "swi 0x66666" );
     }
     break;
   case OS_ReadMemMapInfo:
@@ -954,6 +994,14 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
   case OS_SetCallBack:
     // Legacy's legacy. I think this is depricated in favour of
     // AddCallBack, but it's still used by at least the Wimp.
+    // "The CallBack handler is permanent and takes all CallBacks
+    // that are not intercepted by transients. These CallBacks are
+    // explicitly requested by calling OS_SetCallBack (page 1-315).
+    // They can also be implicitly requested by setting R12 to 1 
+    // on exit from either an escape or event handler. There is a
+    // system default CallBack handler, but you can of course 
+    // replace it using OS_ChangeEnvironment."
+    // PRM 1-298 TODO FIXME
     legacy_zero_page.CallBack_Flag |= 1;
     break;
 
@@ -971,13 +1019,21 @@ OSTask *run_the_swi( svc_registers *regs, uint32_t number )
 #ifdef DEBUG__FAKE_OS_BYTE
   case OS_Byte:
     {
-      if (regs->r[0] == 0xa1 && regs->r[1] == 0x8c) {
-        // 8 = Homerton.Medium
-        // 12 = Trinity.Medium
-        regs->r[2] = (2 * 12) + 1; // 3D look. Fixed font
-      }
-      else if (regs->r[0] == 0xa1 && regs->r[1] == 134) { // FontSize (in pages)
-        regs->r[2] = 32;
+      if (regs->r[0] == 0xa1) {
+        // "CMOS RAM"
+        if (regs->r[1] == 134) { // FontSize (in pages)
+          regs->r[2] = 32;
+        }
+        else if (regs->r[1] == 140) {
+          // 8 = Homerton.Medium
+          // 12 = Trinity.Medium
+          regs->r[2] = (2 * 12) + 1; // 3D look. Fixed font
+        }
+        else if (regs->r[1] == 144) { // Pages of RAM disc
+          static const char text[] = "RAM disc 64 pages\n";
+          Task_LogString( text, sizeof( text )-1 );
+          regs->r[2] = 64;
+        }
       }
       else if (regs->r[0] >= 0x7c && regs->r[0] <= 0x7e) { // Esc condition
         regs->r[1] = 0; // No escape condition (if ack)
@@ -1172,7 +1228,7 @@ void execute_swi( svc_registers *regs, int number )
       assert( f != 0 );
       legacy_task->regs.lr = f->blocked_swi_lr;
       // Indicates task can be resumed when this frame becomes the
-      // current frame (all later legacy SWIs have completed):
+      // current frame (when all later legacy SWIs will have completed):
       f->blocked_swi_lr = 0;
 
 #ifdef DEBUG__LOG_LEGACY_STACK
@@ -1260,6 +1316,7 @@ void execute_swi( svc_registers *regs, int number )
     svc_registers *legacy_regs = ((svc_registers *) f) - 1;
     *legacy_regs = legacy_task->regs;
 
+
     register svc_registers *r asm( "r0" ) = legacy_regs;
     register uint32_t s asm( "r1" ) = legacy_swi;
     asm ( "mov sp, r0"
@@ -1345,7 +1402,7 @@ void execute_swi( svc_registers *regs, int number )
 
       if (Vclear( regs )) regs->r[0] = r0;
     }
-    else 
+    else
       resume = run_the_swi( regs, number );
 
     if (resume == 0) {
@@ -1394,7 +1451,6 @@ Task_LogNewLine();
     regs->r[9] = 1; // ErrorV
     // FIXME: Why aren't I calling OS_GenerateError here?
     run_riscos_code_implementing_swi( regs, OS_CallAVector, entry );
-        asm ( "udf #0x101" );
   }
 
   if (resume == 0 && (void*) (regs+1) == (void*) shared.legacy.frame) {
@@ -1411,7 +1467,6 @@ Task_LogNewLine();
     Task_LogNewLine();
 #endif
     if (0 == (regs->spsr & 0x80)) { // With interrupts enabled
-      asm ( "udf 8" );
       if ((legacy_zero_page.CallBack_Flag & 1) != 0
        && swi != OS_SetCallBack) {
         // Call Callback handler
@@ -1437,7 +1492,6 @@ Task_LogNewLine();
         callback_entry *entry = legacy_zero_page.CallBack_Vector;
         while (entry != 0) {
           callback_entry run = *entry;
-          asm ( "udf 9" );
 #ifdef DEBUG__SHOW_CALLBACKS
   Task_LogString( "Callback ", 9 );
   Task_LogHex( run.code );
@@ -1447,7 +1501,6 @@ Task_LogNewLine();
           cba_free( legacy_zero_page.ChocolateCBBlocks, entry );
           register uint32_t workspace asm ( "r12" ) = run.workspace;
           register uint32_t code asm ( "r14" ) = run.code;
-          asm ( "udf #0x100" );
           asm volatile ( "blx lr" : "=r" (code)
                                   : "r" (workspace)
                                   , "r" (code)
@@ -1492,14 +1545,12 @@ Task_LogNewLine();
       mpsafe_insert_OSTask_at_tail( &shared.ostask.runnable, owner );
     }
 
-    asm ( "udf 2" );
     // Carry on the legacy task
     return_to_swi_caller( 0, regs, std_top );
   }
 
   if (resume == 0) {
     // Stick with whatever stack we're on
-    asm ( "udf 6" );
     return_to_swi_caller( 0, regs, regs+1 );
   }
   else {
@@ -1527,7 +1578,7 @@ Task_LogNewLine();
       // To keep queue_running_OSTask/stop_running_task happy
       resume->running = 1;
       put_usr_registers( resume ); // FIXME: may fix error but needs cleaner solution!
- 
+
       OSTask *old = resume;
       assert( old->running );
       resume = queue_running_OSTask( &resume->regs,
@@ -1668,6 +1719,35 @@ void __attribute__(( noreturn )) centiseconds()
   }
 }
 
+static void RamFSDA()
+{
+  extern int DynAreaHandler_RAMDisc;
+  // RAMFS assumes a DA number 5, the module doesn't detect if its
+  // missing
+  register int reason asm( "r0" ) = 0;
+  register int area asm( "r1" ) = 5;
+  register int size asm( "r2" ) = 64 << 12;
+  register int base asm( "r3" ) = -1;
+  register int flags asm( "r4" ) = 0;
+  register int max asm( "r5" ) = 256 << 12;
+  register int *handler asm( "r6" ) = &DynAreaHandler_RAMDisc;
+  register int workspace asm( "r7" ) = -1; // Pass DA base
+  register char *name asm( "r8" ) = "RAM disc";
+  asm (
+        "svc %[swi]"
+    :
+    : [swi] "i" (OS_DynamicArea | Xbit)
+    , "r" (reason)
+    , "r" (area)
+    , "r" (size)
+    , "r" (base)
+    , "r" (flags)
+    , "r" (max)
+    , "r" (handler)
+    , "r" (workspace)
+    , "r" (name) );
+}
+
 void __attribute__(( noreturn )) startup()
 {
   // Running with multi-tasking enabled. This routine gets called
@@ -1686,6 +1766,8 @@ void __attribute__(( noreturn )) startup()
   setup_system_heap(); // System heap
   setup_shared_heap(); // RMA heap
   setup_MOS_workspace(); // Hopefully soon to be removed
+
+  RamFSDA();
 
   uint32_t const tick_stack_size = 256; // regs, buffer & a bit more
   uint32_t base = ~7 & (uint32_t) shared_heap_allocate( tick_stack_size );

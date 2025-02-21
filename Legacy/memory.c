@@ -445,16 +445,32 @@ void do_OS_DynamicArea( svc_registers *regs )
     break;
   case PMPInfo:
     {
-      dynamic_area *da;
-      da = find_da( regs->r[1] );
-    if (regs->r[1] != 0) PANIC;
-    regs->r[2] = (128 << 20) >> 12;
-    regs->r[3] = 0;
-    regs->r[4] = 0;
-    regs->r[5] = (128 << 20);
-    regs->r[6] = (128 << 20) >> 12;
-    regs->r[7] = (128 << 20) >> 12;
-    regs->r[8] = (uint32_t) da->name;
+      if (regs->r[1] == 0) {
+        regs->r[2] = (128 << 20) >> 12;
+        regs->r[3] = 0;
+        regs->r[4] = 0;
+        regs->r[5] = (128 << 20);
+        regs->r[6] = (128 << 20) >> 12;
+        regs->r[7] = (128 << 20) >> 12;
+        regs->r[8] = "Fake Free Pool";
+      }
+      else {
+        dynamic_area *da;
+        da = find_da( regs->r[1] );
+        if (da != 0) {
+          regs->r[2] = da->pages << 12;
+          regs->r[3] = da->va_start;
+          regs->r[4] = 0;
+          regs->r[5] = (128 << 20);             // Max logical size, bytes
+          regs->r[6] = da->pages;               // Current phys size, pages
+          regs->r[7] = (128 << 20) >> 12;       // Max phys size, pages
+          regs->r[8] = (uint32_t) da->name;
+        }
+        else {
+          Error_UnknownDA( regs );
+          break;
+        }
+      }
     //regs->spsr |= VF;
     // FIXME: return a valid value or stop asking!
     }

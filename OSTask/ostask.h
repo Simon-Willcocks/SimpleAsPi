@@ -211,7 +211,7 @@ static inline void system_heap_free( void *block )
   heap_free( &system_heap_base, block );
 }
 
-static inline void shared_heap_free( void *block )
+static inline void shared_heap_free( void const *block )
 {
   extern uint8_t shared_heap_base;
   heap_free( &shared_heap_base, block );

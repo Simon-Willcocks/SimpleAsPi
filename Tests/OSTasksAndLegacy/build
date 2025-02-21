@@ -1,7 +1,7 @@
 #! /bin/bash -
 
 SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART:System/Pi/Legacy/BCM2835GrV
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART:System/Pi/Legacy/BCM2835GrV:Tests/OSTasksAndLegacy/Modules/InterruptableSVC
 
 #:System/Pi/PL011UART
 
@@ -12,148 +12,11 @@ echo Modules: ${MODULES//:/ }
 INITIAL_MODULES='QA7\0'
 
 INITIAL_MODULES+='LogToUART\0'
-INITIAL_MODULES+='LEDBlink\0'
-INITIAL_MODULES+='GPUMailbox\0'
-INITIAL_MODULES+='BCM2835Display\0'
-INITIAL_MODULES+='BCM2835GrV\0'
-#INITIAL_MODULES+='LogToScreen\0'
+INITIAL_MODULES+='InterruptableSVC\0'
 
 INITIAL_MODULES+='UtilityModule\0'
 
-INITIAL_MODULES+='BlendTable\0'
-INITIAL_MODULES+='ColourTrans\0'
-
-INITIAL_MODULES+='FileSwitch\0'
-INITIAL_MODULES+='ResourceFS\0'
-INITIAL_MODULES+='TerritoryManager\0'
-INITIAL_MODULES+='Messages\0'
-INITIAL_MODULES+='MessageTrans\0'
-INITIAL_MODULES+='UK\0'
-
-INITIAL_MODULES+='SharedCLibrary\0' # Not 'CLib\0'
-INITIAL_MODULES+='BASIC\0'
-INITIAL_MODULES+='BASIC64\0'
-INITIAL_MODULES+='BASICVFP\0'
-
-# SpriteExtend does a lot of checking for platform features etc.
-INITIAL_MODULES+='SpriteExtend\0'
-INITIAL_MODULES+='SpriteUtils\0'
-
-INITIAL_MODULES+='BufferManager\0'
-##INITIAL_MODULES+='DeviceFS\0'
-INITIAL_MODULES+='ScreenModes\0'
-#INITIAL_MODULES+='Portable\0'
-INITIAL_MODULES+='DisplayManager\0' # "The Display Manager does not support that combination of colours and resolution"
-INITIAL_MODULES+='DragASprite\0'
-INITIAL_MODULES+='DragAnObject\0'
-INITIAL_MODULES+='Draw\0'
-INITIAL_MODULES+='FileCore\0'
-
-INITIAL_MODULES+='RamFS\0' # Bugged: assumes the existence of DA 5
-
-INITIAL_MODULES+='FontManager\0'
-
-INITIAL_MODULES+='WindowManager\0'
-#INITIAL_MODULES+='TaskManager\0'
-INITIAL_MODULES+='Desktop\0'
-
-# Moved to after TaskManager so it might start up?
-INITIAL_MODULES+='Filer\0'
-INITIAL_MODULES+='FilerSWIs\0'
-#INITIAL_MODULES+='FPEmulator\0'
-#INITIAL_MODULES+='VFPSupport\0'
-INITIAL_MODULES+='Free\0'
-INITIAL_MODULES+='International\0'
-INITIAL_MODULES+='InverseTable\0'
-# INITIAL_MODULES+='NetFiler\0'         # Filers seem to drop out for little reason
-INITIAL_MODULES+='Obey\0'
-INITIAL_MODULES+='Pinboard\0'
-INITIAL_MODULES+='RAMFSFiler\0'
-INITIAL_MODULES+='ResourceFiler\0'
-INITIAL_MODULES+='ROMFonts\0'
-
-#INITIAL_MODULES+='RTC\0'
-#INITIAL_MODULES+='ScreenBlanker\0'
-#INITIAL_MODULES+='ScrSaver\0'
-#INITIAL_MODULES+='Serial\0' fc037b10 HardwareCallHAL
-#INITIAL_MODULES+='SerialDeviceSupport\0'
-#INITIAL_MODULES+='ShellCLI\0' Prefetch abort
-#INITIAL_MODULES+='SoundDMA\0'
-#INITIAL_MODULES+='SoundControl\0'
-#INITIAL_MODULES+='SoundChannels\0'
-#INITIAL_MODULES+='SoundScheduler\0'
-
-INITIAL_MODULES+='Squash\0'
-# INITIAL_MODULES+='BootFX\0' # problems running, closes down - needs to be direct call or work out some way to return...
-INITIAL_MODULES+='SuperSample\0'
-##INITIAL_MODULES+='SystemDevices\0'
-
-# TaskWindow fiddles with internal kernel variables that are no longer valid.
-#INITIAL_MODULES+='TaskWindow\0'
-INITIAL_MODULES+='WindowUtils\0'
-INITIAL_MODULES+='FilterManager\0'
-## INITIAL_MODULES+='WaveSynth\0' init error: Unknown SWI
-#INITIAL_MODULES+='StringLib\0'
-#INITIAL_MODULES+='Percussion\0'
-#INITIAL_MODULES+='SharedSound\0'
-INITIAL_MODULES+='Filer_Action\0'
-# INITIAL_MODULES+='DOSFS\0'
-# INITIAL_MODULES+='SDIODriver\0'
-# INITIAL_MODULES+='SDFS\0' # Returns variable not found...
-
-# INITIAL_MODULES+='SDFSFiler\0'
-# Fun fact, SDCMOS tries to run code on the SVC stack. It's not alone.
-# Search for mov pc, sp
-# Only when there's an error in the initialisation callback
-#INITIAL_MODULES+='SDCMOS\0'
-
-# INITIAL_MODULES+='ColourPicker\0' # Init calls exit?
-INITIAL_MODULES+='DrawFile\0'
-INITIAL_MODULES+='BootCommands\0'
-#INITIAL_MODULES+='WindowScroll\0'      # Returns UseDesktop error...
-#INITIAL_MODULES+='MbufManager\0' # calls SWI 6ee00
-
-# Skipping internet stuff for now
-# INITIAL_MODULES+='Internet\0'
-# INITIAL_MODULES+='Resolver\0'
-# INITIAL_MODULES+='Net\0'
-# INITIAL_MODULES+='BootNet\0'
-# INITIAL_MODULES+='Freeway\0'
-# INITIAL_MODULES+='ShareFS\0'
-# INITIAL_MODULES+='MimeMap\0'
-INITIAL_MODULES+='!Edit\0'
-INITIAL_MODULES+='!Draw\0'
-INITIAL_MODULES+='!Paint\0'
-INITIAL_MODULES+='!Alarm\0'
-INITIAL_MODULES+='!Chars\0'
-INITIAL_MODULES+='!Help\0'
-INITIAL_MODULES+='Toolbox\0'
-INITIAL_MODULES+='Window\0'
-INITIAL_MODULES+='ToolAction\0'
-INITIAL_MODULES+='Menu\0'
-INITIAL_MODULES+='Iconbar\0'
-# INITIAL_MODULES+='ColourDbox\0' # Requires ColourPicker
-# INITIAL_MODULES+='ColourMenu\0' # Command ColourMenu$Path not found in modules
-
-INITIAL_MODULES+='DCS\0'
-INITIAL_MODULES+='FileInfo\0'
-## INITIAL_MODULES+='FontDbox\0' init error: Not enough memory (may be I've not allocated enough to a DA)
-INITIAL_MODULES+='FontMenu\0'
-## INITIAL_MODULES+='PrintDbox\0' init error: Not enough memory (may be I've not allocated enough to a DA)
-## INITIAL_MODULES+='ProgInfo\0'        ditto
-## INITIAL_MODULES+='SaveAs\0'          ditto
-## INITIAL_MODULES+='Scale\0'           ditto
-INITIAL_MODULES+='TextGadgets\0'
-#INITIAL_MODULES+='CDFSDriver\0'
-#INITIAL_MODULES+='CDFSSoftSCSI\0'
-#INITIAL_MODULES+='CDFS\0'
-#INITIAL_MODULES+='CDFSFiler\0'
-INITIAL_MODULES+='UnSqueezeAIF\0'
-#INITIAL_MODULES+='GPIO\0'
-
-
-#DEFAULT_LANGUAGE=LEDBlink
-DEFAULT_LANGUAGE=Desktop
+DEFAULT_LANGUAGE=InterruptableSVC
 
 echo Initial modules: ${INITIAL_MODULES//\\0/, }
 echo Default language: $DEFAULT_LANGUAGE
@@ -251,7 +114,11 @@ done &&
 echo static rom_module const rom_modules[] = {  >> Generated/rom_modules.h  &&
 for i in ${MODULES//:/ }
 do
-  Modules/build_for_rom Modules/$i $MODCFLAGS $HALFLAGS|| exit 1 &&
+  if [ -d $i ]; then
+    Modules/build_for_rom $i $MODCFLAGS $HALFLAGS|| exit 1
+  else
+    Modules/build_for_rom Modules/$i $MODCFLAGS $HALFLAGS|| exit 1
+  fi &&
   HALFLAGS='' &&
   MODNAME=$( basename ${i} ) &&
   echo { \"$MODNAME\", \&${MODNAME}_header }, >> Generated/rom_modules.h 

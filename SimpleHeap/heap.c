@@ -123,7 +123,7 @@ void *heap_allocate( void *base, uint32_t size )
   return result;
 }
 
-void heap_free( void *base, void *mem )
+void heap_free( void *base, void const *mem )
 {
   // FIXME: Serious memory leak!
   // Like, all of it!

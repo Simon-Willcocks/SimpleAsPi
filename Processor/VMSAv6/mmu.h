@@ -116,3 +116,16 @@ typedef struct {
 } memory_pages;
 
 memory_pages walk_global_tree( uint32_t va );
+
+// To handle non-translation aborts
+// Note: I am deliberately avoiding MMU specific details here.
+// Align is hard to ignore, given the history of ARM.
+// Translation means the MMU support code can't find memory at the address
+// Permission means there is memory, but you're not allowed to access it for
+// read/write/execute.
+// The regs->lr passed to instruction_abort is the instruction to retry, if
+// possible.
+enum AbtType { ABT_SPECIAL, ABT_ALIGN, ABT_TRANSLATION, ABT_PERMISSION };
+
+void instruction_abort( svc_registers *regs, enum AbtType type );
+void signal_data_abort( svc_registers *regs, uint32_t fa, uint32_t ft );

@@ -93,6 +93,7 @@ struct module {
                                 // Instance number is how far along the list 
                                 // the module is, not a constant.
   module *base;                 // Base instance of this module
+  module *preferred;            // Preferred instance (=this, if none)
   swi_handlers *handlers;       // NULL for legacy modules
   char postfix[];
 };
@@ -120,9 +121,11 @@ module *new_module( module_header *header, char const *postfix )
   result->next = 0;
   result->instances = 0;
   result->handlers = 0;
+  result->preferred = 0;
 
   if (size == 0) { // No postfix
     result->base = 0;
+    result->preferred = result;
   }
   else {
     module **instance = &base->instances;
@@ -131,6 +134,9 @@ module *new_module( module_header *header, char const *postfix )
     }
     *instance = result;
     result->base = base;
+    // ASSUMPTION (based on FileCore%RAM): initialising makes preferred.
+    // Might be wrong, might be running a command does it?
+    base->preferred = result;
   }
 
   return result;
@@ -421,7 +427,7 @@ static module *find_module_by_chunk( uint32_t swi )
     instance = instance->next;
   }
 
-  return instance;
+  return (instance == 0) ? 0 : instance->preferred;
 }
 
 // TODO: Cache these searches, you wouldn't be asking if you weren't
@@ -635,11 +641,12 @@ module *find_initialised_module( char const *name )
 error_block const *load_and_initialise( char const *name )
 {
 #ifdef DEBUG__SHOW_MODULE_INIT
-  Task_LogString( "Module ", 7 );
+  { static char const text[] = "Module init: ";
+  Task_LogString( text, sizeof( text )-1 ); }
   char const *e = name;
-  while (*e > ' ') e++;
+  while (*e >= ' ') e++;
   Task_LogString( name, e - name );
-  Task_LogString( " init\n", 6 );
+  Task_LogNewLine();
 #endif
   module_header *header = load_named_module( name );
   if (header == 0) {
@@ -675,8 +682,10 @@ error_block const *load_and_initialise( char const *name )
 
 static void __attribute__(( noinline )) run_service_call_handler_code( svc_registers *regs, module *m )
 {
-  register void *non_kernel_code asm( "r14" ) =
-                        service_call_handler( m->header );
+  void *handler = service_call_handler( m->header );
+  if (handler == 0) return;
+
+  register void *non_kernel_code asm( "r14" ) = handler;
 
   register uint32_t *private_word asm( "r12" ) = &m->private_word;
 
@@ -696,6 +705,18 @@ static void __attribute__(( noinline )) run_service_call_handler_code( svc_regis
       , "r" (non_kernel_code)
       , "r" (private_word)
       : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8" );
+}
+
+static inline void service_call( module *m, svc_registers *regs )
+{
+#ifdef DEBUG__FOLLOW_SERVICE_CALLS
+  Task_LogString( "  ", 2 );
+  Task_LogString( title_string( m->header ), 0 );
+#endif
+
+  uint32_t r12 = regs->r[12];
+  run_service_call_handler_code( regs, m );
+  regs->r[12] = r12;
 }
 
 OSTask *do_OS_ServiceCall( svc_registers *regs )
@@ -718,17 +739,20 @@ OSTask *do_OS_ServiceCall( svc_registers *regs )
 
   while (m != 0 && regs->r[1] != 0) {
     if (0 != m->header->offset_to_service_call_handler) {
-      // Call for all instances, or just the base?
-      if (m->instances != 0) PANIC;
+      module *instance = m->instances;
+      if (instance == 0) {
+        service_call( m, regs );
+        assert( regs->r[1] == 0 || regs->r[1] == call );
+      }
+      else {
+        do {
+          module *next = instance->next;
+          service_call( instance, regs );
+          assert( regs->r[1] == 0 || regs->r[1] == call );
 
-#ifdef DEBUG__FOLLOW_SERVICE_CALLS
-      Task_LogString( "  ", 2 );
-      Task_LogString( title_string( m->header ), 0 );
-#endif
-
-      run_service_call_handler_code( regs, m );
-
-      assert( regs->r[1] == 0 || regs->r[1] == call );
+          instance = next;
+        } while (instance != 0 && regs->r[1] != 0);
+      }
     }
 #ifdef DEBUG__FOLLOW_SERVICE_CALLS
     if (regs->r[1] == 0) {
@@ -1409,8 +1433,23 @@ OSTask *do_OS_Module( svc_registers *regs )
       }
     }
     break;
+  case 14: // New instance
+    {
+      // Needed for FileCore
+      char const *init = (void*) regs->r[1];
+
+      error = load_and_initialise( init );
+    }
+    break;
+  case 15: // Rename instance
+  case 16: // Make preferred instance
+    {
+      // Store instance in base module's private word?
+      PANIC;
+    }
+    break;
   case 18: // Look-up module name (not really what it does)
-    // Called from legacy RMEnsure
+    // Called from legacy RMEnsure, RamFS (or FileCore)
     {
       char const *name = (void*) regs->r[1];
 
@@ -1422,10 +1461,9 @@ OSTask *do_OS_Module( svc_registers *regs )
   Task_LogNewLine();
 #endif
 
-      //  TODO: instances
       char const *p = name;
       while (*p != '\0' && *p != '%' && *p != ' ') p++;
-      if (*p == '%') PANIC;
+      char const *inst = p+1;
 
       module *m = find_initialised_module( name );
       if (m == 0) {
@@ -1439,11 +1477,25 @@ OSTask *do_OS_Module( svc_registers *regs )
 #ifdef DEBUG__SHOW_MODULE_INIT
   Task_LogString( "Module found\n", 13 );
 #endif
+        uint32_t number;
+        if (m->instances != 0) {
+          if (*p != '%') PANIC;
+          m = m->instances;
+          number = 1;
+          while (m != 0 && !riscoscmp( inst, m->postfix )) {
+            number++;
+            m = m->next;
+          }
+          if (m == 0) return Error_ModuleNotFound( regs );
+        }
+        else {
+          number = 0;
+        }
         uint32_t n = 0;
         module *p = shared.module.modules;
         while (p != m) { n++; p = p->next; }
         regs->r[1] = n;
-        regs->r[2] = 0;
+        regs->r[2] = inst;
         regs->r[3] = (uint32_t) m->header; // FIXME: Guessed
         regs->r[4] = m->private_word;
         if (regs->r[2] != 0)

@@ -1004,6 +1004,12 @@ void signal_data_abort( svc_registers *regs, uint32_t fa, uint32_t ft )
   PANIC;
 }
 
+__attribute__(( weak, noinline, noreturn ))
+void instruction_abort( svc_registers *regs, enum AbtType type )
+{
+  PANIC;
+}
+
 void __attribute__(( naked, noreturn )) data_abort_handler()
 {
   asm volatile (
@@ -1032,6 +1038,73 @@ void __attribute__(( naked, noreturn )) data_abort_handler()
     "\n  ISB" );
 
   asm volatile ( "pop { "C_CLOBBERED" }"
+    "\n  rfeia sp! // Restore execution and SPSR" );
+
+  __builtin_unreachable();
+}
+
+static bool __attribute__(( noinline )) handle_prefetch_abort( uint32_t fa, uint32_t ft )
+{
+  // This subsystem can cope with translation faults (treating them the
+  // same as data faults), anything else (permissions, access flags, etc.)
+  // need to be dealt with elsewhere.
+
+  if ((ft & ~0x8f0) == 7
+   || (ft & ~0x8f0) == 5) {
+    memory_fault_handler handler = find_handler( fa );
+
+    if (handler == 0) return false;
+
+    return handler( fa, ft );
+  }
+
+  return false;
+}
+
+enum AbtType generic_abort_type( uint32_t ft )
+{
+  switch (ft & 0x40f) {
+  case 1: return ABT_ALIGN;
+  case 5:
+  case 7: return ABT_TRANSLATION;
+  case 13:
+  case 15: return ABT_PERMISSION;
+  default: return ABT_SPECIAL;
+  };
+}
+
+void __attribute__(( naked )) prefetch_handler()
+{
+  register uint32_t fa asm( "r0" );
+  register svc_registers *regs;
+  asm volatile (
+    "\n.ifne .-prefetch_handler"
+    "\n  .error \"prefetch_handler check generated code\""
+    "\n.endif"
+    "\n  sub lr, lr, #4"        // Is this safe? IFAR instead?
+    "\n  srsdb sp!, #0x17 // Store fail address and SPSR (Abt mode)"
+    "\n  push {r0-r12}"
+    "\n  mov r0, lr"
+    "\n  mov %[regs], sp"
+    : "=r" (fa)
+    , [regs] "=r" (regs)
+  );
+
+  register uint32_t ft = instruction_fault_type();
+
+  if (!handle_prefetch_abort( fa, ft )) {
+    instruction_abort( regs, generic_abort_type( ft ) );
+  }
+
+  // IDK if this is approprate in prefetch, it's c-n-p from data abort
+  asm ( "DSB"
+    "\n  MCR p15, 0, r0, c8, c7, 0 // TLBIALL"  // Overkill - does it get rid of strange_handler? Yes!
+    // But check_global still fails...
+    "\n  MCR p15, 0, r0, c7, c5, 6 // BPIALL"
+    "\n  DSB"
+    "\n  ISB" );
+
+  asm volatile ( "pop {r0-r12}"
     "\n  rfeia sp! // Restore execution and SPSR" );
 
   __builtin_unreachable();

@@ -712,7 +712,6 @@ OSTask *IdleTaskYield( svc_registers *regs )
    && next == workspace.ostask.idle) {
     // Only the idle task is runnable on this core right now.
 
-    asm  ( "udf 99" );
     // Pause, then drop back to idle task (interrupts enabled),
     // after which the runnable list will be checked again.
     // wait_for_event();
@@ -1495,62 +1494,14 @@ static void setup_processor_vectors()
   asm ( "msr sp_fiq, %[stack]" : : [stack] "r" ((&(workspace.ostask.fiq_stack)) + 1) );
 }
 
-void __attribute__(( naked )) prefetch_handler()
+void instruction_abort( svc_registers *regs, enum AbtType type )
 {
-  // Tasks with a prefetch exception cannot continue to run without
-  // help, so don't bother storing the state on the stack, drop it
-  // straight into the running OSTask...
-
-  asm volatile (
-    "\n.ifne .-prefetch_handler"
-    "\n  .error \"prefetch_handler check generated code\""
-    "\n.endif"
-    "\n  srsdb sp!, #0x17 // Store fail address and SPSR (Abt mode)"
-  );
-
-  register OSTask *volatile *head asm ( "lr" ) = &workspace.ostask.running;
-
-  asm volatile (
-    "\n.ifne .-prefetch_handler-8" // 1 instruction to set lr
-    "\n  .error \"prefetch_handler check generated code\""
-    "\n.endif"
-    "\n  ldr lr, [lr]"
-    "\n  stmia lr!, {r0-r12}"
-    "\n  ldm sp!, {r0-r1}"
-    "\n  mrs r2, sp_usr"
-    "\n  mrs r3, lr_usr"
-    "\n  udf 165"
-    "\n  stmia lr!, {r0-r3}"
-    : "=r" (head) // Corrupted
-    : "r" (head) );
-
-  OSTask *running = workspace.ostask.running;
-
-  OSTask *resume = running->next;
-  if (resume == running) PANIC; // Idle task mustn't do this!
-
-  dll_detach_OSTask( running );
-
-  workspace.ostask.running = resume;
-
-  {char const text[] = "Prefetch abort detected! Running ";
-  Task_LogString( text, sizeof( text )-1 );}
-  Task_LogHexP( running );
-  Task_LogNewLine();
-
-  // TODO Queue the offending task to be dealt with by a handler
-  // (maybe schedule it immediately?)
-
-  // Reset the SVC stack, in case the breakpoint is from SVC mode
-  asm ( "msr sp_svc, %[reset_sp]"
-    :
-    : [reset_sp] "r" ((&workspace.svc_stack)+1) );
-
-  // return_to_swi_caller updates the local (sp_abt) stack pointer
-  void *stack_top = ((&workspace.ostask.abt_stack)+1);
-  return_to_swi_caller( resume, &resume->regs, stack_top );
-
-  __builtin_unreachable();
+  switch (type) {
+  case ABT_ALIGN: PANIC;
+  case ABT_TRANSLATION: PANIC;
+  case ABT_PERMISSION: PANIC; // Permission to execute, obviously!
+  default: PANIC;
+  }
 }
 
  __attribute__(( noinline, noreturn ))

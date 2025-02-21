@@ -25,4 +25,4 @@ void heap_initialise( void *base, uint32_t size );
 void *heap_allocate( void *heap, uint32_t size );
 
 // Free a block allocated by heap_allocate
-void heap_free( void *base, void *mem );
+void heap_free( void *base, void const *mem );
