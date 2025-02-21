@@ -1,7 +1,7 @@
 #! /bin/bash -
 
 SUBSYSTEMS=RawMemory:OSTask:Legacy:Modules
-MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART:System/Pi/Legacy/BCM2835GrV:Tests/OSTasksAndLegacy/Modules/InterruptableSVC
+MODULES=HAL:System/Pi/QA7:System/Pi/GPUMailbox:System/Pi/BCM2835Display:System/Pi/LEDBlink:System/LogToScreen:System/LogToUART:System/Pi/Legacy/BCM2835GrV:Tests/OSTasksAndLegacy/Modules/InterruptableSVC:Tests/OSTasksAndLegacy/Modules/Modern
 
 #:System/Pi/PL011UART
 
@@ -13,6 +13,7 @@ INITIAL_MODULES='QA7\0'
 
 INITIAL_MODULES+='LogToUART\0'
 INITIAL_MODULES+='InterruptableSVC\0'
+INITIAL_MODULES+='Modern\0'
 
 INITIAL_MODULES+='UtilityModule\0'
 

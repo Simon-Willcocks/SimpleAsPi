@@ -72,7 +72,7 @@ struct workspace {
 typedef enum { HANDLER_PASS_ON, HANDLER_INTERCEPTED, HANDLER_FAILED } handled;
 
 /*
-static uint32_t GraphicsV_ReadItem( uint32_t item, uint32_t *buffer, uint32_t len )
+static uint32_t WrchV_ReadItem( uint32_t item, uint32_t *buffer, uint32_t len )
 {
   if (len == 0) return -4;
 
@@ -93,7 +93,7 @@ static uint32_t GraphicsV_ReadItem( uint32_t item, uint32_t *buffer, uint32_t le
   return 0;
 }
 
-handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct workspace *workspace )
+handled __attribute__(( noinline )) C_WrchV_handler( uint32_t *regs, struct workspace *workspace )
 {
   union {
     struct {
@@ -111,7 +111,7 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
 
 #if 0
 #define VERBOSE
-  Write0( "GraphicsV " );
+  Write0( "WrchV " );
   WriteSmallNum( command.raw );
   Task_LogNewLine();
 #endif
@@ -228,8 +228,8 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
     WriteS( "List pixel formats " );
     break; // List pixel formats 	FG 	SVC
   case 18:
-    regs[2] = GraphicsV_ReadItem( regs[0], (void*) regs[1], regs[2] );
-    regs[4] = 0; // https://www.riscosopen.org/wiki/documentation/show/GraphicsV%2018
+    regs[2] = WrchV_ReadItem( regs[0], (void*) regs[1], regs[2] );
+    regs[4] = 0; // https://www.riscosopen.org/wiki/documentation/show/WrchV%2018
     break; // Read info 	FG 	SVC
   case 19:
     {
@@ -264,7 +264,7 @@ handled __attribute__(( noinline )) C_GraphicsV_handler( uint32_t *regs, struct 
   return HANDLER_INTERCEPTED;
 }
 
-static void __attribute__(( naked )) GraphicsV_handler( char c )
+static void __attribute__(( naked )) WrchV_handler( char c )
 {
   uint32_t *regs;
 
@@ -272,7 +272,7 @@ static void __attribute__(( naked )) GraphicsV_handler( char c )
   asm ( "push {lr}" ); // Normal return address, to continue down the list
 
   register struct workspace *workspace asm( "r12" );
-  handled result = C_GraphicsV_handler( regs, workspace );
+  handled result = C_WrchV_handler( regs, workspace );
   switch (result) {
   case HANDLER_FAILED: // Intercepted, but failed
   case HANDLER_INTERCEPTED:
@@ -413,9 +413,59 @@ void __attribute__(( noreturn, naked )) do_swis()
   }
 }
 
+void __attribute__(( noreturn, naked )) do_wrch( uint32_t handle, uint32_t c )
+{
+  for (;;) {
+    asm ( "svc #0x8040" );
+  }
+}
+
+handled __attribute__(( noinline )) C_WrchV_handler( uint32_t *regs, struct workspace *workspace )
+{
+  Task_LogString( regs[0], 1 );
+
+  return HANDLER_INTERCEPTED;
+}
+
+static void __attribute__(( naked )) WrchV_handler( char c )
+{
+  uint32_t *regs;
+
+  asm ( "push { r0-r9, r12 }\n  mov %[regs], sp" : [regs] "=r" (regs) );
+  asm ( "push {lr}" ); // Normal return address, to continue down the list
+
+  register struct workspace *workspace asm( "r12" );
+  handled result = C_WrchV_handler( regs, workspace );
+  switch (result) {
+  case HANDLER_FAILED: // Intercepted, but failed
+  case HANDLER_INTERCEPTED:
+    if (result == HANDLER_FAILED)
+      set_VF();
+    else
+      clear_VF();
+    asm ( "pop {lr}\n  pop { r0-r9, r12, pc }" );
+    break;
+  case HANDLER_PASS_ON:
+    asm ( "pop {lr}\n  pop { r0-r9, r12 }\n  mov pc, lr" );
+    break;
+  default: asm ( "bkpt 3" );
+  }
+}
+
 void __attribute__(( noreturn )) test( char const *cmd, workspace *ws )
 {
   Task_CreateTask0( do_swis, 0 );
+
+  {
+    void *handler = WrchV_handler;
+    register uint32_t vector asm( "r0" ) = 3;
+    register void *routine asm( "r1" ) = handler;
+    register struct workspace *handler_workspace asm( "r2" ) = ws;
+    asm ( "svc %[swi]" : : [swi] "i" (OS_Claim | Xbit), "r" (vector), "r" (routine), "r" (handler_workspace) : "lr" );
+  }
+
+  Task_CreateTask1( do_wrch, 0, 42 );
+  Task_CreateTask1( do_wrch, 0, 65 );
 
   for (;;) {
     Task_LogString( ". ", 2 );
